@@ -15,7 +15,7 @@ export function CivilizationNav() {
   const pathname = usePathname();
 
   return (
-    <nav aria-label="Civilization" className="flex gap-2 overflow-x-auto lg:flex-col lg:overflow-visible">
+    <nav aria-label="Civilization" className="flex flex-wrap gap-2 lg:flex-col lg:flex-nowrap">
       {items.map((item) => {
         const active = item.href === "/" ? pathname === "/" : pathname.startsWith(item.href);
         return (
