@@ -1,6 +1,6 @@
 # Database plan
 
-The migration is `supabase/migrations/20261010180000_initial_schema.sql`. Apply it when a Supabase project exists. The dashboard does not query it in Phase 0.
+Apply both files in `supabase/migrations/` in filename order when a Supabase project exists. The world reads citizens only through the server service role.
 
 ## Rule for value
 
@@ -30,7 +30,7 @@ Chain ids are constrained to Monad mainnet `143` and Monad testnet `10143`.
 
 ## Civilization state and history
 
-`civilization_state` allows one row, enforced by a boolean primary key that must be true. The seed row says the civilization is in `foundation`: no enrolled citizens and no treasury wallet.
+`civilization_state` allows one row, enforced by a boolean primary key that must be true. The Phase 1 migration names that row chogOS. The economic treasury wallet is still unset.
 
 `treasury_wallet_id` points at a `wallets` row of kind `treasury` once one exists. The table does not store a treasury balance.
 
@@ -69,11 +69,15 @@ Chain ids are constrained to Monad mainnet `143` and Monad testnet `10143`.
 
 `balance_observations` points at a wallet and an asset key. `source` can only be `rpc`.
 
+## Genesis roster
+
+`20261010200000_phase1_genesis.sql` adds founding membership, metadata snapshots, `genesis_roster`, `ownership_snapshots`, `enrollment_challenges`, and `sync_runs`. `civilization_events.dedupe_key` makes a repeated sync at the same block idempotent. The migration does not insert token ids.
+
+`citizens.origin` is `founding_treasury` or `community`. `founding_membership_active` is true only while a verified `ownerOf` read says the ChogTreasury wallet holds that NFT. A stored owner is still a snapshot.
+
 ## Access
 
-Row level security is enabled on every application table. No policies are defined. When the Supabase `anon` and `authenticated` roles exist, their table grants are revoked. The service role bypasses row level security, so it stays in server code.
-
-Phase 1 adds policies with the enrollment signature checks. It should not disable row level security to make the dashboard easier to build.
+Row level security is enabled on every application table, including the Phase 1 tables. No policies are defined. When the Supabase `anon` and `authenticated` roles exist, their table grants are revoked. The service role bypasses row level security, so it stays in server code. Enrollment does not open those tables to the browser. The server checks the signature and `ownerOf`, then writes with the service role.
 
 ## Not stored
 

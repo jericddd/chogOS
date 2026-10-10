@@ -11,7 +11,7 @@ export type AiCompletionRequest = {
 };
 
 export type AiCompletion = {
-  provider: Exclude<AiProviderId, "none">;
+  provider: "openai" | "anthropic";
   model: string;
   text: string;
 };

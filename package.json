@@ -2,14 +2,16 @@
   "name": "chogos",
   "version": "0.1.0",
   "private": true,
-  "description": "Phase 0 foundation for a shared Chog civilization on Monad.",
+  "description": "chogOS, a shared civilization for Chog Genesis citizens on Monad.",
   "scripts": {
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
     "typecheck": "tsc --noEmit",
-    "verify:contracts": "tsx scripts/verify-contracts.ts"
+    "test": "vitest run",
+    "verify:contracts": "tsx scripts/verify-contracts.ts",
+    "discover:treasury": "tsx scripts/discover-treasury.ts"
   },
   "dependencies": {
     "@supabase/ssr": "^0.12.7",
@@ -23,13 +25,19 @@
   },
   "devDependencies": {
     "@tailwindcss/turbopack": "^4",
-    "@types/node": "^20",
+    "@testing-library/dom": "^10.4.1",
+    "@testing-library/react": "^16.3.0",
+    "@types/node": "^22.20.5",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "@vitejs/plugin-react": "^4.7.0",
     "eslint": "^9",
     "eslint-config-next": "16.4.0",
+    "jsdom": "^26.1.0",
     "tailwindcss": "^4",
     "tsx": "^4.23.15",
-    "typescript": "^5"
+    "typescript": "^5",
+    "vite-tsconfig-paths": "^5.1.4",
+    "vitest": "^4.0.18"
   }
 }

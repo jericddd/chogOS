@@ -1,78 +1,106 @@
-import { PageHeader } from "@/components/ui/page-header";
-import { PlaceholderNotice } from "@/components/ui/placeholder-notice";
-import { Section } from "@/components/ui/section";
-import { addresses } from "@/lib/blockchain/addresses";
-import { evidenceLabel, recordedCheck, recordedContracts } from "@/lib/blockchain/recorded-check";
-import { sampleCitizens } from "@/lib/placeholder/data";
-
-const facts = [
-  { label: "Citizens enrolled", value: "0", detail: "Enrollment is not open." },
-  { label: "Treasury wallet", value: "Not deployed", detail: "No shared treasury address exists yet." },
-  { label: "Balances shown", value: "None", detail: "This screen does not read wallet balances." },
-  { label: "AI execution", value: "Disabled", detail: "The AI has no signer and no spending tools." },
-];
+import Link from "next/link";
+import { connection } from "next/server";
+import { Suspense } from "react";
+import { WorldStage } from "@/components/world/world-stage";
+import { formatUtc } from "@/lib/civilization/labels";
+import { loadWorldSnapshot } from "@/lib/civilization/load-world";
 
 export default function OverviewPage() {
   return (
-    <div className="mx-auto w-full max-w-5xl">
-      <PageHeader
-        title="Overview"
-        lede="One civilization for participating Chog Genesis citizens. This installation is the Phase 0 shell: the structure is here, nobody is enrolled, and nothing on this screen can move assets."
+    <Suspense fallback={<p className="text-sm text-muted">Reading Monad…</p>}>
+      <WorldHome />
+    </Suspense>
+  );
+}
+
+async function WorldHome() {
+  await connection();
+  const world = await loadWorldSnapshot();
+  const recent = world.events.slice(0, 5);
+
+  return (
+    <div className="space-y-8">
+      <header className="max-w-3xl">
+        <p className="text-xs tracking-[0.18em] text-accent uppercase">Genesis founded</p>
+        <h1 className="mt-2 font-serif text-5xl tracking-tight">One civilization, still waking.</h1>
+        <p className="mt-4 text-base leading-7 text-muted">
+          chogOS is a single shared world on Monad. One Chog Genesis NFT is one citizen, and every citizen
+          belongs to this same civilization. The founding population is the NFTs held by the ChogTreasury
+          wallet, verified on the collection contract. Neighbors can enroll NFTs they personally own. The AI
+          mind is not running. Nothing here is a balance, a trade, or a simulated decision.
+        </p>
+      </header>
+
+      <WorldStage
+        foundingCount={world.treasuryCount}
+        communityCount={world.communityRecords}
+        treasuryCount={world.treasuryCount}
+        networkLabel={world.networkLabel}
+        syncLabel={
+          world.lastSyncAt ? `Synchronized ${formatUtc(world.lastSyncAt)}` : "No successful synchronization yet"
+        }
+        aiLabel={world.aiLabel}
+        persistenceLabel={world.persistenceLabel}
+        discrepancy={world.discrepancy}
+        countLabel={world.countLabel}
       />
-      <div className="space-y-6">
-        <section className="grid gap-3 sm:grid-cols-2">
-          {facts.map((fact) => (
-            <div key={fact.label} className="rounded-lg border border-line bg-card px-4 py-4">
-              <p className="text-xs uppercase tracking-[0.14em] text-muted">{fact.label}</p>
-              <p className="mt-2 font-serif text-3xl tracking-tight">{fact.value}</p>
-              <p className="mt-2 text-sm leading-6 text-muted">{fact.detail}</p>
-            </div>
-          ))}
-        </section>
 
-        <Section title="Recorded contracts" tone="record">
-          <p className="mb-4 text-sm leading-6 text-muted">
-            Checked on {recordedCheck.observedOn} against {recordedCheck.mainnetRpc} (chain{" "}
-            {recordedCheck.mainnetChainId}) and {recordedCheck.testnetRpc} (chain{" "}
-            {recordedCheck.testnetChainId}). Chog Genesis reported {recordedCheck.nft.totalSupply} of{" "}
-            {recordedCheck.nft.maxSupply} minted. $CHOG reported a whole-token supply of{" "}
-            {recordedCheck.token.totalSupplyWhole}. Neither figure is a civilization holding.
-          </p>
-          <ul className="divide-y divide-line border-y border-line">
-            {recordedContracts.map((contract) => (
-              <li key={contract.address} className="py-3">
-                <div className="flex flex-wrap items-baseline justify-between gap-2">
-                  <p className="font-medium">{contract.name}</p>
-                  <p className="text-xs uppercase tracking-[0.12em] text-muted">
-                    {evidenceLabel[contract.level]}
-                  </p>
-                </div>
-                <p className="mt-1 font-mono text-xs break-all text-muted">{contract.address}</p>
-                <p className="mt-2 text-sm leading-6 text-muted">{contract.detail}</p>
-              </li>
-            ))}
-          </ul>
-          <p className="mt-4 text-sm leading-6 text-muted">
-            The mint receiver at{" "}
-            <span className="font-mono text-xs break-all">{addresses.chogGenesisMintTreasury}</span> belongs
-            to the NFT contract. The civilization treasury is a separate wallet and has not been deployed.
-          </p>
-        </Section>
+      <section className="grid gap-4 md:grid-cols-3">
+        <Count
+          label="Treasury NFTs"
+          value={world.treasuryCount === null ? "Unavailable" : String(world.treasuryCount)}
+          detail="Chog Genesis tokens verified in the ChogTreasury wallet. Not a $CHOG balance."
+        />
+        <Count
+          label="Founding records"
+          value={world.foundingRecords === null ? "Not persisted" : String(world.foundingRecords)}
+          detail="Active founding memberships stored for this civilization. The same NFTs are not counted twice."
+        />
+        <Count
+          label="Community citizens"
+          value={world.communityRecords === null ? "Not persisted" : String(world.communityRecords)}
+          detail="Owners who enrolled their own Chog Genesis NFTs. Citizens registered, not an online-user count."
+        />
+      </section>
 
-        <Section title="Sample citizens" tone="placeholder">
-          <PlaceholderNotice />
+      {world.liveError ? <p className="text-sm leading-6 text-warning">{world.liveError}</p> : null}
+      {world.notice ? <p className="text-sm leading-6 text-muted">{world.notice}</p> : null}
+
+      <section className="rounded-2xl border border-line bg-card px-5 py-5">
+        <div className="flex flex-wrap items-baseline justify-between gap-3">
+          <h2 className="font-serif text-2xl">Recent verified events</h2>
+          <Link href="/activity" className="text-sm text-accent">
+            Civilization History
+          </Link>
+        </div>
+        {recent.length === 0 ? (
+          <p className="mt-3 text-sm leading-6 text-muted">
+            No civilization events recorded. A genesis synchronization writes the first events after the
+            database is configured. Empty history is not filled with samples.
+          </p>
+        ) : (
           <ul className="mt-4 divide-y divide-line border-y border-line">
-            {sampleCitizens.map((citizen) => (
-              <li key={citizen.id} className="flex flex-wrap items-baseline justify-between gap-2 py-3">
-                <p className="font-medium">{citizen.label}</p>
-                <p className="text-sm text-muted">
-                  {citizen.wallet} · {citizen.wealth}
+            {recent.map((event) => (
+              <li key={event.id} className="py-3">
+                <p>{event.summary}</p>
+                <p className="mt-1 text-xs text-muted">
+                  {formatUtc(event.occurredAt)} · {event.kind}
                 </p>
               </li>
             ))}
           </ul>
-        </Section>
-      </div>
+        )}
+      </section>
+    </div>
+  );
+}
+
+function Count({ label, value, detail }: { label: string; value: string; detail: string }) {
+  return (
+    <div className="rounded-2xl border border-line bg-card px-4 py-4">
+      <p className="text-xs tracking-[0.14em] text-muted uppercase">{label}</p>
+      <p className="mt-2 font-serif text-3xl tracking-tight">{value}</p>
+      <p className="mt-2 text-sm leading-6 text-muted">{detail}</p>
     </div>
   );
 }

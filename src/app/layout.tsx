@@ -21,11 +21,11 @@ const newsreader = Newsreader({
 
 export const metadata: Metadata = {
   title: {
-    default: "Chog Civilization",
-    template: "%s · Chog Civilization",
+    default: "chogOS",
+    template: "%s · chogOS",
   },
   description:
-    "Phase 0 foundation for one shared AI civilization of Chog NFT citizens on Monad.",
+    "One shared civilization for Chog Genesis citizens on Monad. Founding citizens begin with the ChogTreasury NFT roster.",
 };
 
 export default function RootLayout({
