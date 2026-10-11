@@ -42,7 +42,15 @@ function requireAddress(value: string, label: string): Address {
   }
 }
 
-function optionalHttpsUrl(value: string | undefined, label: string): string | undefined {
+function isLoopbackHost(hostname: string): boolean {
+  return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1";
+}
+
+function optionalHttpsUrl(
+  value: string | undefined,
+  label: string,
+  options?: { allowLoopbackHttp?: boolean },
+): string | undefined {
   if (!value) {
     return undefined;
   }
@@ -59,7 +67,8 @@ function optionalHttpsUrl(value: string | undefined, label: string): string | un
     throw new Error(`Invalid ${label}. Expected an https URL.`);
   }
 
-  if (url.protocol !== "https:") {
+  const loopbackHttp = url.protocol === "http:" && isLoopbackHost(url.hostname);
+  if (url.protocol !== "https:" && !(options?.allowLoopbackHttp && loopbackHttp)) {
     throw new Error(`Invalid ${label}. Expected an https URL.`);
   }
 
@@ -122,7 +131,9 @@ export function readAppConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     nftIndexerApiKey: blankToUndefined(env.NFT_INDEXER_API_KEY),
     nftIndexerUrl: optionalHttpsUrl(blankToUndefined(env.NFT_INDEXER_URL), "NFT_INDEXER_URL"),
     syncSecret: blankToUndefined(env.SYNC_SECRET),
-    supabaseUrl: optionalHttpsUrl(blankToUndefined(env.SUPABASE_URL), "SUPABASE_URL"),
+    supabaseUrl: optionalHttpsUrl(blankToUndefined(env.SUPABASE_URL), "SUPABASE_URL", {
+      allowLoopbackHttp: true,
+    }),
     supabaseAnonKey: blankToUndefined(env.SUPABASE_ANON_KEY),
     supabaseServiceRoleKey: blankToUndefined(env.SUPABASE_SERVICE_ROLE_KEY),
     aiProvider,

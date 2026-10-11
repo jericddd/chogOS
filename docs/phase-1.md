@@ -27,7 +27,7 @@ Create a Supabase project and run, in order:
 1. `supabase/migrations/20261010180000_initial_schema.sql`
 2. `supabase/migrations/20261010200000_phase1_genesis.sql`
 
-Set `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` on the server. Do not put the service role key in client code. Row level security stays on, with no anon policies.
+Set `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` on the server. The URL must be https. `http://127.0.0.1` and `http://localhost` are also accepted so a local PostgREST can stand in for Supabase. Do not put the service role key in client code. Row level security stays on, with no anon policies.
 
 Without those variables the world still shows a live treasury read and labels it as not persisted. The activity feed stays empty. Refresh on `/treasury` writes the roster when the database is configured. A second refresh at the same block does not duplicate citizens or events. If `ownerOf` cannot recheck a token that disappeared from `tokensOfOwner`, the founding row is marked stale and is not deactivated.
 

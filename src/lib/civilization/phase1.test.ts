@@ -138,6 +138,11 @@ describe("genesis synchronization", () => {
     expect(store.citizens).toHaveLength(2);
     expect(store.events).toHaveLength(2);
     expect(store.citizens.every((citizen) => citizen.origin === "founding_treasury")).toBe(true);
+    expect(
+      store.citizens.every((citizen) =>
+        /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(citizen.id),
+      ),
+    ).toBe(true);
   });
 
   it("does not store a stale indexer id", async () => {
@@ -487,5 +492,19 @@ describe("AI provider", () => {
     expect(config.expectedFoundingCount).toBe(59);
     expect(config.chogTreasuryAddress).toBe(treasury);
     expect(config.nftIndexer).toBe("none");
+  });
+
+  it("accepts a loopback http Supabase URL and rejects other plaintext URLs", () => {
+    const config = readAppConfig({
+      SUPABASE_URL: "http://127.0.0.1:54321/",
+      SUPABASE_SERVICE_ROLE_KEY: "local-test",
+    } as unknown as NodeJS.ProcessEnv);
+    expect(config.supabaseUrl).toBe("http://127.0.0.1:54321");
+    expect(() =>
+      readAppConfig({ SUPABASE_URL: "http://example.com" } as unknown as NodeJS.ProcessEnv),
+    ).toThrow(/https URL/);
+    expect(() =>
+      readAppConfig({ MONAD_RPC_URL: "http://127.0.0.1:8545" } as unknown as NodeJS.ProcessEnv),
+    ).toThrow(/https URL/);
   });
 });
