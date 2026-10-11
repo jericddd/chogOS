@@ -1,3 +1,4 @@
+import Link from "next/link";
 import type { Metadata } from "next";
 import { PageHeader } from "@/components/ui/page-header";
 import { Section } from "@/components/ui/section";
@@ -8,83 +9,52 @@ export const metadata: Metadata = {
   title: "Economy",
 };
 
-const rows = [
-  {
-    asset: "MON",
-    address: "Native currency",
-    note: "Chain currency. Balance not read.",
-  },
-  {
-    asset: "CHOG",
-    address: addresses.chogToken,
-    note: `Observed token. Whole supply ${recordedCheck.token.totalSupplyWhole}. Not a treasury holding.`,
-  },
-  {
-    asset: "Chog Genesis",
-    address: addresses.chogGenesis,
-    note: `ERC-721 collection of ${recordedCheck.nft.totalSupply}. Not a balance.`,
-  },
-];
-
 export default function EconomyPage() {
   return (
-    <div className="mx-auto w-full max-w-5xl">
+    <div>
       <PageHeader
-        title="Economy and treasury"
-        lede="The shared treasury will be a separate smart wallet from citizen wallets. It has not been deployed, and the administrator has not funded it. No balance on this page comes from Monad."
+        title="Economy"
+        lede="The shared economic treasury is not deployed and is not funded. ChogTreasury NFT holdings are a separate fact, shown on the Genesis Treasury page. They are not a $CHOG balance."
       />
       <div className="space-y-6">
-        <Section title="Shared treasury">
+        <Section title="Shared economic treasury">
           <dl className="grid gap-4 sm:grid-cols-2">
             <div>
-              <dt className="text-xs uppercase tracking-[0.14em] text-muted">Wallet</dt>
+              <dt className="text-xs tracking-[0.14em] text-muted uppercase">Wallet</dt>
               <dd className="mt-1">Not deployed</dd>
             </div>
             <div>
-              <dt className="text-xs uppercase tracking-[0.14em] text-muted">Funding</dt>
-              <dd className="mt-1">Waiting for a manual administrator transfer</dd>
+              <dt className="text-xs tracking-[0.14em] text-muted uppercase">Funding</dt>
+              <dd className="mt-1">No administrator transfer has been recorded</dd>
             </div>
             <div>
-              <dt className="text-xs uppercase tracking-[0.14em] text-muted">Balance</dt>
-              <dd className="mt-1">Not read from chain</dd>
+              <dt className="text-xs tracking-[0.14em] text-muted uppercase">$CHOG balance</dt>
+              <dd className="mt-1">Not read</dd>
             </div>
             <div>
-              <dt className="text-xs uppercase tracking-[0.14em] text-muted">AI spending</dt>
+              <dt className="text-xs tracking-[0.14em] text-muted uppercase">AI spending</dt>
               <dd className="mt-1">No permission granted</dd>
             </div>
           </dl>
           <p className="mt-4 text-sm leading-6 text-muted">
-            Chog Genesis treasury() returns {addresses.chogGenesisMintTreasury}. That address is the
-            collection mint receiver. It is not this civilization&apos;s treasury, and this dashboard does
-            not display its balance.
+            ChogTreasury at <span className="font-mono text-xs break-all">{addresses.chogTreasury}</span> holds
+            Chog Genesis NFTs. That wallet is not this economic treasury.{" "}
+            <Link href="/treasury" className="text-accent">
+              Open the Genesis Treasury
+            </Link>
+            .
           </p>
         </Section>
-
         <Section title="Known assets" tone="record">
           <p className="mb-4 text-sm leading-6 text-muted">
-            These are configuration records from {recordedCheck.observedOn}. They are not holdings.
+            Configuration from {recordedCheck.observedOn}. Whole $CHOG supply was{" "}
+            {recordedCheck.token.totalSupplyWhole}. That supply is not a civilization holding.
           </p>
-          <div className="overflow-x-auto">
-            <table className="w-full min-w-[36rem] border-collapse text-left text-sm">
-              <caption className="sr-only">Known Monad assets without balances</caption>
-              <thead className="border-b border-line text-xs uppercase tracking-[0.12em] text-muted">
-                <tr>
-                  <th className="py-2 pr-4 font-medium">Asset</th>
-                  <th className="py-2 pr-4 font-medium">Address</th>
-                  <th className="py-2 font-medium">What this row means</th>
-                </tr>
-              </thead>
-              <tbody>
-                {rows.map((row) => (
-                  <tr key={row.asset} className="border-b border-line align-top">
-                    <td className="py-3 pr-4 font-medium">{row.asset}</td>
-                    <td className="py-3 pr-4 font-mono text-xs break-all">{row.address}</td>
-                    <td className="py-3 text-muted">{row.note}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          <ul className="divide-y divide-line border-y border-line text-sm">
+            <li className="py-3">MON · native currency · balance not read</li>
+            <li className="py-3 font-mono text-xs break-all">$CHOG · {addresses.chogToken}</li>
+            <li className="py-3 font-mono text-xs break-all">Chog Genesis NFT · {addresses.chogGenesis}</li>
+          </ul>
         </Section>
       </div>
     </div>

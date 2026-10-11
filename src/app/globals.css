@@ -1,15 +1,17 @@
 @import "tailwindcss";
 
 :root {
-  --background: #f3efe6;
-  --foreground: #1c1915;
-  --muted: #6f675e;
-  --line: #e3d9cc;
-  --card: #fbf8f3;
-  --accent: #0c5c4c;
-  --accent-soft: #e4f2ed;
-  --warning: #8a4b12;
-  --warning-soft: #f8ecdf;
+  --background: #070b10;
+  --foreground: #e8f7f0;
+  --muted: #93a89f;
+  --line: #1b2c2a;
+  --card: #0d1419;
+  --accent: #3dffb0;
+  --accent-soft: #10261c;
+  --violet: #a78bfa;
+  --warning: #e6b089;
+  --warning-soft: #2a2118;
+  color-scheme: dark;
 }
 
 @theme inline {
@@ -20,6 +22,7 @@
   --color-card: var(--card);
   --color-accent: var(--accent);
   --color-accent-soft: var(--accent-soft);
+  --color-violet: var(--violet);
   --color-warning: var(--warning);
   --color-warning-soft: var(--warning-soft);
   --font-sans: var(--font-geist-sans);
@@ -27,32 +30,60 @@
   --font-mono: var(--font-geist-mono);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #141311;
-    --foreground: #f3efe6;
-    --muted: #b7aea3;
-    --line: #3a342c;
-    --card: #1d1b18;
-    --accent: #8fd0bf;
-    --accent-soft: #1c3330;
-    --warning: #e6b089;
-    --warning-soft: #3a2a1c;
-  }
-}
-
 html {
-  color-scheme: light;
-}
-
-@media (prefers-color-scheme: dark) {
-  html {
-    color-scheme: dark;
-  }
+  color-scheme: dark;
 }
 
 body {
-  background: var(--background);
+  background:
+    radial-gradient(900px 480px at 8% -10%, rgb(61 255 176 / 8%), transparent 55%),
+    radial-gradient(700px 420px at 100% 0%, rgb(167 139 250 / 10%), transparent 50%),
+    var(--background);
   color: var(--foreground);
   font-family: var(--font-geist-sans), sans-serif;
+}
+
+.civic-link {
+  cursor: pointer;
+  transition: filter 180ms ease;
+}
+
+.civic-link:hover,
+.civic-link:focus-visible {
+  filter: brightness(1.28);
+}
+
+.civic-link:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
+
+@keyframes chog-float {
+  0%,
+  100% {
+    transform: translateY(0);
+    opacity: 0.35;
+  }
+  50% {
+    transform: translateY(-10px);
+    opacity: 0.95;
+  }
+}
+
+.chog-mote {
+  animation: chog-float 7s ease-in-out infinite;
+  transform-box: fill-box;
+  transform-origin: center;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .chog-mote {
+    animation: none;
+  }
+}
+
+.portrait-frame {
+  background:
+    radial-gradient(120px 80px at 50% 20%, rgb(61 255 176 / 16%), transparent 70%),
+    linear-gradient(180deg, #10181c, #070b10);
 }

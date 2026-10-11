@@ -1,16 +1,23 @@
 import { getAddress, type Address } from "viem";
 import { z } from "zod";
+import { addresses } from "@/lib/blockchain/addresses";
 
-const DEFAULT_NFT_ADDRESS = "0xc96d31F8626c6D03Fae5dCD3d61e3FB9F4a73763";
-const DEFAULT_TOKEN_ADDRESS = "0x350035555E10d9AfAF1566AaebfCeD5BA6C27777";
-
-export type AiProviderId = "none" | "openai" | "anthropic";
+export type AiProviderId = "none" | "openai" | "anthropic" | "ajax";
+export type NftIndexerId = "none" | "alchemy" | "custom";
 
 export type AppConfig = {
   chainId: 143 | 10143;
   rpcUrl?: string;
   chogNftAddress: Address;
   chogTokenAddress: Address;
+  chogTreasuryAddress: Address;
+  /** Comparison figure only. Holdings come from the chain, not from this number. */
+  expectedFoundingCount: number;
+  ipfsGateway: string;
+  nftIndexer: NftIndexerId;
+  nftIndexerApiKey?: string;
+  nftIndexerUrl?: string;
+  syncSecret?: string;
   supabaseUrl?: string;
   supabaseAnonKey?: string;
   supabaseServiceRoleKey?: string;
@@ -19,6 +26,8 @@ export type AppConfig = {
   aiModel?: string;
   aiBaseUrl?: string;
 };
+
+const DEFAULT_IPFS_GATEWAY = "https://gateway.pinata.cloud/ipfs";
 
 function blankToUndefined(value: string | undefined): string | undefined {
   const trimmed = value?.trim();
@@ -33,17 +42,42 @@ function requireAddress(value: string, label: string): Address {
   }
 }
 
-function optionalUrl(value: string | undefined, label: string): string | undefined {
+function optionalHttpsUrl(value: string | undefined, label: string): string | undefined {
   if (!value) {
     return undefined;
   }
 
   const parsed = z.url().safeParse(value);
   if (!parsed.success) {
-    throw new Error(`Invalid ${label}. Expected an http or https URL.`);
+    throw new Error(`Invalid ${label}. Expected an https URL.`);
   }
 
-  return parsed.data;
+  let url: URL;
+  try {
+    url = new URL(parsed.data);
+  } catch {
+    throw new Error(`Invalid ${label}. Expected an https URL.`);
+  }
+
+  if (url.protocol !== "https:") {
+    throw new Error(`Invalid ${label}. Expected an https URL.`);
+  }
+
+  return url.toString().replace(/\/$/, "");
+}
+
+function readExpectedCount(value: string | undefined): number {
+  const raw = blankToUndefined(value) ?? "59";
+  if (!/^[0-9]+$/.test(raw)) {
+    throw new Error(
+      "Invalid EXPECTED_FOUNDING_COUNT. Use a non-negative integer. It is only a comparison figure.",
+    );
+  }
+  const count = Number(raw);
+  if (!Number.isSafeInteger(count)) {
+    throw new Error("Invalid EXPECTED_FOUNDING_COUNT. The comparison figure is too large.");
+  }
+  return count;
 }
 
 /**
@@ -57,27 +91,43 @@ export function readAppConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
   }
 
   const aiProvider = blankToUndefined(env.AI_PROVIDER) ?? "none";
-  if (aiProvider !== "none" && aiProvider !== "openai" && aiProvider !== "anthropic") {
-    throw new Error("Invalid AI_PROVIDER. Use none, openai, or anthropic.");
+  if (aiProvider !== "none" && aiProvider !== "openai" && aiProvider !== "anthropic" && aiProvider !== "ajax") {
+    throw new Error("Invalid AI_PROVIDER. Use none, openai, anthropic, or ajax.");
+  }
+
+  const nftIndexer = blankToUndefined(env.NFT_INDEXER) ?? "none";
+  if (nftIndexer !== "none" && nftIndexer !== "alchemy" && nftIndexer !== "custom") {
+    throw new Error("Invalid NFT_INDEXER. Use none, alchemy, or custom.");
   }
 
   return {
     chainId: chainRaw === "143" ? 143 : 10143,
-    rpcUrl: optionalUrl(blankToUndefined(env.MONAD_RPC_URL), "MONAD_RPC_URL"),
+    rpcUrl: optionalHttpsUrl(blankToUndefined(env.MONAD_RPC_URL), "MONAD_RPC_URL"),
     chogNftAddress: requireAddress(
-      blankToUndefined(env.CHOG_NFT_ADDRESS) ?? DEFAULT_NFT_ADDRESS,
+      blankToUndefined(env.CHOG_NFT_ADDRESS) ?? addresses.chogGenesis,
       "CHOG_NFT_ADDRESS",
     ),
     chogTokenAddress: requireAddress(
-      blankToUndefined(env.CHOG_TOKEN_ADDRESS) ?? DEFAULT_TOKEN_ADDRESS,
+      blankToUndefined(env.CHOG_TOKEN_ADDRESS) ?? addresses.chogToken,
       "CHOG_TOKEN_ADDRESS",
     ),
-    supabaseUrl: optionalUrl(blankToUndefined(env.SUPABASE_URL), "SUPABASE_URL"),
+    chogTreasuryAddress: requireAddress(
+      blankToUndefined(env.CHOG_TREASURY_ADDRESS) ?? addresses.chogTreasury,
+      "CHOG_TREASURY_ADDRESS",
+    ),
+    expectedFoundingCount: readExpectedCount(env.EXPECTED_FOUNDING_COUNT),
+    ipfsGateway:
+      optionalHttpsUrl(blankToUndefined(env.IPFS_GATEWAY), "IPFS_GATEWAY") ?? DEFAULT_IPFS_GATEWAY,
+    nftIndexer,
+    nftIndexerApiKey: blankToUndefined(env.NFT_INDEXER_API_KEY),
+    nftIndexerUrl: optionalHttpsUrl(blankToUndefined(env.NFT_INDEXER_URL), "NFT_INDEXER_URL"),
+    syncSecret: blankToUndefined(env.SYNC_SECRET),
+    supabaseUrl: optionalHttpsUrl(blankToUndefined(env.SUPABASE_URL), "SUPABASE_URL"),
     supabaseAnonKey: blankToUndefined(env.SUPABASE_ANON_KEY),
     supabaseServiceRoleKey: blankToUndefined(env.SUPABASE_SERVICE_ROLE_KEY),
     aiProvider,
     aiApiKey: blankToUndefined(env.AI_API_KEY),
     aiModel: blankToUndefined(env.AI_MODEL),
-    aiBaseUrl: optionalUrl(blankToUndefined(env.AI_BASE_URL), "AI_BASE_URL"),
+    aiBaseUrl: optionalHttpsUrl(blankToUndefined(env.AI_BASE_URL), "AI_BASE_URL"),
   };
 }

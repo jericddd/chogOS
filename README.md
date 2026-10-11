@@ -1,6 +1,6 @@
-# Chog Civilization
+# chogOS
 
-Phase 0 foundation for one shared AI civilization on Monad. A participating Chog Genesis token id is one citizen. Citizens share one government, one economy, and one history. This repository is the application shell, the data model, and the security boundary. It does not deploy contracts, sign transactions, or invent balances.
+One shared civilization for Chog Genesis citizens on Monad. A participating token id is one citizen. Founding citizens are the NFTs held by the ChogTreasury wallet. Community owners can enroll NFTs they currently control. The economic treasury, citizen smart wallets, and the AI mind are not active in this phase.
 
 ## Stack
 
@@ -8,9 +8,9 @@ Phase 0 foundation for one shared AI civilization on Monad. A participating Chog
 - Tailwind CSS 4
 - Supabase Postgres, through `@supabase/supabase-js` and `@supabase/ssr`
 - viem for read-only Monad access
-- A server-side AI provider interface with `none`, `openai`, and `anthropic`
+- A server-side AI provider interface with `none`, `openai`, `anthropic`, and `ajax`
 
-The dashboard runs without Supabase or an AI key. Those services stay empty until you add them.
+The world renders without Supabase. Founding records and enrollment are stored only after Supabase is configured. The dashboard does not call the AI provider.
 
 ## Scripts
 
@@ -19,52 +19,36 @@ npm install
 npm run dev
 npm run lint
 npm run typecheck
+npm test
 npm run build
 npm run verify:contracts
+npm run discover:treasury
 ```
 
-`verify:contracts` calls the public Monad RPCs. It checks chain ids, the Chog Genesis NFT, the $CHOG proxy, and the presence of bytecode at the wallet-infrastructure addresses recorded in [docs/contracts.md](docs/contracts.md). It does not print holder addresses or wallet balances.
+`verify:contracts` checks the public Monad RPCs and does not print holder balances. `discover:treasury` reads ChogTreasury NFT holdings from the collection contract and confirms each id with `ownerOf`.
 
 ## Environment
 
-Copy `.env.example` to `.env.local` when you have values to add. Do not commit `.env.local`. The service role key and the AI key are server-only. This phase has no place to put a private key or a seed phrase, and it should not gain one.
+Copy `.env.example` to `.env.local`. Do not commit `.env.local`. The service role key, indexer key, sync secret, and AI key are server-only. There is no place to put a private key or a seed phrase.
 
-## Layout
+Setup for the database, the optional indexer, and enrollment is in [docs/phase-1.md](docs/phase-1.md).
 
-```text
-src/app/                  dashboard routes and the disabled transaction route
-src/components/           shell and page components
-src/lib/ai/               provider interface, not called by the dashboard
-src/lib/blockchain/       chains, recorded addresses, read helpers
-src/lib/config/env.ts     environment parsing
-src/lib/db/               Supabase clients and row types
-src/lib/placeholder/      sample dashboard data
-supabase/migrations/      initial Postgres schema
-docs/                     architecture, database, wallets, contract evidence
-scripts/verify-contracts.ts
-```
+## What the world shows
 
-## What is real on the dashboard
+The home scene, citizen gallery, Genesis Treasury, and history read Monad when the RPC is reachable. Treasury NFT counts are Chog Genesis holdings, not `$CHOG` balances. If the verified count is not the expected comparison figure, the page says so. Missing metadata uses local artwork. The activity feed lists stored events only.
 
-The overview states that enrollment is closed, the treasury is not deployed, and no balance is shown. Contract rows repeat a check made on 10 October 2026. They are labeled as a recorded check, not a live wallet reading.
-
-Sample citizens, the sample workshop, and the sample history are marked placeholder. They are not token holders and they are not transactions.
-
-`POST /api/transactions` always returns 403. The AI provider has no tools and is not attached to a route.
+`POST /api/transactions` still returns 403. The AI provider has no tools and no wallet authority. `AI_PROVIDER=ajax` refuses before any network call.
 
 ## Documents
 
+- [Phase 1 setup](docs/phase-1.md)
 - [Architecture](docs/architecture.md)
 - [Database plan](docs/database.md)
 - [Wallet system](docs/wallet-system.md)
 - [Contract evidence](docs/contracts.md)
 
-## Phase 1
+## Phase 2
 
-1. Create a Supabase project and run `supabase/migrations/20261010180000_initial_schema.sql` in the SQL editor. Confirm the anon key cannot select from `citizens`. Row level security is on, there are no policies, and the anon and authenticated grants are revoked.
-2. Add a read-only ownership check for a Chog Genesis token id on Monad mainnet (chain 143). These contracts have no code on testnet, so testnet cannot prove ownership of this collection.
-3. Insert a citizen only after the current `ownerOf` result signs an enrollment message. Store the block number of that read. A typed token id is not enrollment.
-4. Replace the placeholder citizen, business, and activity panels with database reads. When a balance is shown, read it from Monad at a stated block. A `balance_observations` row may appear only as a labeled past reading.
-5. Write the wallet design down to specific audited bytecode before any deployment. Hash-check the Safe singleton, the Safe proxy factory, and the chosen ERC-4337 EntryPoint against published artifacts. The design is in [docs/wallet-system.md](docs/wallet-system.md). Do not deploy it in that step.
-6. Keep AI output in `ai_memories` and `ai_decisions`. Do not add spending tools. Leave `POST /api/transactions` as a refusal until a wallet can enforce the permission itself.
-7. Before any trade, swap, business wallet, or contract deployment, write the legal and spending limits into the wallet policy. The model prompt is not the control.
+Specify unique citizen smart-contract wallets and the shared economic treasury. Hash-check a dedicated wallet factory, the Safe singleton, the Safe proxy factory, and the chosen ERC-4337 EntryPoint before any deployment. The citizen root of authority is the current `ownerOf` of that NFT. The AI gets no key and only a revocable session. The economic treasury is a separate administrator-owned Safe. It is not the ChogTreasury NFT wallet and it is not a `$CHOG` balance. Do not deploy contracts or move assets in that step until the bytecode review is written down.
+
+The design notes are in [docs/wallet-system.md](docs/wallet-system.md).
