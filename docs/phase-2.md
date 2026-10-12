@@ -58,7 +58,7 @@ MON is read with `getBalance` on the configured chain. `$CHOG` is read with `bal
 
 `POST /api/treasury/funding` checks a transaction hash on the server’s chain. Confirmation requires a successful receipt and either native value sent to the configured treasury or an ERC-20 `Transfer` from the configured `$CHOG` contract to that treasury. A missing receipt stays `unverified`. A reverted receipt stays `reverted`. A successful receipt with no matching transfer stays `failed`. The same chain, hash, asset, and token are not inserted twice.
 
-Submitting a hash does not confirm it. The route does not broadcast a transaction.
+Submitting a hash does not confirm it. The route does not broadcast a transaction. Before a receipt is trusted, the RPC's chain id has to match `MONAD_CHAIN_ID`. Two transfers of the same asset in one transaction are added into one row. An unverified check can be replaced when a later read confirms the receipt. A confirmed row is kept, so the same hash is not counted again. An address with no contract code is not labeled an externally owned account until that is actually known.
 
 ## Administrator routes
 
@@ -117,4 +117,8 @@ Open `/`, `/treasury`, `/economy`, `/citizens/7`, and `/activity`. Founding citi
 
 ## Migration status
 
-Checked against the configured Supabase project on 12 October 2026. `citizens` still returns 59 rows. `citizen_wallet_registry` is not in the schema cache, so `supabase/migrations/20261012220000_phase2_wallets.sql` has not been applied. The service-role key can read tables through the Data API. It cannot run this DDL. Paste the file contents into the Supabase SQL editor. Do not paste the file path, and do not re-run the Phase 0 or Phase 1 files.
+Checked against the configured Supabase project on 12 October 2026. `citizens` still returns 59 rows. `citizen_wallet_registry` is not in the schema cache, so `supabase/migrations/20261012220000_phase2_wallets.sql` has not been applied there. The service-role key can read tables through the Data API. It cannot run this DDL.
+
+The same file was applied successfully on a local PostgreSQL 16 database after the Phase 0 and Phase 1 migrations. Duplicate wallet rows, the ChogTreasury address, address replacement, a mixed-case duplicate funding hash, and a confirmed row without an amount were all rejected. That local database is not the hosted project.
+
+Paste the file contents into the Supabase SQL editor. Do not paste the file path, and do not re-run the Phase 0 or Phase 1 files.

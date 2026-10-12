@@ -5,6 +5,7 @@ import { CITIZEN_WALLET_SCHEME } from "@/lib/wallets/authority";
 import { planUnassignedWallets, type WalletAssignment, type WalletStatus } from "@/lib/wallets/lifecycle";
 import type { SafeVersion } from "@/lib/wallets/infrastructure";
 import type { TreasuryVerification } from "@/lib/wallets/lifecycle";
+import { mergeFundingRecord } from "@/lib/wallets/funding";
 import { isWalletStatus, type StoredBalance, type StoredFunding, type StoredTreasury, type WalletRegistryStore, type WalletStoreResult } from "@/lib/wallets/store";
 
 type DbError = { code?: string; message: string };
@@ -15,7 +16,12 @@ function missingTable(error: DbError): boolean {
 
 function fail(error: DbError): { ok: false; reason: "migration_pending" | "unavailable"; detail: string } {
   if (missingTable(error)) {
-    return { ok: false, reason: "migration_pending", detail: "Phase 2 tables are not in the database yet." };
+    return {
+      ok: false,
+      reason: "migration_pending",
+      detail:
+        "Phase 2 tables are not in the database yet. Apply supabase/migrations/20261012220000_phase2_wallets.sql in the Supabase SQL editor.",
+    };
   }
   return { ok: false, reason: "unavailable", detail: error.message.slice(0, 300) };
 }
@@ -155,56 +161,90 @@ export class SupabaseWalletStore implements WalletRegistryStore {
   }
 
   async saveFunding(input: Omit<StoredFunding, "id"> & { treasuryId: string }): Promise<WalletStoreResult<StoredFunding>> {
+    const normalized = normalizeFunding(input);
     const lookup = this.client
       .from("treasury_funding")
       .select("id, chain_id, asset_kind, token_address, symbol, decimals, tx_hash, sender, recipient, amount_raw, block_number, status, detail, verified_at")
-      .eq("chain_id", input.chainId)
-      .eq("tx_hash", input.txHash)
-      .eq("asset_kind", input.assetKind);
-    const existing = await (input.tokenAddress ? lookup.eq("token_address", input.tokenAddress) : lookup.is("token_address", null)).maybeSingle();
+      .eq("chain_id", normalized.chainId)
+      .eq("tx_hash", normalized.txHash)
+      .eq("asset_kind", normalized.assetKind);
+    const existing = await (normalized.tokenAddress
+      ? lookup.eq("token_address", normalized.tokenAddress)
+      : lookup.is("token_address", null)
+    ).maybeSingle();
     if (existing.error) {
       return fail(existing.error);
     }
     if (existing.data) {
-      return { ok: true, value: this.toFunding(existing.data) };
+      return this.upgradeFunding(this.toFunding(existing.data), normalized);
     }
 
     const { data, error } = await this.client
       .from("treasury_funding")
       .insert({
-        treasury_id: input.treasuryId,
-        chain_id: input.chainId,
-        asset_kind: input.assetKind,
-        token_address: input.tokenAddress,
-        symbol: input.symbol,
-        decimals: input.decimals,
-        tx_hash: input.txHash,
-        sender: input.sender,
-        recipient: input.recipient,
-        amount_raw: input.amountRaw,
-        block_number: input.blockNumber,
-        status: input.status,
-        detail: input.detail,
-        verified_at: input.verifiedAt,
+        treasury_id: normalized.treasuryId,
+        chain_id: normalized.chainId,
+        asset_kind: normalized.assetKind,
+        token_address: normalized.tokenAddress,
+        symbol: normalized.symbol,
+        decimals: normalized.decimals,
+        tx_hash: normalized.txHash,
+        sender: normalized.sender,
+        recipient: normalized.recipient,
+        amount_raw: normalized.amountRaw,
+        block_number: normalized.blockNumber,
+        status: normalized.status,
+        detail: normalized.detail,
+        verified_at: normalized.verifiedAt,
       })
       .select("id, chain_id, asset_kind, token_address, symbol, decimals, tx_hash, sender, recipient, amount_raw, block_number, status, detail, verified_at")
       .single();
     if (error) {
       if (error.code === "23505") {
-        const again = await this.listFunding(input.chainId);
+        const again = await this.listFunding(normalized.chainId);
         if (!again.ok) {
           return again;
         }
         const found = again.value.find(
           (row) =>
-            row.txHash.toLowerCase() === input.txHash.toLowerCase() &&
-            row.assetKind === input.assetKind &&
-            (row.tokenAddress ?? "") === (input.tokenAddress ?? ""),
+            row.txHash.toLowerCase() === normalized.txHash &&
+            row.assetKind === normalized.assetKind &&
+            (row.tokenAddress ?? "").toLowerCase() === (normalized.tokenAddress ?? "").toLowerCase(),
         );
         if (found) {
-          return { ok: true, value: found };
+          return this.upgradeFunding(found, normalized);
         }
       }
+      return fail(error);
+    }
+    return { ok: true, value: this.toFunding(data) };
+  }
+
+  private async upgradeFunding(
+    current: StoredFunding,
+    incoming: Omit<StoredFunding, "id"> & { treasuryId: string },
+  ): Promise<WalletStoreResult<StoredFunding>> {
+    const merged = mergeFundingRecord(current, { ...current, ...incoming, id: current.id });
+    if (merged === current) {
+      return { ok: true, value: current };
+    }
+    const { data, error } = await this.client
+      .from("treasury_funding")
+      .update({
+        symbol: merged.symbol,
+        decimals: merged.decimals,
+        sender: merged.sender,
+        recipient: merged.recipient,
+        amount_raw: merged.amountRaw,
+        block_number: merged.blockNumber,
+        status: merged.status,
+        detail: merged.detail,
+        verified_at: merged.verifiedAt,
+      })
+      .eq("id", current.id)
+      .select("id, chain_id, asset_kind, token_address, symbol, decimals, tx_hash, sender, recipient, amount_raw, block_number, status, detail, verified_at")
+      .single();
+    if (error) {
       return fail(error);
     }
     return { ok: true, value: this.toFunding(data) };
@@ -322,8 +362,8 @@ export class SupabaseWalletStore implements WalletRegistryStore {
       txHash: String(row.tx_hash),
       sender: row.sender,
       recipient: row.recipient,
-      amountRaw: row.amount_raw === null || row.amount_raw === undefined ? null : String(row.amount_raw).split(".")[0] ?? null,
-      blockNumber: row.block_number === null || row.block_number === undefined ? null : String(row.block_number).split(".")[0] ?? null,
+      amountRaw: wholeInteger(row.amount_raw),
+      blockNumber: wholeInteger(row.block_number),
       status: row.status,
       detail: row.detail,
       verifiedAt: row.verified_at,
@@ -342,11 +382,27 @@ export class SupabaseWalletStore implements WalletRegistryStore {
       assetKey: String(row.asset_key),
       symbol: String(row.symbol),
       decimals: Number(row.decimals),
-      amountRaw: String(row.amount_raw).split(".")[0] ?? "0",
-      blockNumber: String(row.block_number).split(".")[0] ?? "0",
+      amountRaw: wholeInteger(row.amount_raw) ?? String(row.amount_raw),
+      blockNumber: wholeInteger(row.block_number) ?? String(row.block_number),
       observedAt: String(row.observed_at),
     };
   }
+}
+
+function wholeInteger(value: string | number | null | undefined): string | null {
+  if (value === null || value === undefined) {
+    return null;
+  }
+  const whole = String(value).split(".")[0] ?? "";
+  return /^\d+$/.test(whole) ? whole : null;
+}
+
+function normalizeFunding(input: Omit<StoredFunding, "id"> & { treasuryId: string }) {
+  return {
+    ...input,
+    txHash: input.txHash.toLowerCase(),
+    tokenAddress: input.tokenAddress ? getAddress(input.tokenAddress) : null,
+  };
 }
 
 export function checksum(value: string): Address {

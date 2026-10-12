@@ -5,6 +5,7 @@
 create function prevent_wallet_address_replacement()
 returns trigger
 language plpgsql
+set search_path = public
 as $$
 begin
   if tg_table_name = 'civilization_treasuries' then
@@ -64,11 +65,11 @@ comment on table citizen_wallet_registry is
   'One assignment per citizen, chain, and wallet scheme. not_configured means no address exists. address_predicted is not deployment.';
 
 create unique index citizen_wallet_predicted_address
-  on citizen_wallet_registry (chain_id, predicted_address)
+  on citizen_wallet_registry (chain_id, lower(predicted_address))
   where predicted_address is not null;
 
 create unique index citizen_wallet_account_address
-  on citizen_wallet_registry (chain_id, account_address)
+  on citizen_wallet_registry (chain_id, lower(account_address))
   where account_address is not null;
 
 create trigger citizen_wallet_registry_updated_at
@@ -143,7 +144,7 @@ create table treasury_funding (
 );
 
 create unique index treasury_funding_once
-  on treasury_funding (chain_id, tx_hash, asset_kind, coalesce(token_address, ''));
+  on treasury_funding (chain_id, lower(tx_hash), asset_kind, lower(coalesce(token_address, '')));
 
 comment on table treasury_funding is
   'A confirmed row requires a receipt check. Entering a hash does not confirm a transfer.';
@@ -192,3 +193,17 @@ begin
 end $$;
 
 revoke all on function prevent_wallet_address_replacement() from public;
+
+do $$
+declare
+  role_name text;
+begin
+  foreach role_name in array array['anon', 'authenticated']
+  loop
+    if exists (select 1 from pg_roles where rolname = role_name) then
+      execute format('revoke all on function prevent_wallet_address_replacement() from %I', role_name);
+    end if;
+  end loop;
+end $$;
+
+notify pgrst, 'reload schema';
