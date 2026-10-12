@@ -1,6 +1,7 @@
 import "server-only";
 import { createGenesisReaderForConfig } from "@/lib/blockchain/genesis-reader";
 import { loadWorldSnapshot } from "@/lib/civilization/load-world";
+import { openCivilizationStore } from "@/lib/civilization/open-store";
 import type { DisplayCitizen } from "@/lib/civilization/roster";
 import { parseTokenId, sameAddress } from "@/lib/civilization/token-id";
 import type { CivilizationEvent } from "@/lib/civilization/types";
@@ -38,7 +39,7 @@ export async function loadCitizenProfile(rawTokenId: string): Promise<CitizenPro
 
   const world = await loadWorldSnapshot();
   const known = world.display.find((citizen) => citizen.tokenId === parsed.tokenId) ?? null;
-  const events = world.events.filter((event) => event.tokenId === parsed.tokenId);
+  const events = await eventsForToken(parsed.tokenId, world.events);
   const ownerRead = await readCurrentOwner(parsed.tokenId);
 
   if (!known && !ownerRead.owner) {
@@ -70,6 +71,18 @@ export async function loadCitizenProfile(rawTokenId: string): Promise<CitizenPro
     heldByTreasury: ownerRead.owner ? sameAddress(ownerRead.owner, world.treasury) : false,
     treasury: world.treasury,
   };
+}
+
+async function eventsForToken(tokenId: string, recent: CivilizationEvent[]): Promise<CivilizationEvent[]> {
+  const store = openCivilizationStore();
+  if (!store) {
+    return recent.filter((event) => event.tokenId === tokenId);
+  }
+  try {
+    return await store.listEventsForToken(tokenId, 40);
+  } catch {
+    return recent.filter((event) => event.tokenId === tokenId);
+  }
 }
 
 async function readCurrentOwner(tokenId: string): Promise<{ owner: string | null; note: string }> {

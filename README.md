@@ -1,6 +1,6 @@
 # chogOS
 
-One shared civilization for Chog Genesis citizens on Monad. A participating token id is one citizen. Founding citizens are the NFTs held by the ChogTreasury wallet. Community owners can enroll NFTs they currently control. The economic treasury, citizen smart wallets, and the AI mind are not active in this phase.
+One shared civilization for Chog Genesis citizens on Monad. A participating token id is one citizen. Founding citizens are the NFTs held by the ChogTreasury wallet. Community owners can enroll NFTs they currently control. Phase 2 records citizen wallet assignments and a separate Civilization Treasury. No citizen smart account is deployed, no treasury address is configured, and the AI mind cannot spend.
 
 ## Stack
 
@@ -42,6 +42,7 @@ The home scene, citizen gallery, Genesis Treasury, and history read Monad when t
 ## Documents
 
 - [Phase 1 setup](docs/phase-1.md)
+- [Phase 2 wallets and treasury](docs/phase-2.md)
 - [Architecture](docs/architecture.md)
 - [Database plan](docs/database.md)
 - [Wallet system](docs/wallet-system.md)
@@ -49,6 +50,8 @@ The home scene, citizen gallery, Genesis Treasury, and history read Monad when t
 
 ## Phase 2
 
-Specify unique citizen smart-contract wallets and the shared economic treasury. Hash-check a dedicated wallet factory, the Safe singleton, the Safe proxy factory, and the chosen ERC-4337 EntryPoint before any deployment. The citizen root of authority is the current `ownerOf` of that NFT. The AI gets no key and only a revocable session. The economic treasury is a separate administrator-owned Safe. It is not the ChogTreasury NFT wallet and it is not a `$CHOG` balance. Do not deploy contracts or move assets in that step until the bytecode review is written down.
+Citizen identity stays `(chain id, NFT contract, token id)`. A wallet row is an assignment for that citizen, not a new identity. The only scheme stored in this phase is `unassigned`, and the only status the app writes is `not_configured`. No address is predicted, and no smart account is deployed.
 
-The design notes are in [docs/wallet-system.md](docs/wallet-system.md).
+The Civilization Treasury is a different record from the ChogTreasury NFT wallet. It starts with no address. An administrator can later submit an address and a funding hash through server routes that check Monad. Those routes do not send transactions.
+
+Setup, the hash-checked Safe infrastructure, and the remaining blockers are in [docs/phase-2.md](docs/phase-2.md).

@@ -2,9 +2,11 @@ import Link from "next/link";
 import { connection } from "next/server";
 import { Suspense } from "react";
 import type { Metadata } from "next";
+import { CitizenWalletPanel } from "@/components/citizens/citizen-wallet";
 import { CitizenPortrait, MetadataFacts, MetadataName } from "@/components/citizens/portrait";
 import { formatUtc, shortAddress, verificationLabel } from "@/lib/civilization/labels";
 import { loadCitizenProfile } from "@/lib/civilization/load-profile";
+import { loadCitizenWalletView } from "@/lib/wallets/load";
 
 export const metadata: Metadata = {
   title: "Citizen",
@@ -18,7 +20,6 @@ const reserved = [
   "Relationships",
   "Goals",
   "AI memory",
-  "Personal wallet",
 ] as const;
 
 export default function CitizenPage({ params }: { params: Promise<{ tokenId: string }> }) {
@@ -69,6 +70,7 @@ async function CitizenLive({ tokenId }: { tokenId: string }) {
   }
 
   const citizen = profile.citizen;
+  const wallet = await loadCitizenWalletView(citizen.citizenId);
   return (
     <div className="grid gap-8 lg:grid-cols-[18rem_minmax(0,1fr)]">
       <div className="portrait-frame overflow-hidden rounded-2xl border border-line">
@@ -130,6 +132,8 @@ async function CitizenLive({ tokenId }: { tokenId: string }) {
             </ul>
           )}
         </section>
+
+        <CitizenWalletPanel view={wallet} />
 
         <section className="mt-8">
           <h2 className="font-serif text-2xl">Collection traits</h2>

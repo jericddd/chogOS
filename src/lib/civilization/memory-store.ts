@@ -48,6 +48,14 @@ export class MemoryCivilizationStore implements CivilizationStore {
     return this.events.slice(-limit).reverse().map((event) => ({ ...event }));
   }
 
+  async listEventsForToken(tokenId: string, limit: number): Promise<CivilizationEvent[]> {
+    return this.events
+      .filter((event) => event.tokenId === tokenId)
+      .slice(-limit)
+      .reverse()
+      .map((event) => ({ ...event }));
+  }
+
   async latestSync(): Promise<StoredSync | null> {
     const finished = [...this.runs].reverse().find((run) => run.status !== "running");
     const run = finished ?? this.runs.at(-1);

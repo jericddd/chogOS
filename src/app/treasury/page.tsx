@@ -2,10 +2,13 @@ import { connection } from "next/server";
 import { Suspense } from "react";
 import type { Metadata } from "next";
 import { CitizenGallery } from "@/components/citizens/citizen-gallery";
+import { CivilizationTreasuryPanel } from "@/components/treasury/civilization-treasury";
+import { RecordWallets } from "@/components/treasury/record-wallets";
 import { RefreshRoster } from "@/components/treasury/refresh-roster";
 import { PageHeader } from "@/components/ui/page-header";
 import { formatUtc } from "@/lib/civilization/labels";
 import { loadWorldSnapshot } from "@/lib/civilization/load-world";
+import { loadCivilizationTreasury } from "@/lib/wallets/load";
 
 export const metadata: Metadata = {
   title: "Genesis Treasury",
@@ -22,6 +25,7 @@ export default function TreasuryPage() {
 async function TreasuryLive() {
   await connection();
   const world = await loadWorldSnapshot();
+  const treasury = await loadCivilizationTreasury();
   const holdings = world.display.filter(
     (citizen) => world.tokenIds.includes(citizen.tokenId) || citizen.designation.startsWith("Founding"),
   );
@@ -30,8 +34,9 @@ async function TreasuryLive() {
     <div className="space-y-8">
       <PageHeader
         title="Genesis Treasury"
-        lede="These are Chog Genesis NFTs held by the ChogTreasury wallet. They are founding citizen identities, not a $CHOG token balance and not the later economic treasury."
+        lede="These are Chog Genesis NFTs held by the ChogTreasury wallet. They are founding citizen identities, not a $CHOG token balance. The Civilization Treasury below is a different wallet."
       />
+      <CivilizationTreasuryPanel view={treasury} action={<RecordWallets locked={world.syncSecretRequired} />} />
       <section className="grid gap-4 md:grid-cols-2">
         <Fact label="Treasury wallet" value={world.treasury} mono />
         <Fact label="Network" value={world.networkLabel} />
