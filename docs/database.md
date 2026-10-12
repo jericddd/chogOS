@@ -90,7 +90,7 @@ Row level security is enabled on every application table, including the Phase 1 
 
 Row level security is enabled on these tables. `anon` and `authenticated` are revoked when those roles exist. `service_role` is granted when that role exists. The existing `wallets` table is unchanged and is still reserved for addresses that already exist. Predicted or missing wallets do not go there.
 
-Apply this file after the Phase 1 migration, by pasting its contents into the Supabase SQL editor. A file in the repository is not the same as a migration that has been applied. See [docs/phase-2.md](docs/phase-2.md) for the current applied state.
+Apply this file after the Phase 1 migration, then apply `20261012233000_phase2_funding_guards.sql`. That follow-up makes funding hashes and wallet addresses unique without regard to letter case. Paste file contents into the Supabase SQL editor. A file in the repository is not the same as a migration that has been applied. See [docs/phase-2.md](docs/phase-2.md) for the current applied state.
 
 ## Not stored
 

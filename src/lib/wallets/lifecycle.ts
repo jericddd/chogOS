@@ -129,18 +129,18 @@ export function assessTreasuryCode(input: {
   codeEmpty: boolean;
   masterCopy: Address | null;
 }): {
-  accountType: "eoa" | "contract";
+  accountType: "unknown" | "eoa" | "contract";
   verification: TreasuryVerification;
   safeVersion: SafeVersion | null;
   detail: string;
 } {
   if (input.codeEmpty) {
     return {
-      accountType: "eoa",
+      accountType: "unknown",
       verification: "observed",
       safeVersion: null,
       detail:
-        "No contract code at this address. It is an externally owned account observed on this chain, not a Safe and not a wallet deployed by chogOS.",
+        "No contract code was found at this address on the configured chain. It is not labeled an externally owned account or a Safe, and chogOS did not deploy it.",
     };
   }
   const safeVersion = input.masterCopy ? safeVersionForMasterCopy(input.masterCopy) : null;

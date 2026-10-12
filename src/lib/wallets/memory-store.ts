@@ -1,4 +1,5 @@
 import { getAddress, type Address } from "viem";
+import { mergeFundingRecord } from "@/lib/wallets/funding";
 import { planUnassignedWallets, type WalletAssignment } from "@/lib/wallets/lifecycle";
 import type {
   StoredBalance,
@@ -104,14 +105,26 @@ export class MemoryWalletStore implements WalletRegistryStore {
   }
 
   async saveFunding(input: Omit<StoredFunding, "id"> & { treasuryId: string }) {
+    const txHash = input.txHash.toLowerCase();
+    const tokenAddress = input.tokenAddress?.toLowerCase() ?? null;
     const existing = this.funding.find(
       (row) =>
         row.chainId === input.chainId &&
-        row.txHash.toLowerCase() === input.txHash.toLowerCase() &&
+        row.txHash.toLowerCase() === txHash &&
         row.assetKind === input.assetKind &&
-        (row.tokenAddress ?? "") === (input.tokenAddress ?? ""),
+        (row.tokenAddress ?? "").toLowerCase() === (tokenAddress ?? ""),
     );
     if (existing) {
+      const merged = mergeFundingRecord(existing, { ...existing, ...input, txHash, tokenAddress });
+      existing.status = merged.status;
+      existing.amountRaw = merged.amountRaw;
+      existing.sender = merged.sender;
+      existing.recipient = merged.recipient;
+      existing.blockNumber = merged.blockNumber;
+      existing.detail = merged.detail;
+      existing.verifiedAt = merged.verifiedAt;
+      existing.symbol = merged.symbol;
+      existing.decimals = merged.decimals;
       return this.listFunding(input.chainId).then((rows) => {
         if (!rows.ok) {
           return rows;
@@ -120,7 +133,7 @@ export class MemoryWalletStore implements WalletRegistryStore {
         return found ? ok(found) : { ok: false as const, reason: "unavailable" as const, detail: "Missing funding row." };
       });
     }
-    const created = { ...input, id: `funding-${this.funding.length + 1}` };
+    const created = { ...input, txHash, tokenAddress, id: `funding-${this.funding.length + 1}` };
     this.funding.push(created);
     return ok({
       id: created.id,

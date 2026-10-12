@@ -4,6 +4,7 @@ import { openCivilizationStore } from "@/lib/civilization/open-store";
 import { readAppConfig } from "@/lib/config/env";
 import { treasuryAddressProblem } from "@/lib/wallets/authority";
 import { readBalances, readCode, readFunding, readMasterCopy } from "@/lib/wallets/chain";
+import { combineFundingLegs } from "@/lib/wallets/funding";
 import { assessTreasuryCode } from "@/lib/wallets/lifecycle";
 import { openWalletStore } from "@/lib/wallets/open-store";
 import type { StoredBalance, StoredFunding, StoredTreasury, WalletStoreResult } from "@/lib/wallets/store";
@@ -41,8 +42,13 @@ export async function configureCivilizationTreasury(rawAddress: string): Promise
   if (code.error) {
     return { ok: false, reason: "unavailable", detail: code.error };
   }
-  const masterCopy = code.empty ? null : await readMasterCopy(config.chainId, address, config.rpcUrl);
-  const assessed = assessTreasuryCode({ codeEmpty: code.empty, masterCopy });
+  const masterCopy = code.empty
+    ? { address: null, error: null }
+    : await readMasterCopy(config.chainId, address, config.rpcUrl);
+  if (masterCopy.error) {
+    return { ok: false, reason: "unavailable", detail: masterCopy.error };
+  }
+  const assessed = assessTreasuryCode({ codeEmpty: code.empty, masterCopy: masterCopy.address });
   const now = new Date().toISOString();
   return store.saveTreasury({
     chainId: config.chainId,
@@ -75,13 +81,16 @@ export async function verifyTreasuryFunding(rawHash: string): Promise<
   if (!treasury.value?.address || treasury.value.status !== "configured") {
     return { ok: false, reason: "rejected", detail: "Configure the civilization treasury before verifying a funding transaction." };
   }
-  const legs = await readFunding({
-    chainId: config.chainId,
-    txHash: rawHash as Hash,
-    treasury: treasury.value.address,
-    chogToken: config.chogTokenAddress,
-    rpcUrl: config.rpcUrl,
-  });
+  const txHash = rawHash.toLowerCase();
+  const legs = combineFundingLegs(
+    await readFunding({
+      chainId: config.chainId,
+      txHash: txHash as Hash,
+      treasury: treasury.value.address,
+      chogToken: config.chogTokenAddress,
+      rpcUrl: config.rpcUrl,
+    }),
+  );
   const now = new Date().toISOString();
   const saved: StoredFunding[] = [];
   for (const leg of legs) {
@@ -92,7 +101,7 @@ export async function verifyTreasuryFunding(rawHash: string): Promise<
       tokenAddress: leg.tokenAddress,
       symbol: leg.symbol,
       decimals: leg.decimals,
-      txHash: rawHash,
+      txHash,
       sender: leg.sender,
       recipient: leg.recipient,
       amountRaw: leg.amountRaw,

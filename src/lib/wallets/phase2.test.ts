@@ -4,7 +4,7 @@ import { encodeAbiParameters, encodeEventTopics, getAddress, parseAbiItem, type 
 import { describe, expect, it } from "vitest";
 import { addresses } from "@/lib/blockchain/addresses";
 import { treasuryAddressProblem, walletControlFollowsNftOwner } from "@/lib/wallets/authority";
-import { judgeFunding, presentBalance, type TransferLog } from "@/lib/wallets/funding";
+import { combineFundingLegs, judgeFunding, presentBalance, rpcChainProblem, type TransferLog } from "@/lib/wallets/funding";
 import {
   assessClientWalletClaim,
   assessTreasuryCode,
@@ -19,6 +19,7 @@ const treasury = getAddress("0x1111111111111111111111111111111111111111");
 const other = getAddress("0x2222222222222222222222222222222222222222");
 const sender = getAddress("0x3333333333333333333333333333333333333333");
 const migration = readFileSync("supabase/migrations/20261012220000_phase2_wallets.sql", "utf8");
+const fundingGuards = readFileSync("supabase/migrations/20261012233000_phase2_funding_guards.sql", "utf8");
 
 function transferLog(token: string, from: string, to: string, value: bigint): TransferLog {
   const event = parseAbiItem("event Transfer(address indexed from, address indexed to, uint256 value)");
@@ -144,10 +145,11 @@ describe("civilization treasury", () => {
     expect(view.balances.every((row) => row.text === "Not read")).toBe(true);
   });
 
-  it("does not label an observed externally owned account as a deployed Safe", () => {
+  it("does not label an address with no code as a deployed Safe", () => {
     const assessed = assessTreasuryCode({ codeEmpty: true, masterCopy: null });
-    expect(assessed.accountType).toBe("eoa");
+    expect(assessed.accountType).toBe("unknown");
     expect(assessed.verification).toBe("observed");
+    expect(assessed.detail).toMatch(/not labeled an externally owned account/i);
     expect(assessed.safeVersion).toBeNull();
     const safe = assessTreasuryCode({ codeEmpty: false, masterCopy: addresses.safeSingleton141 });
     expect(safe.verification).toBe("safe_proxy");
@@ -202,6 +204,50 @@ describe("civilization treasury", () => {
     expect(first.ok && second.ok && first.value.id).toBe(second.ok ? second.value.id : "");
     expect(listed.ok && listed.value).toHaveLength(1);
     expect(listed.ok && listed.value[0]?.amountRaw).toBe("1000");
+  });
+
+  it("lets a later confirmation replace an unverified check without counting the hash twice", async () => {
+    const store = new MemoryWalletStore();
+    const hash = `0x${"cd".repeat(32)}`;
+    const base = {
+      treasuryId: "treasury-143",
+      chainId: 143 as const,
+      assetKind: "erc20" as const,
+      tokenAddress: addresses.chogToken,
+      symbol: "CHOG",
+      decimals: 18,
+      sender,
+      recipient: treasury,
+      detail: "checked",
+      verifiedAt: null as string | null,
+    };
+    await store.saveFunding({
+      ...base,
+      txHash: hash,
+      amountRaw: null,
+      blockNumber: null,
+      status: "unverified",
+    });
+    const confirmed = await store.saveFunding({
+      ...base,
+      txHash: hash.toUpperCase(),
+      amountRaw: "8",
+      blockNumber: "12",
+      status: "confirmed",
+      verifiedAt: "2026-10-12T00:00:00.000Z",
+    });
+    const repeat = await store.saveFunding({
+      ...base,
+      txHash: hash,
+      amountRaw: "99",
+      blockNumber: "13",
+      status: "confirmed",
+      verifiedAt: "2026-10-12T00:00:00.000Z",
+    });
+    const listed = await store.listFunding(143);
+    expect(confirmed.ok && confirmed.value.amountRaw).toBe("8");
+    expect(repeat.ok && repeat.value.amountRaw).toBe("8");
+    expect(listed.ok && listed.value).toHaveLength(1);
   });
 });
 
@@ -265,6 +311,30 @@ describe("funding verification", () => {
     expect(token[0]?.status).toBe("confirmed");
     expect(token[0]?.amountRaw).toBe("4");
     expect(token[0]?.tokenAddress).toBe(addresses.chogToken);
+
+    const doubled = combineFundingLegs(
+      judgeFunding({
+        treasury,
+        chogToken: addresses.chogToken,
+        receipt: {
+          status: "success",
+          blockNumber: 9n,
+          logs: [
+            transferLog(addresses.chogToken, sender, treasury, 4n),
+            transferLog(addresses.chogToken, sender, treasury, 6n),
+          ],
+        },
+        transaction: { from: sender, to: addresses.chogToken, value: 0n },
+        chogDecimals: 18,
+      }),
+    );
+    expect(doubled).toHaveLength(1);
+    expect(doubled[0]?.amountRaw).toBe("10");
+  });
+
+  it("rejects a receipt from a different chain id", () => {
+    expect(rpcChainProblem(10143, 143)).toMatch(/chain 10143/);
+    expect(rpcChainProblem(143, 143)).toBeNull();
   });
 
   it("does not invent a balance when a read fails", () => {
@@ -285,6 +355,11 @@ describe("phase 2 safety boundaries", () => {
   it("adds wallet tables without dropping citizens or seeding an address", () => {
     expect(migration).toContain("unique (citizen_id, chain_id, scheme)");
     expect(migration).toContain("treasury_funding_once");
+    expect(fundingGuards).toContain("lower(tx_hash)");
+    expect(fundingGuards).toContain("notify pgrst, 'reload schema'");
+    expect(fundingGuards).not.toMatch(/\bdrop\s+table\b/i);
+    expect(fundingGuards).not.toMatch(/\btruncate\b/i);
+    expect(fundingGuards).not.toMatch(/insert\s+into\s+citizens/i);
     expect(migration).toContain("enable row level security");
     expect(migration).not.toMatch(/\bdrop\s+table\b/i);
     expect(migration).not.toMatch(/\btruncate\b/i);

@@ -148,6 +148,49 @@ export function judgeFunding(input: {
   return legs;
 }
 
+const fundingRank: Record<FundingStatus, number> = {
+  unverified: 0,
+  submitted: 1,
+  pending: 2,
+  failed: 3,
+  reverted: 4,
+  confirmed: 5,
+};
+
+export function combineFundingLegs(legs: FundingLeg[]): FundingLeg[] {
+  const grouped = new Map<string, FundingLeg>();
+  for (const leg of legs) {
+    const key = `${leg.status}:${leg.assetKind}:${(leg.tokenAddress ?? "").toLowerCase()}`;
+    const existing = grouped.get(key);
+    if (!existing) {
+      grouped.set(key, { ...leg });
+      continue;
+    }
+    if (existing.amountRaw !== null && leg.amountRaw !== null) {
+      existing.amountRaw = (BigInt(existing.amountRaw) + BigInt(leg.amountRaw)).toString();
+    }
+    existing.detail = `${existing.detail} A second transfer in the same transaction is included in the amount.`.slice(0, 500);
+  }
+  return [...grouped.values()];
+}
+
+export function mergeFundingRecord<T extends { status: FundingStatus; amountRaw: string | null }>(
+  existing: T,
+  incoming: T,
+): T {
+  if (fundingRank[incoming.status] <= fundingRank[existing.status]) {
+    return existing;
+  }
+  return incoming;
+}
+
+export function rpcChainProblem(actual: number, expected: 143 | 10143): string | null {
+  if (actual === expected) {
+    return null;
+  }
+  return `The RPC reported chain ${actual}. This application is configured for chain ${expected}. No balance or receipt from that RPC was accepted.`;
+}
+
 export function presentBalance(input: {
   configured: boolean;
   live: { symbol: string; decimals: number; amountRaw: string; blockNumber: string; observedAt: string } | null;
