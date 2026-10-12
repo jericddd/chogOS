@@ -19,6 +19,7 @@ const treasury = getAddress("0x1111111111111111111111111111111111111111");
 const other = getAddress("0x2222222222222222222222222222222222222222");
 const sender = getAddress("0x3333333333333333333333333333333333333333");
 const migration = readFileSync("supabase/migrations/20261012220000_phase2_wallets.sql", "utf8");
+const fundingGuards = readFileSync("supabase/migrations/20261012233000_phase2_funding_guards.sql", "utf8");
 
 function transferLog(token: string, from: string, to: string, value: bigint): TransferLog {
   const event = parseAbiItem("event Transfer(address indexed from, address indexed to, uint256 value)");
@@ -354,8 +355,11 @@ describe("phase 2 safety boundaries", () => {
   it("adds wallet tables without dropping citizens or seeding an address", () => {
     expect(migration).toContain("unique (citizen_id, chain_id, scheme)");
     expect(migration).toContain("treasury_funding_once");
-    expect(migration).toContain("lower(tx_hash)");
-    expect(migration).toContain("notify pgrst, 'reload schema'");
+    expect(fundingGuards).toContain("lower(tx_hash)");
+    expect(fundingGuards).toContain("notify pgrst, 'reload schema'");
+    expect(fundingGuards).not.toMatch(/\bdrop\s+table\b/i);
+    expect(fundingGuards).not.toMatch(/\btruncate\b/i);
+    expect(fundingGuards).not.toMatch(/insert\s+into\s+citizens/i);
     expect(migration).toContain("enable row level security");
     expect(migration).not.toMatch(/\bdrop\s+table\b/i);
     expect(migration).not.toMatch(/\btruncate\b/i);

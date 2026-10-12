@@ -103,7 +103,7 @@ export function presentCivilizationTreasury(input: {
     input.persistence === "not_persisted"
       ? "Supabase is not configured, so treasury settings are not stored."
       : input.persistence === "migration_pending"
-        ? "The Phase 2 tables are not in the database yet. Apply supabase/migrations/20261012220000_phase2_wallets.sql in the Supabase SQL editor. No treasury address is assumed."
+        ? "The Phase 2 tables are not in the database yet. In the Supabase SQL editor, run supabase/migrations/20261012220000_phase2_wallets.sql and then 20261012233000_phase2_funding_guards.sql. No treasury address is assumed."
         : input.persistence === "unavailable"
           ? (input.persistenceDetail ?? "The treasury record could not be read.")
           : "Treasury settings are read from the existing Supabase project.";

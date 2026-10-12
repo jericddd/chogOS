@@ -77,7 +77,7 @@ The chain id is always `MONAD_CHAIN_ID` (143 or 10143). A testnet hash is not co
 
 ## Database
 
-The new file is `supabase/migrations/20261012220000_phase2_wallets.sql`. It does not drop, truncate, or rewrite citizens. Apply it in the existing Supabase project after the Phase 0 and Phase 1 files. Do not paste the file path into the SQL editor; paste the file contents.
+The new files are `supabase/migrations/20261012220000_phase2_wallets.sql` and `supabase/migrations/20261012233000_phase2_funding_guards.sql`. They do not drop, truncate, or rewrite citizens. Apply them in the existing Supabase project after the Phase 0 and Phase 1 files, in filename order. Do not paste a file path into the SQL editor; paste the file contents.
 
 Whether that file has been applied is recorded at the bottom of this document and can change. A migration file in git is not proof the hosted database has it.
 
@@ -109,7 +109,7 @@ Open `/`, `/treasury`, `/economy`, `/citizens/7`, and `/activity`. Founding citi
 
 ## What you still do by hand
 
-1. Apply `supabase/migrations/20261012220000_phase2_wallets.sql` if the migration status below says pending.
+1. Apply `supabase/migrations/20261012220000_phase2_wallets.sql` and then `supabase/migrations/20261012233000_phase2_funding_guards.sql` if the migration status below says pending. Paste the contents, not the file path.
 2. On the treasury page, use “Record wallet assignments”, or refresh the founding roster. That writes `not_configured` rows. It does not deploy anything.
 3. When you have a real wallet you control, set `TREASURY_ADMIN_SECRET` in `.env.local` and restart the server. Then `POST /api/treasury/configure` with that bearer token and the address. Do not use the ChogTreasury NFT wallet.
 4. Fund that address yourself from your own wallet. Then `POST /api/treasury/funding` with the transaction hash. The app checks the receipt. It does not send the funds.
@@ -117,8 +117,8 @@ Open `/`, `/treasury`, `/economy`, `/citizens/7`, and `/activity`. Founding citi
 
 ## Migration status
 
-Checked against the configured Supabase project on 12 October 2026. `citizens` still returns 59 rows. `citizen_wallet_registry` is not in the schema cache, so `supabase/migrations/20261012220000_phase2_wallets.sql` has not been applied there. The service-role key can read tables through the Data API. It cannot run this DDL.
+Checked against the configured Supabase project on 12 October 2026. `citizens` still returns 59 rows. `citizen_wallet_registry` is not in the schema cache, so neither Phase 2 SQL file has been applied there. The service-role key can read tables through the Data API. It cannot run this DDL.
 
-The same file was applied successfully on a local PostgreSQL 16 database after the Phase 0 and Phase 1 migrations. Duplicate wallet rows, the ChogTreasury address, address replacement, a mixed-case duplicate funding hash, and a confirmed row without an amount were all rejected. That local database is not the hosted project.
+Both Phase 2 files were applied successfully on a local PostgreSQL 16 database after the Phase 0 and Phase 1 migrations. Duplicate wallet rows, the ChogTreasury address, address replacement, a mixed-case duplicate funding hash, and a confirmed row without an amount were all rejected. That local database is not the hosted project.
 
-Paste the file contents into the Supabase SQL editor. Do not paste the file path, and do not re-run the Phase 0 or Phase 1 files.
+Paste the contents of both Phase 2 files into the Supabase SQL editor, in filename order. Do not paste the file path, and do not re-run the Phase 0 or Phase 1 files.

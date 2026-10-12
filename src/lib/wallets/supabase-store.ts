@@ -20,7 +20,7 @@ function fail(error: DbError): { ok: false; reason: "migration_pending" | "unava
       ok: false,
       reason: "migration_pending",
       detail:
-        "Phase 2 tables are not in the database yet. Apply supabase/migrations/20261012220000_phase2_wallets.sql in the Supabase SQL editor.",
+        "Phase 2 tables are not in the database yet. In the Supabase SQL editor, run supabase/migrations/20261012220000_phase2_wallets.sql and then 20261012233000_phase2_funding_guards.sql.",
     };
   }
   return { ok: false, reason: "unavailable", detail: error.message.slice(0, 300) };
