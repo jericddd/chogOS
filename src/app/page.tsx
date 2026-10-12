@@ -4,6 +4,7 @@ import { Suspense } from "react";
 import { WorldStage } from "@/components/world/world-stage";
 import { formatUtc } from "@/lib/civilization/labels";
 import { loadWorldSnapshot } from "@/lib/civilization/load-world";
+import { loadWalletWorldLine } from "@/lib/wallets/load";
 
 export default function OverviewPage() {
   return (
@@ -16,6 +17,7 @@ export default function OverviewPage() {
 async function WorldHome() {
   await connection();
   const world = await loadWorldSnapshot();
+  const walletLabel = await loadWalletWorldLine();
   const recent = world.events.slice(0, 5);
 
   return (
@@ -43,6 +45,7 @@ async function WorldHome() {
         persistenceLabel={world.persistenceLabel}
         discrepancy={world.discrepancy}
         countLabel={world.countLabel}
+        walletLabel={walletLabel}
       />
 
       <section className="grid gap-4 md:grid-cols-3">

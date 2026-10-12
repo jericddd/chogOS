@@ -71,7 +71,7 @@ Monadscan labeled the contract as an ERC-20 token and decoded recent `Approve` a
 
 ## Infrastructure observed for the wallet plan
 
-Bytecode presence was checked on mainnet. None of these contracts were hash-matched to upstream release artifacts.
+Bytecode presence was checked on mainnet during Phase 0. That pass did not hash-match the contracts. A later pass on 12 October 2026 compared `eth_getCode` on Monad mainnet with known Safe, EntryPoint, and ERC-6551 bytecode. The hashes that matched are stored in `src/lib/wallets/infrastructure.ts`. A hash match means the code at that address matches a published artifact. It does not mean chogOS deployed it.
 
 | Name | Address | How it was identified |
 | --- | --- | --- |
@@ -86,6 +86,27 @@ Bytecode presence was checked on mainnet. None of these contracts were hash-matc
 | ERC-6551 registry | `0x000000006551c19487814612e58FE06813775758` | Well-known registry address. Code present. Not in the Monad canonical list that was read, and not hash-matched |
 
 Addresses are checksummed with viem. EntryPoint v0.8's checksum differs in letter case from the Monad docs page; it is the same 20 bytes.
+
+### Hash check on 12 October 2026
+
+| Name | Address | Result |
+| --- | --- | --- |
+| Safe 1.3.0 singleton (Monad's listed address) | `0x69f4D1788e39c87893C980c06EdF4b7f686e2938` | Matches Safe 1.3.0, not Safe 1.4.1 |
+| SafeL2 1.3.0 | `0xfb1bffC9d739B8D520DaF37dF666da4C687191EA` | Matches SafeL2 1.3.0 |
+| Safe proxy factory 1.3.0 | `0xa6B71E26C5e0845f74c812102Ca7114b6a896AB2` | Matches |
+| Safe 1.4.1 singleton | `0x41675C099F32341bf84BFc5382aF534df5C7461a` | Matches Safe 1.4.1 and the same address on Ethereum |
+| SafeL2 1.4.1 | `0x29fcB43b46531BcA003ddC8FCB67FFE91900C762` | Matches |
+| Safe proxy factory 1.4.1 | `0x4e1DCf7AD4e460CfD30791CCC4F9c8a4f820ec67` | Matches |
+| Safe 1.5.0 singleton | `0xFf51A5898e281Db6DfC7855790607438dF2ca44b` | Matches |
+| SafeL2 1.5.0 | `0xEdd160fEBBD92E350D4D398fb636302fccd67C7e` | Matches |
+| Safe proxy factory 1.5.0 | `0x14F2982D601c9458F93bd70B218933A6f8165e7b` | Matches |
+| EntryPoint v0.6 | `0x5FF137D4b0FDCD49DcA30c7CF57E578a026d2789` | Matches Ethereum |
+| EntryPoint v0.7 | `0x0000000071727De22E5E9d8BAf0edAc6f37da032` | Matches Ethereum |
+| EntryPoint v0.8 | `0x4337084D9E255Ff0702461CF8895CE9E3b5Ff108` | Code is present. The hash does not match Ethereum, so it is not treated as canonical |
+| EntryPoint v0.9 | `0x433709009B8330FDa32311DF1C2AFA402eD8D009` | Code is present. The hash does not match Ethereum, so it is not treated as canonical |
+| ERC-6551 registry | `0x000000006551c19487814612e58FE06813775758` | Matches Ethereum |
+
+No ERC-6551 account implementation was hash-matched, so no citizen account address is derived from the registry. A standard Safe does not read `ownerOf`, so these factories are not used to predict citizen wallets in Phase 2.
 
 ## What this does not establish
 

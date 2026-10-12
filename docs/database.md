@@ -79,6 +79,19 @@ Chain ids are constrained to Monad mainnet `143` and Monad testnet `10143`.
 
 Row level security is enabled on every application table, including the Phase 1 tables. No policies are defined. When the Supabase `anon` and `authenticated` roles exist, their table grants are revoked. The service role bypasses row level security, so it stays in server code. Enrollment does not open those tables to the browser. The server checks the signature and `ownerOf`, then writes with the service role.
 
+## Phase 2 wallets and treasury
+
+`20261012220000_phase2_wallets.sql` is additive. It does not insert citizens, token ids, or a treasury address.
+
+- `citizen_wallet_registry` is one row per `(citizen_id, chain_id, scheme)`. The only scheme is `unassigned`. `not_configured` requires both addresses to be null. `deployed` and `verified` require `account_address`. A trigger refuses to replace a stored predicted or account address.
+- `civilization_treasuries` is one row per chain. `not_configured` has a null address. The ChogTreasury NFT wallet is rejected by a check constraint. A trigger refuses to replace a stored address.
+- `treasury_funding` is unique on chain, transaction hash, asset kind, and token address. `confirmed` requires an amount, a recipient, and a block number.
+- `treasury_balance_readings` stores RPC readings only. `source` must be `rpc`, and `amount_raw` cannot be null, so a failed read is not inserted as zero.
+
+Row level security is enabled on these tables. `anon` and `authenticated` are revoked when those roles exist. `service_role` is granted when that role exists. The existing `wallets` table is unchanged and is still reserved for addresses that already exist. Predicted or missing wallets do not go there.
+
+Apply this file after the Phase 1 migration, by pasting its contents into the Supabase SQL editor. A file in the repository is not the same as a migration that has been applied. See [docs/phase-2.md](docs/phase-2.md) for the current applied state.
+
 ## Not stored
 
 Browser sessions, private keys, session-key material, and live prices are outside this migration. Session keys, when they exist, belong to the wallet contract. The database may store a public description of a permission, not the key that can exercise it.

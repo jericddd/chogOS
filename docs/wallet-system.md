@@ -1,5 +1,19 @@
 # Wallet system
 
+## Phase 2 decision
+
+Hash-checked Safe 1.3.0, 1.4.1, and 1.5.0 singletons and proxy factories are present on Monad mainnet, along with EntryPoint v0.6 and v0.7 and the ERC-6551 registry. The evidence is in [docs/contracts.md](docs/contracts.md). None of that is a chogOS deployment.
+
+A normal Safe keeps the owners it was created with. Predicting a Safe whose owner is today's NFT holder would leave the previous owner in control after a transfer. No hash-matched account implementation reads `ownerOf`. Phase 2 therefore does not predict or deploy citizen wallets. Each persisted citizen can have one `unassigned` registry row with status `not_configured` and no address.
+
+`walletControlFollowsNftOwner()` returns false. NFT ownership still authorizes the citizen record through a fresh `ownerOf` read. It does not authorize a smart wallet, because no such wallet exists.
+
+The Civilization Treasury is a separate configuration row. No address is seeded. If an administrator later sets one, the server reads code and `masterCopy()` before storing an observed status. An observed Safe is not a wallet chogOS deployed, and the AI cannot spend from it.
+
+The notes below are the longer-term design. They are not what Phase 2 deployed.
+
+## Earlier design notes
+
 Phase 0 does not deploy a wallet. This note chooses the design to specify before any bytecode is sent to Monad.
 
 ## What the wallets have to do

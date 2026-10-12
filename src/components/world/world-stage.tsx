@@ -18,6 +18,7 @@ export function WorldStage({
   persistenceLabel,
   discrepancy,
   countLabel,
+  walletLabel,
 }: {
   foundingCount: number | null;
   communityCount: number | null;
@@ -28,6 +29,7 @@ export function WorldStage({
   persistenceLabel: string;
   discrepancy: string | null;
   countLabel: string;
+  walletLabel?: string;
 }) {
   return (
     <div
@@ -76,6 +78,12 @@ export function WorldStage({
             <dt className="text-xs tracking-[0.14em] text-muted uppercase">AI mind</dt>
             <dd className="mt-1">{aiLabel}</dd>
           </div>
+          {walletLabel ? (
+            <div>
+              <dt className="text-xs tracking-[0.14em] text-muted uppercase">Citizen wallets</dt>
+              <dd className="mt-1">{walletLabel}</dd>
+            </div>
+          ) : null}
         </dl>
       </aside>
     </div>

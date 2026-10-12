@@ -17,7 +17,7 @@ export async function POST(request: Request) {
       {
         ok: false,
         error:
-          "Enrollment needs Supabase. Set SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY, then apply both SQL migrations.",
+          "Enrollment needs Supabase. Set SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY, then apply the SQL migrations in supabase/migrations.",
       },
       { status: 503 },
     );

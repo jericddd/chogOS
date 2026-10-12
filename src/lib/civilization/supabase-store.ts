@@ -124,9 +124,38 @@ export class SupabaseCivilizationStore implements CivilizationStore {
     if (error) {
       throw dbError(error, "Could not read civilization events.");
     }
-    return (data ?? []).map((row) => {
+    return (data ?? []).map((row) => this.toEvent(row));
+  }
+
+  async listEventsForToken(tokenId: string, limit: number): Promise<CivilizationEvent[]> {
+    const { data, error } = await this.client
+      .from("civilization_events")
+      .select("id, occurred_at, kind, summary, actor_citizen_id, payload, chain_status, dedupe_key")
+      .contains("payload", { tokenId })
+      .order("occurred_at", { ascending: false })
+      .limit(limit);
+    if (error) {
+      throw dbError(error, "Could not read citizen events.");
+    }
+    return (data ?? []).map((row) => this.toEvent(row));
+  }
+
+  private toEvent(row: {
+    id: string;
+    occurred_at: string;
+    kind: string;
+    summary: string;
+    actor_citizen_id: string | null;
+    payload: unknown;
+    chain_status: string;
+    dedupe_key: string | null;
+  }): CivilizationEvent {
       const payload = row.payload as { tokenId?: unknown } | null;
-      const tokenId = payload && typeof payload.tokenId === "string" ? payload.tokenId : null;
+      const rawTokenId = payload?.tokenId;
+      const tokenId =
+        typeof rawTokenId === "string" || typeof rawTokenId === "number"
+          ? String(rawTokenId).split(".")[0] || null
+          : null;
       return {
         id: String(row.id),
         occurredAt: String(row.occurred_at),
@@ -137,7 +166,6 @@ export class SupabaseCivilizationStore implements CivilizationStore {
         chainStatus: row.chain_status as CivilizationEvent["chainStatus"],
         dedupeKey: row.dedupe_key ? String(row.dedupe_key) : null,
       };
-    });
   }
 
   async latestSync(): Promise<StoredSync | null> {

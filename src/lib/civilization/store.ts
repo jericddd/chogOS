@@ -41,6 +41,7 @@ export interface CivilizationStore {
   listCitizens(): Promise<CitizenRecord[]>;
   findCitizen(chainId: number, nftContract: string, tokenId: string): Promise<CitizenRecord | null>;
   listEvents(limit: number): Promise<CivilizationEvent[]>;
+  listEventsForToken(tokenId: string, limit: number): Promise<CivilizationEvent[]>;
   latestSync(): Promise<StoredSync | null>;
   beginSync(
     nowMs: number,

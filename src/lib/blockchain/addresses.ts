@@ -20,9 +20,18 @@ export const addresses = {
   entryPointV07: getAddress("0x0000000071727De22E5E9d8BAf0edAc6f37da032"),
   entryPointV08: getAddress("0x4337084d9e255fF0702461CF8895cE9E3b5Ff108"),
   entryPointV09: getAddress("0x433709009B8330FDa32311DF1C2AFA402eD8D009"),
+  /** Monad's listed Safe singleton. Runtime bytecode matches Safe 1.3.0, not Safe 1.4.1. */
   safeSingleton: getAddress("0x69f4D1788e39c87893C980c06EdF4b7f686e2938"),
+  /** Monad's listed SafeL2 singleton. Runtime bytecode matches SafeL2 1.3.0. */
   safeL2Singleton: getAddress("0xfb1bffC9d739B8D520DaF37dF666da4C687191EA"),
+  /** Safe proxy factory 1.4.1. Runtime bytecode matches the canonical deployment. */
   safeProxyFactory: getAddress("0x4e1DCf7AD4e460CfD30791CCC4F9c8a4f820ec67"),
+  safeProxyFactory130: getAddress("0xa6B71E26C5e0845f74c812102Ca7114b6a896AB2"),
+  safeSingleton141: getAddress("0x41675C099F32341bf84BFc5382aF534df5C7461a"),
+  safeL2Singleton141: getAddress("0x29fcB43b46531BcA003ddC8FCB67FFE91900C762"),
+  safeSingleton150: getAddress("0xFf51A5898e281Db6DfC7855790607438dF2ca44b"),
+  safeL2Singleton150: getAddress("0xEdd160fEBBD92E350D4D398fb636302fccd67C7e"),
+  safeProxyFactory150: getAddress("0x14F2982D601c9458F93bd70B218933A6f8165e7b"),
 } as const satisfies Record<string, Address>;
 
 export const CHOG_TOKEN_PROXY_BYTECODE =
