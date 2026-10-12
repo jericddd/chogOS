@@ -1,4 +1,4 @@
-import { randomBytes } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import { getAddress, type Address } from "viem";
 import type { GenesisChainReader } from "@/lib/blockchain/genesis-reader";
 import { buildEnrollmentMessage, signatureMatches } from "@/lib/civilization/enrollment-message";
@@ -169,7 +169,6 @@ export async function submitEnrollment(input: {
   const plan: SyncPlan = { creates: [], updates: [], events: [], warnings: [] };
   const unchanged: string[] = [];
   const enrolled: string[] = [];
-  let sequence = 0;
   const blockNumber = await input.reader.readOwnedInventory(input.wallet).then((inventory) => inventory.blockNumber);
 
   for (const tokenId of challenge.tokenIds) {
@@ -188,7 +187,7 @@ export async function submitEnrollment(input: {
       tokenId,
       blockNumber,
       now: now.toISOString(),
-      nextId: input.nextId ?? (() => `citizen-${tokenId}-${(sequence += 1)}`),
+      nextId: input.nextId ?? (() => randomUUID()),
     });
     if (decision.action === "reject") {
       return { ok: false, error: decision.reason };

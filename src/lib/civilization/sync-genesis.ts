@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import type { Address } from "viem";
 import type { GenesisChainReader } from "@/lib/blockchain/genesis-reader";
 import { selectVerifiedHoldings } from "@/lib/blockchain/holdings";
@@ -101,7 +102,6 @@ export async function synchronizeGenesis(input: {
       return { tokenId: citizen.tokenId, status: "owner" as const, owner: observation.owner };
     });
 
-    let sequence = 0;
     const plan = planGenesisSync({
       existing,
       verifiedHeld: selected.verified,
@@ -111,7 +111,7 @@ export async function synchronizeGenesis(input: {
       chainId: input.chainId,
       blockNumber: inventory.blockNumber,
       now,
-      nextId: input.nextId ?? (() => `citizen-${inventory.blockNumber}-${(sequence += 1)}`),
+      nextId: input.nextId ?? (() => randomUUID()),
     });
     warnings.push(...plan.warnings);
 
