@@ -25,9 +25,11 @@ export async function openWorldDb(options: { before?: (db: PGlite) => Promise<vo
     create role authenticated nologin;
     create role service_role nologin bypassrls;
   `);
+  let seeded = false;
   for (const file of migrationFiles()) {
-    if (file.includes("phase3") && options.before) {
+    if (!seeded && file.startsWith("20261013040000") && options.before) {
       await options.before(db);
+      seeded = true;
     }
     await db.exec(readFileSync(path.join(migrationsDir, file), "utf8"));
   }

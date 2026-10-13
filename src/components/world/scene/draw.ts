@@ -2,12 +2,13 @@ import { darkness } from "@/lib/world/clock";
 import {
   GRID_H,
   GRID_W,
-  POND,
-  RIVER_Y,
+  PLOTS,
   TILE,
   decorations,
   hash32,
   isRoad,
+  isWaterTile,
+  regionAt,
   type WorkRole,
 } from "@/lib/world/layout";
 import { WORLD_PX_H, WORLD_PX_W, type Placement } from "@/lib/world/scene";
@@ -25,7 +26,13 @@ function pick<T>(list: readonly T[], seed: number): T {
 }
 
 const GRASS = ["#1f4a35", "#21503a", "#1d4632", "#22533b"];
+const GRASS_EAST = ["#244a38", "#1e4634", "#275640", "#1c4030"];
+const GRASS_SOUTH = ["#2a4f32", "#31583a", "#274a2e", "#2d5536"];
+const GRASS_WOODS = ["#163a2a", "#1a4230", "#133628", "#1c4634"];
 const TUFT = ["#2c6647", "#2a6144", "#327250"];
+const PLOT = "#6a5738";
+const PLOT_EDGE = "#4a3c26";
+const PLOT_STAKE = "#8a734c";
 const ROAD = "#6b5741";
 const ROAD_EDGE = "#56462f";
 const PEBBLE = ["#806a51", "#5f4d38", "#8a7459"];
@@ -39,20 +46,22 @@ const ROOFS = [
   ["#3a68ad", "#2c5085"],
 ] as const;
 
-function inPond(x: number, y: number): boolean {
-  return x >= POND.x && x < POND.x + POND.w && y >= POND.y && y < POND.y + POND.h;
+function isWater(x: number, y: number): boolean {
+  return isWaterTile(x, y);
 }
 
-function isWater(x: number, y: number): boolean {
-  if (y === RIVER_Y || y === RIVER_Y + 1) {
-    return true;
+function grassFor(x: number, y: number, seed: number): string {
+  const region = regionAt(x, y)?.kind;
+  if (region === "resource") {
+    return pick(GRASS_WOODS, seed);
   }
-  if (!inPond(x, y)) {
-    return false;
+  if (region === "wilds") {
+    return pick(GRASS_SOUTH, seed);
   }
-  const corner =
-    (x === POND.x || x === POND.x + POND.w - 1) && (y === POND.y || y === POND.y + POND.h - 1);
-  return !corner;
+  if (region === "reserve") {
+    return pick(GRASS_EAST, seed);
+  }
+  return pick(GRASS, seed);
 }
 
 function drawGround(ctx: Ctx) {
@@ -61,12 +70,28 @@ function drawGround(ctx: Ctx) {
       const px = tx * TILE;
       const py = ty * TILE;
       const seed = hash32(`g:${tx}:${ty}`);
-      rect(ctx, px, py, TILE, TILE, pick(GRASS, seed));
+      rect(ctx, px, py, TILE, TILE, grassFor(tx, ty, seed));
       for (let i = 0; i < 3; i += 1) {
         const s = hash32(`t:${tx}:${ty}:${i}`);
         rect(ctx, px + (s % 14), py + ((s >> 4) % 14), 1, 2, pick(TUFT, s >> 8));
       }
     }
+  }
+}
+
+function drawPlots(ctx: Ctx) {
+  for (const plot of PLOTS) {
+    const px = plot.x * TILE;
+    const py = plot.y * TILE;
+    const w = plot.w * TILE;
+    const h = plot.h * TILE;
+    rect(ctx, px, py, w, h, PLOT);
+    rect(ctx, px, py, w, 1, PLOT_EDGE);
+    rect(ctx, px, py + h - 1, w, 1, PLOT_EDGE);
+    rect(ctx, px, py, 1, h, PLOT_EDGE);
+    rect(ctx, px + w - 1, py, 1, h, PLOT_EDGE);
+    rect(ctx, px + 2, py + 2, 2, 5, PLOT_STAKE);
+    rect(ctx, px + w - 4, py + 2, 2, 5, PLOT_STAKE);
   }
 }
 
@@ -436,6 +461,7 @@ export function drawStaticLayer(ctx: Ctx, buildings: readonly BuildingView[]) {
   ctx.imageSmoothingEnabled = false;
   ctx.clearRect(0, 0, WORLD_PX_W, WORLD_PX_H);
   drawGround(ctx);
+  drawPlots(ctx);
   drawWater(ctx);
   drawRoads(ctx);
   for (const b of buildings) {

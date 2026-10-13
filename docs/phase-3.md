@@ -7,7 +7,7 @@ The home page is now a persistent 2D pixel-art world. Every eligible existing ci
 | Item | Status |
 | --- | --- |
 | Citizens | Real. The existing `citizens` rows. No citizen is created by the world. Active founding citizens and active community citizens on the configured chain and contract are placed. |
-| Buildings, roads, homes, jobs | Simulated, persistent. Layout `genesis-v1` is versioned and stored in `world_buildings` and `world_routes`. |
+| Buildings, roads, homes, jobs | Simulated, persistent. Layout `genesis-v1.1` is 120×80 tiles. The founding town stays on its original `genesis-v1` tiles. |
 | Activities, movement, shifts | Simulated by fixed rules (`source = simulation`). Not AI decisions. |
 | Food, wood, stone, tools | Simulated counts from 0 to 400 in the Storehouse. Not tokens, not balances. |
 | Construction of houses 13 to 15 | Simulated. Builders consume simulated wood and stone. |
@@ -26,7 +26,7 @@ The home page is now a persistent 2D pixel-art world. Every eligible existing ci
    npm run world:init
    ```
 
-   A second run returns `already_initialized` and changes nothing. A different layout returns `layout_mismatch` and changes nothing.
+   A second run returns `already_initialized` and then attaches the current layout if the stored town is an older compatible version. `npm run world:expand` only runs that upgrade. It does not move buildings or reset citizens.
 3. Check it:
 
    ```bash
@@ -39,10 +39,21 @@ The home page is now a persistent 2D pixel-art world. Every eligible existing ci
 Operator commands, all recorded as system events:
 
 ```bash
+npm run world:expand                   # genesis-v1 → genesis-v1.1 map, same town
 npm run world:admin -- speed calm      # or demo, or a number from 1 to 1000
 npm run world:admin -- pause
 npm run world:admin -- resume
 ```
+
+## Map (genesis-v1.1)
+
+The observable world is 120×80 tiles (1920×1280 px), four times the original 60×40 area. The founding settlement remains at tiles (0,0)–(60,40). New land lies to the east and south: reserved lots, meadows, woods, and roads that join the old network at its rim so founding walk times do not change.
+
+Undeveloped lots are not buildings. `world_regions` names four quadrants for later districts. `world_expand_layout` is idempotent. A truthful `world.expanded` system event is recorded once. Citizen construction events are not invented for the new land.
+
+The default camera still frames the founding town. Zoom out or pan to see the rest of the map.
+
+Apply `supabase/migrations/20261013120000_phase35_map.sql`, then `npm run world:expand`, then deploy the frontend that draws 120×80. The SQL file alone does not expand an already-founded world.
 
 `POST /api/world/tick` is an optional HTTP runner. It stays closed (403) until `WORLD_RUNNER_SECRET` is set and then requires `Authorization: Bearer <secret>`. It can only call `world_tick()`.
 

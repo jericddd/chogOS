@@ -10,11 +10,14 @@ import { citizenHref, describeCitizenNow, eventSegments } from "@/lib/world/pres
 import { toCitizen, toEvent, type CitizenRow, type EventRow } from "@/lib/world/rows";
 import {
   MAX_SCALE,
+  SETTLEMENT_PX_H,
+  SETTLEMENT_PX_W,
   WORLD_PX_H,
   WORLD_PX_W,
   clampCamera,
   fitCamera,
   hitTest,
+  minScale,
   placeCitizens,
   zoomAt,
 } from "@/lib/world/scene";
@@ -283,17 +286,19 @@ describe("scene placement", () => {
     }
   });
 
-  it("keeps the camera on the map, zooms around the pointer, and resets to the full map", () => {
+  it("keeps the camera on the map, zooms around the pointer, and resets to the founding town", () => {
     const view = { width: 900, height: 600 };
     const fit = fitCamera(view);
-    expect(fit.scale).toBeCloseTo(Math.min(900 / WORLD_PX_W, 600 / WORLD_PX_H));
+    expect(fit.scale).toBeCloseTo(Math.min(900 / SETTLEMENT_PX_W, 600 / SETTLEMENT_PX_H));
+    expect(minScale(view)).toBeCloseTo(Math.min(900 / WORLD_PX_W, 600 / WORLD_PX_H));
+    expect(minScale(view)).toBeLessThan(fit.scale);
     const zoomed = zoomAt(fit, view, 3, 450, 300);
     const before = { x: (450 - fit.x) / fit.scale, y: (300 - fit.y) / fit.scale };
     const after = { x: (450 - zoomed.x) / zoomed.scale, y: (300 - zoomed.y) / zoomed.scale };
     expect(after.x).toBeCloseTo(before.x);
     expect(after.y).toBeCloseTo(before.y);
     expect(zoomAt(zoomed, view, 1000, 0, 0).scale).toBe(MAX_SCALE);
-    expect(zoomAt(fit, view, 0.01, 0, 0).scale).toBeCloseTo(fit.scale);
+    expect(zoomAt(fit, view, 0.01, 0, 0).scale).toBeCloseTo(minScale(view));
     const far = clampCamera({ scale: 2, x: 5000, y: -9000 }, view);
     expect(far.x).toBe(0);
     expect(far.y).toBe(600 - WORLD_PX_H * 2);

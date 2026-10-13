@@ -96,8 +96,9 @@ Apply this file after the Phase 1 migration, then apply `20261012233000_phase2_f
 
 `20261013040000_phase3_world.sql` is additive. It creates no citizens and deletes nothing. Existing history rows stay and are labeled `source = system`, `category = membership`.
 
-- `world_buildings` and `world_routes` store the versioned layout (`genesis-v1`). Each building has a footprint, a door, capacity, job slots, construction progress, production progress, and, for the Storehouse, simulated stock clamped to 0 to 400.
-- `world_state` allows one row. It holds the clock anchor (`anchor_real`, `anchor_world_s`, `speed`), the status (`running` or `paused`), the tick sequence, the last tick time, the maximum catch-up of 150 seconds, and the last error.
+- `world_buildings` and `world_routes` store the versioned layout (`genesis-v1.1`, expanded from `genesis-v1`). Each building has a footprint, a door, capacity, job slots, construction progress, production progress, and, for the Storehouse, simulated stock clamped to 0 to 400. Founding building tiles are not moved by an expand.
+- `world_state` allows one row. It holds the clock anchor (`anchor_real`, `anchor_world_s`, `speed`), the status (`running` or `paused`), the tick sequence, the last tick time, the maximum catch-up of 150 seconds, `grid_w` / `grid_h`, and the last error.
+- `world_regions` names land for later districts (`settlement`, `wilds`, `reserve`, `resource`). Region rows are not buildings and have no jobs.
 - `citizen_world_state` is one row per placed citizen, keyed by `citizen_id`. It stores home, job, role, current activity, location, origin and destination, purpose, and both `ends_at` (real time) and `world_ends_s` (world time). `decision_source` records whether the rules or an intent chose the activity.
 - `world_intents` is the Phase 4 entry point. A unique partial index allows one pending intent per citizen.
 - `civilization_events` gains `seq` (feed order), `source` (`simulation`, `ai`, `onchain`, `system`), `category`, `building_id`, `related_citizen_id`, `world_s`, `tick_seq`, and `schema_version`, plus indexes for each feed filter.

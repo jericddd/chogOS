@@ -1,7 +1,7 @@
 /**
- * Founds the shared world once: inserts the genesis-v1 buildings and road
- * distances, gives every eligible existing citizen a home and a job, and
- * starts the clock. Safe to run again; a second run changes nothing.
+ * Founds the shared world once, then attaches the current layout if the
+ * stored town is an older compatible version (genesis-v1 → genesis-v1.1).
+ * Does not move buildings or reset citizens.
  *
  *   npm run world:init
  *   WORLD_SPEED=calm npm run world:init
@@ -24,8 +24,19 @@ async function main(): Promise<void> {
     console.error(explainRpcError(error));
     process.exit(1);
   }
-  console.log(JSON.stringify({ layout: `${layout.version} ${layout.hash}`, requestedSpeed: describeSpeed(speed), result: data }, null, 2));
-  if ((data as { status?: string } | null)?.status === "layout_mismatch") {
+  const initialized = data as { status?: string } | null;
+  let expanded: unknown = null;
+  if (initialized?.status === "layout_mismatch" || initialized?.status === "already_initialized" || initialized?.status === "initialized") {
+    const expand = await client.rpc("world_expand_layout", { p_layout: layout });
+    if (expand.error) {
+      console.error(explainRpcError(expand.error));
+      process.exit(1);
+    }
+    expanded = expand.data;
+  }
+  console.log(JSON.stringify({ layout: `${layout.version} ${layout.hash}`, requestedSpeed: describeSpeed(speed), initialize: data, expand: expanded }, null, 2));
+  const expandStatus = (expanded as { status?: string } | null)?.status;
+  if (initialized?.status === "layout_mismatch" && expandStatus !== "expanded" && expandStatus !== "already_expanded") {
     process.exit(2);
   }
 }

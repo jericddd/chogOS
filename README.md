@@ -24,6 +24,7 @@ npm run build
 npm run verify:contracts
 npm run discover:treasury
 npm run world:init
+npm run world:expand
 npm run world:admin -- status
 npm run world:runner
 npm run world:speed-report

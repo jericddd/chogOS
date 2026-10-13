@@ -1,8 +1,10 @@
-import { GRID_H, GRID_W, TILE, hash32, pathBetween, type Tile } from "@/lib/world/layout";
+import { GENESIS_V1_GRID_H, GENESIS_V1_GRID_W, GRID_H, GRID_W, TILE, hash32, pathBetween, type Tile } from "@/lib/world/layout";
 import type { BuildingView, CitizenView } from "@/lib/world/types";
 
 export const WORLD_PX_W = GRID_W * TILE;
 export const WORLD_PX_H = GRID_H * TILE;
+export const SETTLEMENT_PX_W = GENESIS_V1_GRID_W * TILE;
+export const SETTLEMENT_PX_H = GENESIS_V1_GRID_H * TILE;
 
 export type Placement = {
   tokenId: string;
@@ -149,17 +151,19 @@ export type Viewport = { width: number; height: number };
 
 export const MAX_SCALE = 6;
 
+/** Default view: the founding 60×40 settlement, framed as genesis-v1 was. */
 export function fitCamera(view: Viewport): Camera {
-  const scale = Math.min(view.width / WORLD_PX_W, view.height / WORLD_PX_H);
+  const scale = Math.min(view.width / SETTLEMENT_PX_W, view.height / SETTLEMENT_PX_H);
   return {
     scale,
-    x: (view.width - WORLD_PX_W * scale) / 2,
-    y: (view.height - WORLD_PX_H * scale) / 2,
+    x: (view.width - SETTLEMENT_PX_W * scale) / 2,
+    y: (view.height - SETTLEMENT_PX_H * scale) / 2,
   };
 }
 
+/** Smallest zoom that still shows the whole expanded map. */
 export function minScale(view: Viewport): number {
-  return fitCamera(view).scale;
+  return Math.min(view.width / WORLD_PX_W, view.height / WORLD_PX_H);
 }
 
 function clampAxis(offset: number, size: number, worldSize: number): number {
