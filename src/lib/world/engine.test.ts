@@ -454,8 +454,13 @@ describe("database access", () => {
     for (const role of ["anon", "authenticated"]) {
       expect(await privilege(`has_function_privilege('${role}', 'world_tick()', 'execute')`)).toBe(false);
       expect(await privilege(`has_function_privilege('${role}', 'world_set_speed(numeric)', 'execute')`)).toBe(false);
+      expect(await privilege(`has_function_privilege('${role}', 'world_cron_status()', 'execute')`)).toBe(false);
+      expect(await privilege(`has_function_privilege('${role}', 'world_initialize(jsonb,integer,text,numeric)', 'execute')`)).toBe(false);
     }
     expect(await privilege("has_function_privilege('service_role', 'world_tick()', 'execute')")).toBe(true);
+    expect(await privilege("has_function_privilege('service_role', 'world_cron_status()', 'execute')")).toBe(true);
+    expect(await privilege("has_table_privilege('service_role', 'world_intents', 'insert')")).toBe(true);
+    expect(await privilege("has_table_privilege('service_role', 'world_state', 'insert')")).toBe(false);
     expect(await privilege("has_function_privilege('service_role', 'world_tick_at(timestamptz)', 'execute')")).toBe(false);
     expect(
       await privilege("has_function_privilege('service_role', 'world_begin(uuid,text,text,timestamptz,bigint,bigint,text,boolean)', 'execute')"),

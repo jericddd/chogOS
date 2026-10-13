@@ -11,7 +11,11 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "verify:contracts": "tsx scripts/verify-contracts.ts",
-    "discover:treasury": "tsx scripts/discover-treasury.ts"
+    "discover:treasury": "tsx scripts/discover-treasury.ts",
+    "world:init": "tsx scripts/world-init.ts",
+    "world:runner": "tsx scripts/world-runner.ts",
+    "world:admin": "tsx scripts/world-admin.ts",
+    "world:speed-report": "tsx scripts/world-speed-report.ts"
   },
   "dependencies": {
     "@supabase/ssr": "^0.12.7",

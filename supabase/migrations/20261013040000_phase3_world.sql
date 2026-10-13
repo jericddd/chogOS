@@ -1614,6 +1614,39 @@ begin
 end;
 $$;
 
+-- Read-only scheduler report for operators. The service role cannot read the
+-- cron schema directly.
+create function world_cron_status()
+returns jsonb
+language plpgsql
+stable
+security definer
+set search_path = public
+as $$
+declare
+  v_job jsonb;
+  v_run jsonb;
+begin
+  if to_regclass('cron.job') is null then
+    return jsonb_build_object('scheduler', 'none');
+  end if;
+  execute $q$
+    select jsonb_build_object('jobId', jobid, 'schedule', schedule, 'active', active)
+    from cron.job where jobname = 'chogos-world-tick'
+  $q$ into v_job;
+  if v_job is null then
+    return jsonb_build_object('scheduler', 'pg_cron', 'job', null);
+  end if;
+  if to_regclass('cron.job_run_details') is not null then
+    execute $q$
+      select jsonb_build_object('status', status, 'startedAt', start_time, 'message', left(return_message, 200))
+      from cron.job_run_details where jobid = $1 order by start_time desc limit 1
+    $q$ into v_run using (v_job ->> 'jobId')::bigint;
+  end if;
+  return jsonb_build_object('scheduler', 'pg_cron', 'job', v_job, 'lastRun', v_run);
+end;
+$$;
+
 -- Access ---------------------------------------------------------------------
 -- The browser never reads these tables directly. The server reads them with the
 -- service role, which may select but not write. Writes happen only inside the
@@ -1668,6 +1701,7 @@ begin
     grant execute on function world_initialize(jsonb, integer, text, numeric) to service_role;
     grant execute on function world_set_speed(numeric) to service_role;
     grant execute on function world_set_status(text) to service_role;
+    grant execute on function world_cron_status() to service_role;
   end if;
 end $$;
 
