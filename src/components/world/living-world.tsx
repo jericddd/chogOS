@@ -129,7 +129,7 @@ export function LivingWorld({ initial, realtime }: { initial: WorldLoad; realtim
           />
           <div className="pointer-events-none absolute top-3 left-3 flex flex-col gap-2">
             <p className="pointer-events-auto rounded-full bg-background/85 px-3 py-1 text-xs text-muted">
-              Observing · the public cannot control citizens
+              Observing · pan to explore the surrounding lands
             </p>
             {health === "stalled" || health === "paused" ? (
               <p className="pointer-events-auto max-w-xs rounded-lg bg-background/90 px-3 py-2 text-xs text-warning">

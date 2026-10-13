@@ -1,10 +1,17 @@
 import { describe, expect, it } from "vitest";
 import {
   BUILDINGS,
+  EXPANSION_ROADS,
+  GENESIS_V1_GRID_H,
+  GENESIS_V1_GRID_W,
+  GENESIS_V1_VERSION,
   GRID_H,
   GRID_W,
+  PLOTS,
   decorations,
+  genesisV1Layout,
   initializationLayout,
+  isPlot,
   isRoad,
   pathBetween,
   walkableGrid,
@@ -79,6 +86,9 @@ describe("world layout", () => {
     const first = initializationLayout();
     const second = initializationLayout();
     expect(first.hash).toBe(second.hash);
+    expect(first.version).toBe("genesis-v1.1");
+    expect(first.gridW).toBe(GRID_W);
+    expect(first.gridH).toBe(GRID_H);
     expect(first.buildings.map((b) => b.id)).toEqual(second.buildings.map((b) => b.id));
     expect(new Set(first.buildings.map((b) => b.id)).size).toBe(first.buildings.length);
     expect(first.routes.length).toBe(BUILDINGS.length * (BUILDINGS.length - 1));
@@ -86,6 +96,58 @@ describe("world layout", () => {
     const back = first.routes.find((r) => r.from === "workshop-a" && r.to === "house-01")!;
     expect(there.steps).toBe(back.steps);
     expect(decorations()).toEqual(decorations());
+  });
+
+  it("is twice the genesis-v1 width and height, with the town still on its original tiles", () => {
+    expect(GRID_W).toBe(GENESIS_V1_GRID_W * 2);
+    expect(GRID_H).toBe(GENESIS_V1_GRID_H * 2);
+    expect(GRID_W * GRID_H).toBe(GENESIS_V1_GRID_W * GENESIS_V1_GRID_H * 4);
+    const v1 = genesisV1Layout();
+    const next = initializationLayout();
+    expect(v1.version).toBe(GENESIS_V1_VERSION);
+    expect(v1.hash).toBe("7e8db240");
+    expect(next.fromVersions).toEqual([GENESIS_V1_VERSION]);
+    for (const building of next.buildings) {
+      const original = v1.buildings.find((item) => item.id === building.id)!;
+      expect([building.x, building.y, building.w, building.h, building.door_x, building.door_y]).toEqual([
+        original.x,
+        original.y,
+        original.w,
+        original.h,
+        original.door_x,
+        original.door_y,
+      ]);
+      expect(building.x + building.w).toBeLessThanOrEqual(GENESIS_V1_GRID_W);
+      expect(building.y + building.h).toBeLessThanOrEqual(GENESIS_V1_GRID_H);
+    }
+    const v1Steps = new Map(v1.routes.map((route) => [`${route.from}>${route.to}`, route.steps]));
+    for (const route of next.routes) {
+      expect(route.steps, `${route.from} -> ${route.to}`).toBe(v1Steps.get(`${route.from}>${route.to}`));
+    }
+  });
+
+  it("attaches expansion roads to the founding network without covering lots or the old town", () => {
+    const grid = walkableGrid();
+    expect(grid[19 * GRID_W + 59]).toBe(1);
+    expect(grid[38 * GRID_W + 29]).toBe(1);
+    expect(grid[55 * GRID_W + 90]).toBe(1);
+    expect(pathBetween("house-01", "riverside-farm")).not.toBeNull();
+    for (const road of EXPANSION_ROADS) {
+      expect(road.x + road.w).toBeLessThanOrEqual(GRID_W);
+      expect(road.y + road.h).toBeLessThanOrEqual(GRID_H);
+    }
+    for (const plot of PLOTS) {
+      expect(plot.y >= GENESIS_V1_GRID_H || plot.x >= GENESIS_V1_GRID_W).toBe(true);
+      for (let y = plot.y; y < plot.y + plot.h; y += 1) {
+        for (let x = plot.x; x < plot.x + plot.w; x += 1) {
+          expect(isPlot(x, y)).toBe(true);
+          expect(isRoad(x, y), `lot ${x},${y} on a road`).toBe(false);
+          expect(BUILDINGS.some((building) => x >= building.rect.x && x < building.rect.x + building.rect.w && y >= building.rect.y && y < building.rect.y + building.rect.h)).toBe(
+            false,
+          );
+        }
+      }
+    }
   });
 
   it("has enough homes and shelter for the founding population", () => {

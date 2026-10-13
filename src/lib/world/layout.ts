@@ -1,15 +1,18 @@
 /**
- * The persistent chogOS map, version genesis-v1.
+ * The persistent chogOS map.
  *
- * Building rectangles, doors, capacities, and job slots are inserted into
- * world_buildings once by world_initialize. The database copy is
- * authoritative for state. Roads, terrain, and decor are derived here from
- * fixed numbers, so every viewer draws the same map without a random seed.
+ * genesis-v1 was 60×40. genesis-v1.1 keeps every founding building on the
+ * same tiles and opens land to the east and south (120×80). Building
+ * rectangles in the database stay authoritative for state. Roads, terrain,
+ * reserved plots, and decor are derived here from fixed numbers.
  */
 
-export const WORLD_LAYOUT_VERSION = "genesis-v1";
-export const GRID_W = 60;
-export const GRID_H = 40;
+export const GENESIS_V1_VERSION = "genesis-v1";
+export const WORLD_LAYOUT_VERSION = "genesis-v1.1";
+export const GENESIS_V1_GRID_W = 60;
+export const GENESIS_V1_GRID_H = 40;
+export const GRID_W = 120;
+export const GRID_H = 80;
 export const TILE = 16;
 
 export type BuildingKind =
@@ -201,8 +204,8 @@ export const BUILDINGS: readonly BuildingDef[] = [
   },
 ];
 
-/** Road rectangles. Every door touches one of these, and they form one network. */
-export const ROADS: readonly Rect[] = [
+/** Road rectangles from genesis-v1. Do not change these; expansion roads attach at the old rim. */
+export const GENESIS_V1_ROADS: readonly Rect[] = [
   { x: 1, y: 19, w: 58, h: 2 },
   { x: 29, y: 1, w: 2, h: 38 },
   { x: 1, y: 7, w: 28, h: 1 },
@@ -212,8 +215,81 @@ export const ROADS: readonly Rect[] = [
   { x: 1, y: 7, w: 1, h: 25 },
 ];
 
+/**
+ * New roads live on or past the old 60×40 rim so they cannot shorten walks
+ * between founding buildings. They join the existing network at x = 59 and y = 38.
+ */
+export const EXPANSION_ROADS: readonly Rect[] = [
+  { x: 59, y: 19, w: 58, h: 2 },
+  { x: 59, y: 10, w: 58, h: 1 },
+  { x: 59, y: 31, w: 58, h: 1 },
+  { x: 29, y: 38, w: 2, h: 38 },
+  { x: 90, y: 10, w: 2, h: 62 },
+  { x: 110, y: 10, w: 2, h: 48 },
+  { x: 29, y: 55, w: 83, h: 2 },
+  { x: 64, y: 7, w: 48, h: 1 },
+  { x: 1, y: 50, w: 28, h: 1 },
+];
+
+export const ROADS: readonly Rect[] = [...GENESIS_V1_ROADS, ...EXPANSION_ROADS];
+
 export const POND: Rect = { x: 40, y: 23, w: 7, h: 5 };
+export const SOUTH_POND: Rect = { x: 72, y: 63, w: 10, h: 6 };
+export const PONDS: readonly Rect[] = [POND, SOUTH_POND];
 export const RIVER_Y = 35;
+
+export type RegionKind = "settlement" | "wilds" | "reserve" | "resource";
+
+export type RegionDef = {
+  id: string;
+  name: string;
+  kind: RegionKind;
+  rect: Rect;
+  note: string;
+};
+
+/** Named land for later districts. These are not buildings and have no jobs. */
+export const REGIONS: readonly RegionDef[] = [
+  {
+    id: "founding-town",
+    name: "Founding Town",
+    kind: "settlement",
+    rect: { x: 0, y: 0, w: GENESIS_V1_GRID_W, h: GENESIS_V1_GRID_H },
+    note: "The original genesis-v1 settlement. Building tiles were not moved.",
+  },
+  {
+    id: "east-commons",
+    name: "East Commons",
+    kind: "reserve",
+    rect: { x: 60, y: 0, w: 60, h: 40 },
+    note: "Open land and surveyed lots for future homes and workshops.",
+  },
+  {
+    id: "south-meadows",
+    name: "South Meadows",
+    kind: "wilds",
+    rect: { x: 0, y: 40, w: 60, h: 40 },
+    note: "Meadow and river bottom reserved for future farms.",
+  },
+  {
+    id: "southeast-woods",
+    name: "Southeast Woods",
+    kind: "resource",
+    rect: { x: 60, y: 40, w: 60, h: 40 },
+    note: "Woods and stone ground for later resource camps.",
+  },
+];
+
+function lotRow(y: number, xs: number[]): Rect[] {
+  return xs.map((x) => ({ x, y, w: 3, h: 3 }));
+}
+
+/** Packed-earth lots. Drawn as undeveloped land, never as constructed buildings. */
+export const PLOTS: readonly Rect[] = [
+  ...lotRow(2, [64, 68, 72, 76, 80, 84]),
+  ...lotRow(11, [64, 68, 72, 76]),
+  ...lotRow(57, [33, 37, 41, 45, 49]),
+];
 
 export function buildingById(id: string): BuildingDef | undefined {
   return BUILDINGS.find((building) => building.id === id);
@@ -223,46 +299,129 @@ function inRect(rect: Rect, x: number, y: number): boolean {
   return x >= rect.x && x < rect.x + rect.w && y >= rect.y && y < rect.y + rect.h;
 }
 
+export function inBounds(x: number, y: number, width = GRID_W, height = GRID_H): boolean {
+  return x >= 0 && y >= 0 && x < width && y < height;
+}
+
+function coversRoad(x: number, y: number, roads: readonly Rect[]): boolean {
+  return roads.some((road) => inRect(road, x, y));
+}
+
 export function isRoad(x: number, y: number): boolean {
-  return ROADS.some((road) => inRect(road, x, y));
+  return coversRoad(x, y, ROADS);
+}
+
+export function isPlot(x: number, y: number): boolean {
+  return PLOTS.some((plot) => inRect(plot, x, y));
+}
+
+export function isWaterTile(x: number, y: number): boolean {
+  if (y === RIVER_Y || y === RIVER_Y + 1) {
+    return true;
+  }
+  return PONDS.some((pond) => {
+    if (!inRect(pond, x, y)) {
+      return false;
+    }
+    const corner = (x === pond.x || x === pond.x + pond.w - 1) && (y === pond.y || y === pond.y + pond.h - 1);
+    return !corner;
+  });
+}
+
+export function regionAt(x: number, y: number): RegionDef | undefined {
+  return REGIONS.find((region) => inRect(region.rect, x, y));
 }
 
 export function buildingAt(x: number, y: number): BuildingDef | undefined {
   return BUILDINGS.find((building) => inRect(building.rect, x, y));
 }
 
-function key(x: number, y: number): number {
-  return y * GRID_W + x;
+function tileKey(x: number, y: number, width: number): number {
+  return y * width + x;
+}
+
+function walkableOn(width: number, height: number, roads: readonly Rect[], buildings: readonly BuildingDef[]): Uint8Array {
+  const grid = new Uint8Array(width * height);
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      if (coversRoad(x, y, roads)) {
+        grid[tileKey(x, y, width)] = 1;
+      }
+    }
+  }
+  for (const building of buildings) {
+    grid[tileKey(building.door.x, building.door.y, width)] = 1;
+    if (building.kind === "commons") {
+      const { x, y, w, h } = building.rect;
+      for (let yy = y; yy < y + h; yy += 1) {
+        for (let xx = x; xx < x + w; xx += 1) {
+          grid[tileKey(xx, yy, width)] = 1;
+        }
+      }
+    }
+  }
+  return grid;
 }
 
 let walkable: Uint8Array | null = null;
 
 /** Roads, doors, and the open interior of Commons Square. */
 export function walkableGrid(): Uint8Array {
-  if (walkable) {
-    return walkable;
+  if (!walkable) {
+    walkable = walkableOn(GRID_W, GRID_H, ROADS, BUILDINGS);
   }
-  const grid = new Uint8Array(GRID_W * GRID_H);
-  for (let y = 0; y < GRID_H; y += 1) {
-    for (let x = 0; x < GRID_W; x += 1) {
-      if (isRoad(x, y)) {
-        grid[key(x, y)] = 1;
+  return walkable;
+}
+
+function pathOn(
+  from: BuildingDef,
+  to: BuildingDef,
+  width: number,
+  height: number,
+  grid: Uint8Array,
+): Tile[] | null {
+  const start = tileKey(from.door.x, from.door.y, width);
+  const goal = tileKey(to.door.x, to.door.y, width);
+  const previous = new Int32Array(width * height).fill(-1);
+  previous[start] = start;
+  const queue = [start];
+  for (let head = 0; head < queue.length; head += 1) {
+    const current = queue[head]!;
+    if (current === goal) {
+      break;
+    }
+    const cx = current % width;
+    const cy = Math.floor(current / width);
+    const neighbors: Array<[number, number]> = [
+      [cx + 1, cy],
+      [cx - 1, cy],
+      [cx, cy + 1],
+      [cx, cy - 1],
+    ];
+    for (const [nx, ny] of neighbors) {
+      if (nx < 0 || ny < 0 || nx >= width || ny >= height) {
+        continue;
       }
+      const next = tileKey(nx, ny, width);
+      if (grid[next] !== 1 || previous[next] !== -1) {
+        continue;
+      }
+      previous[next] = current;
+      queue.push(next);
     }
   }
-  for (const building of BUILDINGS) {
-    grid[key(building.door.x, building.door.y)] = 1;
-    if (building.kind === "commons") {
-      const { x, y, w, h } = building.rect;
-      for (let yy = y; yy < y + h; yy += 1) {
-        for (let xx = x; xx < x + w; xx += 1) {
-          grid[key(xx, yy)] = 1;
-        }
-      }
+  if (previous[goal] === -1) {
+    return null;
+  }
+  const tiles: Tile[] = [];
+  for (let cursor = goal; ; cursor = previous[cursor]!) {
+    tiles.push({ x: cursor % width, y: Math.floor(cursor / width) });
+    if (cursor === start) {
+      break;
     }
   }
-  walkable = grid;
-  return grid;
+  tiles.reverse();
+  return tiles;
 }
 
 const pathCache = new Map<string, Tile[]>();
@@ -279,62 +438,25 @@ export function pathBetween(fromId: string, toId: string): Tile[] | null {
   if (!from || !to) {
     return null;
   }
-  const grid = walkableGrid();
-  const start = key(from.door.x, from.door.y);
-  const goal = key(to.door.x, to.door.y);
-  const previous = new Int32Array(GRID_W * GRID_H).fill(-1);
-  previous[start] = start;
-  const queue = [start];
-  for (let head = 0; head < queue.length; head += 1) {
-    const current = queue[head]!;
-    if (current === goal) {
-      break;
-    }
-    const cx = current % GRID_W;
-    const cy = Math.floor(current / GRID_W);
-    const neighbors: Array<[number, number]> = [
-      [cx + 1, cy],
-      [cx - 1, cy],
-      [cx, cy + 1],
-      [cx, cy - 1],
-    ];
-    for (const [nx, ny] of neighbors) {
-      if (nx < 0 || ny < 0 || nx >= GRID_W || ny >= GRID_H) {
-        continue;
-      }
-      const next = key(nx, ny);
-      if (grid[next] !== 1 || previous[next] !== -1) {
-        continue;
-      }
-      previous[next] = current;
-      queue.push(next);
-    }
-  }
-  if (previous[goal] === -1) {
+  const tiles = pathOn(from, to, GRID_W, GRID_H, walkableGrid());
+  if (!tiles) {
     return null;
   }
-  const tiles: Tile[] = [];
-  for (let cursor = goal; ; cursor = previous[cursor]!) {
-    tiles.push({ x: cursor % GRID_W, y: Math.floor(cursor / GRID_W) });
-    if (cursor === start) {
-      break;
-    }
-  }
-  tiles.reverse();
   pathCache.set(cacheKey, tiles);
   return tiles;
 }
 
 export type RouteRow = { from: string; to: string; steps: number };
 
-export function routeTable(): RouteRow[] {
+function routesOn(width: number, height: number, roads: readonly Rect[], buildings: readonly BuildingDef[]): RouteRow[] {
+  const grid = walkableOn(width, height, roads, buildings);
   const rows: RouteRow[] = [];
-  for (const from of BUILDINGS) {
-    for (const to of BUILDINGS) {
+  for (const from of buildings) {
+    for (const to of buildings) {
       if (from.id === to.id) {
         continue;
       }
-      const path = pathBetween(from.id, to.id);
+      const path = pathOn(from, to, width, height, grid);
       if (!path) {
         throw new Error(`No road connects ${from.id} to ${to.id}.`);
       }
@@ -342,6 +464,10 @@ export function routeTable(): RouteRow[] {
     }
   }
   return rows;
+}
+
+export function routeTable(): RouteRow[] {
+  return routesOn(GRID_W, GRID_H, ROADS, BUILDINGS);
 }
 
 /** Small integer hash. Same input, same output, on every machine. */
@@ -376,10 +502,11 @@ export function decorations(): Decor[] {
   const items: Decor[] = [];
   for (let y = 0; y < GRID_H; y += 1) {
     for (let x = 0; x < GRID_W; x += 1) {
-      if (isRoad(x, y) || buildingAt(x, y) || inRect(POND, x, y) || y === RIVER_Y || y === RIVER_Y + 1) {
+      if (isRoad(x, y) || buildingAt(x, y) || isPlot(x, y) || isWaterTile(x, y)) {
         continue;
       }
-      const roll = hash32(`${WORLD_LAYOUT_VERSION}:${x}:${y}`) % 1000;
+      const inTown = x < GENESIS_V1_GRID_W && y < GENESIS_V1_GRID_H;
+      const roll = hash32(`${inTown ? GENESIS_V1_VERSION : WORLD_LAYOUT_VERSION}:${x}:${y}`) % 1000;
       const variant = hash32(`v:${x}:${y}`) % 4;
       if (nearStructure(x, y)) {
         if (roll < 40) {
@@ -389,14 +516,18 @@ export function decorations(): Decor[] {
         }
         continue;
       }
-      const edge = x < 1 || y < 2 || x > GRID_W - 2 || y > RIVER_Y + 1;
-      if (roll < (edge ? 420 : 110)) {
-        items.push({ kind: y > 30 || x > 44 ? "pine" : "tree", x, y, variant });
-      } else if (roll < (edge ? 470 : 150)) {
+      const eastWoods = x >= 96 && y < 40;
+      const southWoods = x >= 60 && y >= 40;
+      const edge = x < 1 || y < 2 || x > GRID_W - 2 || y > GRID_H - 3;
+      const treeChance = eastWoods || southWoods ? 280 : edge ? 420 : inTown ? 110 : 160;
+      const bushChance = treeChance + (edge ? 50 : 40);
+      if (roll < treeChance) {
+        items.push({ kind: y > 30 || x > 44 || southWoods ? "pine" : "tree", x, y, variant });
+      } else if (roll < bushChance) {
         items.push({ kind: "bush", x, y, variant });
-      } else if (roll < 190) {
+      } else if (roll < bushChance + 40) {
         items.push({ kind: "flower", x, y, variant });
-      } else if (roll < 200) {
+      } else if (roll < bushChance + (eastWoods ? 80 : 50)) {
         items.push({ kind: "rock", x, y, variant });
       }
     }
@@ -421,30 +552,48 @@ export function decorations(): Decor[] {
   return decorCache;
 }
 
-/** Payload for world_initialize. Contains only building facts and road distances. */
-export function initializationLayout(): {
+export type LayoutBuilding = {
+  id: string;
+  kind: BuildingKind;
+  name: string;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  door_x: number;
+  door_y: number;
+  capacity: number | null;
+  job_slots: number | null;
+  role: WorkRole | null;
+  batch_shifts: number | null;
+  status: "active" | "under_construction";
+  open: boolean;
+};
+
+export type LayoutRegion = {
+  id: string;
+  name: string;
+  kind: RegionKind;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  note: string;
+};
+
+export type LayoutPayload = {
   version: string;
   hash: string;
-  buildings: Array<{
-    id: string;
-    kind: BuildingKind;
-    name: string;
-    x: number;
-    y: number;
-    w: number;
-    h: number;
-    door_x: number;
-    door_y: number;
-    capacity: number | null;
-    job_slots: number | null;
-    role: WorkRole | null;
-    batch_shifts: number | null;
-    status: "active" | "under_construction";
-    open: boolean;
-  }>;
+  fromVersions: string[];
+  gridW: number;
+  gridH: number;
+  buildings: LayoutBuilding[];
   routes: RouteRow[];
-} {
-  const buildings = BUILDINGS.map((building) => ({
+  regions: LayoutRegion[];
+};
+
+function serializedBuildings(): LayoutBuilding[] {
+  return BUILDINGS.map((building) => ({
     id: building.id,
     kind: building.kind,
     name: building.name,
@@ -461,7 +610,53 @@ export function initializationLayout(): {
     status: building.initialStatus,
     open: building.open,
   }));
-  const routes = routeTable();
-  const hash = hash32(JSON.stringify({ buildings, roads: ROADS, routes })).toString(16).padStart(8, "0");
-  return { version: WORLD_LAYOUT_VERSION, hash, buildings, routes };
+}
+
+function serializedRegions(): LayoutRegion[] {
+  return REGIONS.map((region) => ({
+    id: region.id,
+    name: region.name,
+    kind: region.kind,
+    x: region.rect.x,
+    y: region.rect.y,
+    w: region.rect.w,
+    h: region.rect.h,
+    note: region.note,
+  }));
+}
+
+function layoutHash(buildings: LayoutBuilding[], roads: readonly Rect[], routes: RouteRow[]): string {
+  return hash32(JSON.stringify({ buildings, roads, routes })).toString(16).padStart(8, "0");
+}
+
+/** Frozen genesis-v1 payload. Used to prove an expansion keeps the founding town. */
+export function genesisV1Layout(): LayoutPayload {
+  const buildings = serializedBuildings();
+  const routes = routesOn(GENESIS_V1_GRID_W, GENESIS_V1_GRID_H, GENESIS_V1_ROADS, BUILDINGS);
+  return {
+    version: GENESIS_V1_VERSION,
+    hash: layoutHash(buildings, GENESIS_V1_ROADS, routes),
+    fromVersions: [],
+    gridW: GENESIS_V1_GRID_W,
+    gridH: GENESIS_V1_GRID_H,
+    buildings,
+    routes,
+    regions: serializedRegions().filter((region) => region.id === "founding-town"),
+  };
+}
+
+/** Payload for world_initialize and world_expand_layout. */
+export function initializationLayout(): LayoutPayload {
+  const buildings = serializedBuildings();
+  const routes = routesOn(GRID_W, GRID_H, ROADS, BUILDINGS);
+  return {
+    version: WORLD_LAYOUT_VERSION,
+    hash: layoutHash(buildings, ROADS, routes),
+    fromVersions: [GENESIS_V1_VERSION],
+    gridW: GRID_W,
+    gridH: GRID_H,
+    buildings,
+    routes,
+    regions: serializedRegions(),
+  };
 }

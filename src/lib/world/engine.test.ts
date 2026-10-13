@@ -1,6 +1,6 @@
 import type { PGlite } from "@electric-sql/pglite";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { initializationLayout } from "@/lib/world/layout";
+import { genesisV1Layout, initializationLayout } from "@/lib/world/layout";
 import { NFT, START, initialize, openWorldDb, rows, runFor, seedCitizens, tick } from "@/lib/world/test-db";
 
 type EventRow = {
@@ -439,11 +439,118 @@ describe("population changes", () => {
   }, 60_000);
 });
 
+describe("map expansion", () => {
+  it("upgrades genesis-v1 to genesis-v1.1 without moving the town or duplicating history", async () => {
+    const db = await openWorldDb({
+      before: async (pre) => {
+        await seedCitizens(pre, 59);
+      },
+    });
+    const founded = await db.query<{ r: Record<string, unknown> }>(
+      "select world_initialize_at($1::jsonb, 143, $2, 60, $3) as r",
+      [JSON.stringify(genesisV1Layout()), NFT, START.toISOString()],
+    );
+    expect(founded.rows[0]!.r.status).toBe("initialized");
+    const before = (
+      await rows<{
+        buildings: number;
+        routes: number;
+        citizens: number;
+        events: number;
+        house_x: number;
+        speed: number;
+        tick: number;
+      }>(
+        db,
+        `select
+           (select count(*)::int from world_buildings) as buildings,
+           (select count(*)::int from world_routes) as routes,
+           (select count(*)::int from citizen_world_state) as citizens,
+           (select count(*)::int from civilization_events) as events,
+           (select x from world_buildings where id = 'house-01') as house_x,
+           (select speed::int from world_state) as speed,
+           (select tick_seq::int from world_state) as tick`,
+      )
+    )[0]!;
+    expect(before.buildings).toBe(25);
+    expect(before.citizens).toBe(59);
+    expect(before.house_x).toBe(2);
+
+    const first = await db.query<{ r: Record<string, unknown> }>(
+      "select world_expand_layout_at($1::jsonb, $2) as r",
+      [JSON.stringify(initializationLayout()), at(30).toISOString()],
+    );
+    expect(first.rows[0]!.r.status).toBe("expanded");
+    expect(first.rows[0]!.r.fromVersion).toBe("genesis-v1");
+    expect(first.rows[0]!.r.gridW).toBe(120);
+    expect(first.rows[0]!.r.gridH).toBe(80);
+
+    const after = (
+      await rows<{
+        buildings: number;
+        citizens: number;
+        house_x: number;
+        house_y: number;
+        version: string;
+        grid_w: number;
+        grid_h: number;
+        regions: number;
+        speed: number;
+        events: number;
+      }>(
+        db,
+        `select
+           (select count(*)::int from world_buildings) as buildings,
+           (select count(*)::int from citizen_world_state) as citizens,
+           (select x from world_buildings where id = 'house-01') as house_x,
+           (select y from world_buildings where id = 'house-01') as house_y,
+           (select layout_version from world_state) as version,
+           (select grid_w from world_state) as grid_w,
+           (select grid_h from world_state) as grid_h,
+           (select count(*)::int from world_regions) as regions,
+           (select speed::int from world_state) as speed,
+           (select count(*)::int from civilization_events) as events`,
+      )
+    )[0]!;
+    expect(after.buildings).toBe(before.buildings);
+    expect(after.citizens).toBe(59);
+    expect(after.house_x).toBe(2);
+    expect(after.house_y).toBe(4);
+    expect(after.version).toBe("genesis-v1.1");
+    expect(after.grid_w).toBe(120);
+    expect(after.grid_h).toBe(80);
+    expect(after.regions).toBe(4);
+    expect(after.speed).toBe(before.speed);
+    expect(after.events).toBe(before.events + 1);
+
+    const expanded = await rows<{ kind: string; source: string }>(
+      db,
+      "select kind, source from civilization_events where kind = 'world.expanded'",
+    );
+    expect(expanded).toEqual([{ kind: "world.expanded", source: "system" }]);
+
+    const second = await db.query<{ r: Record<string, unknown> }>(
+      "select world_expand_layout_at($1::jsonb, $2) as r",
+      [JSON.stringify(initializationLayout()), at(40).toISOString()],
+    );
+    expect(second.rows[0]!.r.status).toBe("already_expanded");
+    const eventsAgain = await rows<{ n: number }>(db, "select count(*)::int as n from civilization_events where kind = 'world.expanded'");
+    expect(eventsAgain[0]!.n).toBe(1);
+    const regionsAgain = await rows<{ n: number }>(db, "select count(*)::int as n from world_regions");
+    expect(regionsAgain[0]!.n).toBe(4);
+
+    const stepped = await tick(db, at(45));
+    expect(stepped.status).toBe("ok");
+    expect(Number(stepped.failed ?? 0)).toBe(0);
+    await db.close();
+  }, 60_000);
+});
+
 describe("database access", () => {
   it("gives browsers nothing and gives the server read access plus the runner functions only", async () => {
     const db = await openWorldDb();
     const privilege = async (sql: string) => (await rows<{ ok: boolean }>(db, `select ${sql} as ok`))[0]!.ok;
-    for (const table of ["world_buildings", "world_state", "citizen_world_state", "world_routes", "world_intents"]) {
+    for (const table of ["world_buildings", "world_state", "citizen_world_state", "world_routes", "world_intents", "world_regions"]) {
       for (const role of ["anon", "authenticated"]) {
         expect(await privilege(`has_table_privilege('${role}', '${table}', 'select')`)).toBe(false);
       }
@@ -456,9 +563,12 @@ describe("database access", () => {
       expect(await privilege(`has_function_privilege('${role}', 'world_set_speed(numeric)', 'execute')`)).toBe(false);
       expect(await privilege(`has_function_privilege('${role}', 'world_cron_status()', 'execute')`)).toBe(false);
       expect(await privilege(`has_function_privilege('${role}', 'world_initialize(jsonb,integer,text,numeric)', 'execute')`)).toBe(false);
+      expect(await privilege(`has_function_privilege('${role}', 'world_expand_layout(jsonb)', 'execute')`)).toBe(false);
     }
     expect(await privilege("has_function_privilege('service_role', 'world_tick()', 'execute')")).toBe(true);
     expect(await privilege("has_function_privilege('service_role', 'world_cron_status()', 'execute')")).toBe(true);
+    expect(await privilege("has_function_privilege('service_role', 'world_expand_layout(jsonb)', 'execute')")).toBe(true);
+    expect(await privilege("has_function_privilege('service_role', 'world_expand_layout_at(jsonb,timestamptz)', 'execute')")).toBe(false);
     expect(await privilege("has_table_privilege('service_role', 'world_intents', 'insert')")).toBe(true);
     expect(await privilege("has_table_privilege('service_role', 'world_state', 'insert')")).toBe(false);
     expect(await privilege("has_function_privilege('service_role', 'world_tick_at(timestamptz)', 'execute')")).toBe(false);
