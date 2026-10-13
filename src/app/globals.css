@@ -43,45 +43,6 @@ body {
   font-family: var(--font-geist-sans), sans-serif;
 }
 
-.civic-link {
-  cursor: pointer;
-  transition: filter 180ms ease;
-}
-
-.civic-link:hover,
-.civic-link:focus-visible {
-  filter: brightness(1.28);
-}
-
-.civic-link:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 3px;
-}
-
-@keyframes chog-float {
-  0%,
-  100% {
-    transform: translateY(0);
-    opacity: 0.35;
-  }
-  50% {
-    transform: translateY(-10px);
-    opacity: 0.95;
-  }
-}
-
-.chog-mote {
-  animation: chog-float 7s ease-in-out infinite;
-  transform-box: fill-box;
-  transform-origin: center;
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .chog-mote {
-    animation: none;
-  }
-}
-
 .portrait-frame {
   background:
     radial-gradient(120px 80px at 50% 20%, rgb(61 255 176 / 16%), transparent 70%),

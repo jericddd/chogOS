@@ -1,6 +1,6 @@
 # Database plan
 
-Apply both files in `supabase/migrations/` in filename order when a Supabase project exists. The world reads citizens only through the server service role.
+Apply the files in `supabase/migrations/` in filename order when a Supabase project exists. The world reads citizens only through the server service role.
 
 ## Rule for value
 
@@ -91,6 +91,18 @@ Row level security is enabled on every application table, including the Phase 1 
 Row level security is enabled on these tables. `anon` and `authenticated` are revoked when those roles exist. `service_role` is granted when that role exists. The existing `wallets` table is unchanged and is still reserved for addresses that already exist. Predicted or missing wallets do not go there.
 
 Apply this file after the Phase 1 migration, then apply `20261012233000_phase2_funding_guards.sql`. That follow-up makes funding hashes and wallet addresses unique without regard to letter case. Paste file contents into the Supabase SQL editor. A file in the repository is not the same as a migration that has been applied. See [docs/phase-2.md](docs/phase-2.md) for the current applied state.
+
+## Phase 3 world
+
+`20261013040000_phase3_world.sql` is additive. It creates no citizens and deletes nothing. Existing history rows stay and are labeled `source = system`, `category = membership`.
+
+- `world_buildings` and `world_routes` store the versioned layout (`genesis-v1`). Each building has a footprint, a door, capacity, job slots, construction progress, production progress, and, for the Storehouse, simulated stock clamped to 0 to 400.
+- `world_state` allows one row. It holds the clock anchor (`anchor_real`, `anchor_world_s`, `speed`), the status (`running` or `paused`), the tick sequence, the last tick time, the maximum catch-up of 150 seconds, and the last error.
+- `citizen_world_state` is one row per placed citizen, keyed by `citizen_id`. It stores home, job, role, current activity, location, origin and destination, purpose, and both `ends_at` (real time) and `world_ends_s` (world time). `decision_source` records whether the rules or an intent chose the activity.
+- `world_intents` is the Phase 4 entry point. A unique partial index allows one pending intent per citizen.
+- `civilization_events` gains `seq` (feed order), `source` (`simulation`, `ai`, `onchain`, `system`), `category`, `building_id`, `related_citizen_id`, `world_s`, `tick_seq`, and `schema_version`, plus indexes for each feed filter.
+
+Row level security is enabled on the new tables. `anon` and `authenticated` have no grants on them or on the `world_*` functions. `service_role` may select world tables and insert `world_intents`, but cannot update or delete world rows. All world writes go through `security definer` functions. `world_tick()` takes an advisory lock, and each event's unique `dedupe_key` stops a repeated step from writing twice. When `pg_cron` is available, the migration schedules the tick. After a tick that changed something, `realtime.send` broadcasts a tick number on the public channel `chogos-world`, with no row data.
 
 ## Not stored
 

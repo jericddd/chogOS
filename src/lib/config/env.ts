@@ -20,6 +20,8 @@ export type AppConfig = {
   syncSecret?: string;
   /** Server-only. Required before the treasury address or a funding hash can be submitted. */
   treasuryAdminSecret?: string;
+  /** Server-only. Required by POST /api/world/tick. pg_cron does not need it. */
+  worldRunnerSecret?: string;
   supabaseUrl?: string;
   supabaseAnonKey?: string;
   supabaseServiceRoleKey?: string;
@@ -134,6 +136,7 @@ export function readAppConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     nftIndexerUrl: optionalHttpsUrl(blankToUndefined(env.NFT_INDEXER_URL), "NFT_INDEXER_URL"),
     syncSecret: blankToUndefined(env.SYNC_SECRET),
     treasuryAdminSecret: blankToUndefined(env.TREASURY_ADMIN_SECRET),
+    worldRunnerSecret: blankToUndefined(env.WORLD_RUNNER_SECRET),
     supabaseUrl: optionalHttpsUrl(blankToUndefined(env.SUPABASE_URL), "SUPABASE_URL", {
       allowLoopbackHttp: true,
     }),
