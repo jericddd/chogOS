@@ -5,6 +5,8 @@ import { worldSecondsAt } from "@/lib/world/clock";
 import { TILE } from "@/lib/world/layout";
 import { ACTIVITY_LABEL, KIND_LABEL, ROLE_LABEL, citizenLabel, describeCitizenNow } from "@/lib/world/present";
 import {
+  WORLD_PX_H,
+  WORLD_PX_W,
   clampCamera,
   fitCamera,
   focusOn,
@@ -194,8 +196,8 @@ export function WorldCanvas({ snapshot, skewMs, selection, follow, onSelect, onU
       const key = staticLayerKey(snap.buildings);
       if (!layer || layer.key !== key) {
         const off = document.createElement("canvas");
-        off.width = 60 * TILE;
-        off.height = 40 * TILE;
+        off.width = WORLD_PX_W;
+        off.height = WORLD_PX_H;
         const offCtx = off.getContext("2d");
         if (offCtx) {
           drawStaticLayer(offCtx, snap.buildings);

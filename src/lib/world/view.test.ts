@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import {
   darkness,
@@ -302,6 +303,15 @@ describe("scene placement", () => {
     const far = clampCamera({ scale: 2, x: 5000, y: -9000 }, view);
     expect(far.x).toBe(0);
     expect(far.y).toBe(600 - WORLD_PX_H * 2);
+    expect(WORLD_PX_W).toBe(120 * TILE);
+    expect(WORLD_PX_H).toBe(80 * TILE);
+  });
+
+  it("paints the static layer at the full 120×80 map, not the founding 60×40", () => {
+    const src = readFileSync("src/components/world/world-canvas.tsx", "utf8");
+    expect(src).toMatch(/off\.width = WORLD_PX_W/);
+    expect(src).toMatch(/off\.height = WORLD_PX_H/);
+    expect(src).not.toMatch(/off\.width = 60 \* TILE/);
   });
 
   it("hit-tests citizens before the building they stand in", () => {
