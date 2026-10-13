@@ -7,13 +7,16 @@ import { CitizenPortrait, MetadataFacts, MetadataName } from "@/components/citiz
 import { formatUtc, shortAddress, verificationLabel } from "@/lib/civilization/labels";
 import { loadCitizenProfile } from "@/lib/civilization/load-profile";
 import { loadCitizenWalletView } from "@/lib/wallets/load";
+import { SourceBadge } from "@/components/world/event-item";
+import { formatWorldTime } from "@/lib/world/clock";
+import { loadCitizenWorld, loadEventPage } from "@/lib/world/load";
+import { KIND_LABEL, ROLE_LABEL, citizenHref, describeCitizenNow } from "@/lib/world/present";
 
 export const metadata: Metadata = {
   title: "Citizen",
 };
 
 const reserved = [
-  "Occupation",
   "Skills",
   "Social status",
   "Wealth",
@@ -73,7 +76,7 @@ async function CitizenLive({ tokenId }: { tokenId: string }) {
   const wallet = await loadCitizenWalletView(citizen.citizenId);
   return (
     <div className="grid gap-8 lg:grid-cols-[18rem_minmax(0,1fr)]">
-      <div className="portrait-frame overflow-hidden rounded-2xl border border-line">
+      <div className="portrait-frame aspect-square self-start overflow-hidden rounded-2xl border border-line">
         <CitizenPortrait tokenId={citizen.tokenId} name={citizen.metadataName} />
       </div>
       <div>
@@ -113,25 +116,9 @@ async function CitizenLive({ tokenId }: { tokenId: string }) {
           </p>
         ) : null}
 
-        <section className="mt-8">
-          <h2 className="font-serif text-2xl">History</h2>
-          {profile.events.length === 0 ? (
-            <p className="mt-2 text-sm leading-6 text-muted">
-              No life events yet. Future AI decisions will appear here. None are simulated.
-            </p>
-          ) : (
-            <ul className="mt-3 divide-y divide-line border-y border-line">
-              {profile.events.map((event) => (
-                <li key={event.id} className="py-3">
-                  <p>{event.summary}</p>
-                  <p className="mt-1 text-xs text-muted">
-                    {formatUtc(event.occurredAt)} · {event.kind}
-                  </p>
-                </li>
-              ))}
-            </ul>
-          )}
-        </section>
+        <CitizenInWorld tokenId={citizen.tokenId} />
+
+        <CitizenHistory tokenId={citizen.tokenId} fallback={profile.events} />
 
         <CitizenWalletPanel view={wallet} />
 
@@ -155,5 +142,115 @@ async function CitizenLive({ tokenId }: { tokenId: string }) {
         </section>
       </div>
     </div>
+  );
+}
+
+async function CitizenInWorld({ tokenId }: { tokenId: string }) {
+  const world = await loadCitizenWorld(tokenId);
+  if (world.status !== "ok") {
+    return (
+      <section className="mt-8">
+        <h2 className="font-serif text-2xl">In the world</h2>
+        <p className="mt-2 text-sm leading-6 text-muted">{world.detail}</p>
+      </section>
+    );
+  }
+  const here = world.citizen;
+  if (!here) {
+    return (
+      <section className="mt-8">
+        <h2 className="font-serif text-2xl">In the world</h2>
+        <p className="mt-2 text-sm leading-6 text-muted">
+          This citizen has not entered the shared world. Only active founding and community citizens are placed there.
+        </p>
+      </section>
+    );
+  }
+  const buildings = new Map(world.snapshot.buildings.map((b) => [b.id, b]));
+  const home = here.homeId ? buildings.get(here.homeId) : undefined;
+  const work = here.workId ? buildings.get(here.workId) : undefined;
+  return (
+    <section className="mt-8">
+      <div className="flex flex-wrap items-baseline justify-between gap-3">
+        <h2 className="font-serif text-2xl">In the world</h2>
+        <Link href={citizenHref(tokenId)} className="text-sm text-accent">
+          See on the map
+        </Link>
+      </div>
+      <p className="mt-2">{describeCitizenNow(here, buildings)}</p>
+      <dl className="mt-4 grid gap-4 sm:grid-cols-3">
+        <div>
+          <dt className="text-xs tracking-[0.14em] text-muted uppercase">Occupation</dt>
+          <dd className="mt-1">{here.role ? ROLE_LABEL[here.role] : "Unassigned"}</dd>
+          <dd className="mt-1 text-sm text-muted">{work ? `${work.name} · ${KIND_LABEL[work.kind]}` : "No workplace"}</dd>
+        </div>
+        <div>
+          <dt className="text-xs tracking-[0.14em] text-muted uppercase">Home</dt>
+          <dd className="mt-1">{home ? home.name : "Shelters at Commons Hall"}</dd>
+        </div>
+        <div>
+          <dt className="text-xs tracking-[0.14em] text-muted uppercase">Decided by</dt>
+          <dd className="mt-1">{here.decisionSource === "ai" ? "AI mind" : here.decisionSource === "system" ? "System" : "Simulation rules"}</dd>
+          <dd className="mt-1 text-sm text-muted">The AI mind is not running. Rules choose every action.</dd>
+        </div>
+      </dl>
+    </section>
+  );
+}
+
+async function CitizenHistory({
+  tokenId,
+  fallback,
+}: {
+  tokenId: string;
+  fallback: Array<{ id: string; summary: string; occurredAt: string; kind: string }>;
+}) {
+  const page = await loadEventPage({ tokenId }, null, 20);
+  return (
+    <section className="mt-8">
+      <div className="flex flex-wrap items-baseline justify-between gap-3">
+        <h2 className="font-serif text-2xl">History</h2>
+        {page.status === "ok" ? (
+          <Link href={`/activity?citizen=${tokenId}`} className="text-sm text-accent">
+            Full history
+          </Link>
+        ) : null}
+      </div>
+      {page.status === "ok" ? (
+        page.events.length === 0 ? (
+          <p className="mt-2 text-sm leading-6 text-muted">
+            No events recorded for this citizen yet. Rows appear as the simulation runs. None are invented.
+          </p>
+        ) : (
+          <ul className="mt-3 divide-y divide-line border-y border-line">
+            {page.events.map((event) => (
+              <li key={event.id} className="flex items-start gap-3 py-3">
+                <SourceBadge source={event.source} />
+                <div className="min-w-0">
+                  <p>{event.summary}</p>
+                  <p className="mt-1 text-xs text-muted">
+                    {event.worldS !== null ? `${formatWorldTime(event.worldS)} · ` : ""}
+                    {formatUtc(event.occurredAt)} · {event.kind}
+                  </p>
+                </div>
+              </li>
+            ))}
+          </ul>
+        )
+      ) : fallback.length === 0 ? (
+        <p className="mt-2 text-sm leading-6 text-muted">No life events recorded yet. None are simulated.</p>
+      ) : (
+        <ul className="mt-3 divide-y divide-line border-y border-line">
+          {fallback.map((event) => (
+            <li key={event.id} className="py-3">
+              <p>{event.summary}</p>
+              <p className="mt-1 text-xs text-muted">
+                {formatUtc(event.occurredAt)} · {event.kind}
+              </p>
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
   );
 }
