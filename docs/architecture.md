@@ -71,6 +71,10 @@ The NFT contract's `treasury()` address is the collection's mint receiver. It is
 
 The administrator funds the treasury manually after that wallet exists. The AI does not receive the administrator key.
 
+## Living world (Phase 3)
+
+The simulation is a single PL/pgSQL function, `world_tick()`, scheduled by `pg_cron`. No browser or Next.js request drives it, so the world advances whether anyone is watching or not. The Next.js server reads world state with the service role and serves it through `GET /api/world/live` and `GET /api/world/events`. The browser renders a canvas map from that data. It joins a Realtime broadcast channel only as a signal to refetch. Rules, the time model, and the Phase 4 intent table are in [phase-3.md](phase-3.md).
+
 ## Intentionally absent
 
 Enrollment, authentication, live balance display, contract deployment, swaps, DeFi adapters, and autonomous operation are later phases. The schema and the provider interface are here so those phases have a place to land without turning the project into a chatbot or a simulated economy.
