@@ -6,9 +6,9 @@ import { createLiveStore } from "@/components/world/live-store";
 import type { ClockView, WorldEventView, WorldLive, WorldSnapshot } from "@/lib/world/types";
 
 vi.mock("next/link", () => ({
-  default: ({ href, children, scroll: _scroll, ...props }: { href: string; children: React.ReactNode; scroll?: boolean }) => (
-    <a href={href} {...props}>
-      {children}
+  default: (props: { href: string; children: React.ReactNode; className?: string }) => (
+    <a href={props.href} className={props.className}>
+      {props.children}
     </a>
   ),
 }));
@@ -173,7 +173,7 @@ describe("activity feed", () => {
   });
 
   it("refetches from the server when a filter changes and says honestly when nothing exists", async () => {
-    const fetcher = vi.fn(async (_url: string) => new Response(JSON.stringify({ status: "ok", events: [], nextBefore: null })));
+    const fetcher = vi.fn(async (url: string) => url && new Response(JSON.stringify({ status: "ok", events: [], nextBefore: null })));
     vi.stubGlobal("fetch", fetcher);
     const store = createLiveStore(snapshot([event(3)]), { fetcher: vi.fn() as unknown as typeof fetch });
     render(<ActivityFeed store={store} />);
