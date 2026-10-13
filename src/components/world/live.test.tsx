@@ -2,7 +2,7 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ActivityFeed } from "@/components/world/activity-feed";
-import { createLiveStore } from "@/components/world/live-store";
+import { createLiveStore, type RealtimeConnector, type RealtimeHandlers } from "@/components/world/live-store";
 import type { ClockView, WorldEventView, WorldLive, WorldSnapshot } from "@/lib/world/types";
 
 vi.mock("next/link", () => ({
@@ -134,6 +134,61 @@ describe("live store", () => {
     await store.refresh();
     expect(store.getState().link).toBe("polling");
     expect(store.getState().recent[0]!.seq).toBe(11);
+  });
+
+  it("closes a realtime socket that does not recover, keeps polling, and retries after a cool-down", async () => {
+    vi.useFakeTimers();
+    try {
+      const fetcher = vi.fn(async () => new Response(JSON.stringify(live([]))));
+      const connections: { handlers: RealtimeHandlers; close: ReturnType<typeof vi.fn> }[] = [];
+      const connectRealtime: RealtimeConnector = async (_config, handlers) => {
+        const close = vi.fn();
+        connections.push({ handlers, close });
+        return close;
+      };
+      const store = createLiveStore(snapshot([event(10)]), {
+        fetcher: fetcher as unknown as typeof fetch,
+        realtime: { url: "https://example.supabase.co", anonKey: "public-anon", channel: "chogos-world" },
+        connectRealtime,
+      });
+      const unsubscribe = store.subscribe(() => {});
+      await vi.advanceTimersByTimeAsync(0);
+      expect(connections).toHaveLength(1);
+
+      connections[0]!.handlers.onStatus("SUBSCRIBED");
+      expect(store.getState().realtime).toBe("subscribed");
+
+      connections[0]!.handlers.onStatus("CHANNEL_ERROR");
+      expect(store.getState().realtime).toBe("error");
+      await vi.advanceTimersByTimeAsync(10_000);
+      connections[0]!.handlers.onStatus("SUBSCRIBED");
+      await vi.advanceTimersByTimeAsync(30_000);
+      expect(connections[0]!.close).not.toHaveBeenCalled();
+
+      connections[0]!.handlers.onStatus("CHANNEL_ERROR");
+      const before = fetcher.mock.calls.length;
+      await vi.advanceTimersByTimeAsync(29_000);
+      expect(connections[0]!.close).not.toHaveBeenCalled();
+      expect(fetcher.mock.calls.length).toBeGreaterThan(before);
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(connections[0]!.close).toHaveBeenCalledTimes(1);
+      expect(connections[0]!.handlers.isCurrent()).toBe(false);
+      expect(store.getState().realtime).toBe("error");
+
+      await vi.advanceTimersByTimeAsync(59_000);
+      expect(connections).toHaveLength(1);
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(connections).toHaveLength(2);
+      connections[1]!.handlers.onStatus("SUBSCRIBED");
+      expect(store.getState().realtime).toBe("subscribed");
+
+      unsubscribe();
+      expect(connections[1]!.close).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(120_000);
+      expect(connections).toHaveLength(2);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 
