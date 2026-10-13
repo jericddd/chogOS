@@ -156,7 +156,7 @@ begin
   on conflict (id) do nothing;
   get diagnostics v_added = row_count;
 
-  update world_buildings set layout_version = v_version;
+  update world_buildings set layout_version = v_version where id is not null;
 
   insert into world_routes (from_id, to_id, steps)
   select r."from", r."to", r.steps
