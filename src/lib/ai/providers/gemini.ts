@@ -88,7 +88,7 @@ export function createGeminiProvider(config: AppConfig): AiProvider {
     id: "gemini",
     async complete(request: AiCompletionRequest): Promise<AiCompletion> {
       if (!config.aiApiKey) {
-        throw new AiProviderError("Gemini is selected, but AI_API_KEY is not set.", "disabled", true);
+        throw new AiProviderError("Gemini is selected, but AI_API_KEY (or GEMINI_API_KEY) is not set.", "disabled", true);
       }
 
       const system = request.messages

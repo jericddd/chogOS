@@ -50,7 +50,7 @@ The home page is the living world: a canvas map of homes, workplaces, and citize
 
 The citizen gallery, Genesis Treasury, and history read Monad when the RPC is reachable. Treasury NFT counts are Chog Genesis holdings, not `$CHOG` balances. If the verified count is not the expected comparison figure, the page says so. Missing metadata uses local artwork. The activity feed lists stored events only.
 
-`POST /api/transactions` still returns 403. The AI provider has no tools and no wallet authority. `AI_PROVIDER=ajax` refuses before any network call. Gemini is the Phase 4 adapter; it is not enabled in production by this change.
+`POST /api/transactions` still returns 403. The AI provider has no tools and no wallet authority. `AI_PROVIDER=ajax` refuses before any network call. Gemini is the Phase 4 adapter. Production still needs the SQL paste, API key, and Vercel env in [docs/activate-ai.md](docs/activate-ai.md) before the mind runs with your PC off.
 
 ## Documents
 
@@ -59,6 +59,7 @@ The citizen gallery, Genesis Treasury, and history read Monad when the RPC is re
 - [Phase 3 living civilization](docs/phase-3.md)
 - [Phase 3.75 verifiable history](docs/phase-3.75.md)
 - [Phase 4 AI mind](docs/phase-4.md)
+- [Turn the AI mind on](docs/activate-ai.md)
 - [Architecture](docs/architecture.md)
 - [Database plan](docs/database.md)
 - [Wallet system](docs/wallet-system.md)

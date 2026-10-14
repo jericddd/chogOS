@@ -62,7 +62,7 @@ The engine still has no free-form map generator. Phase 4 can start a **house** o
 ## Scheduling
 
 - Primary world clock: existing `pg_cron` `world_tick()` every 5 seconds. Unchanged.
-- AI: `POST /api/ai/run` with `Authorization: Bearer AI_RUNNER_SECRET`, or `npm run ai:runner` on a machine that stays on (Fly, a VPS, GitHub-hosted runner, Cloud Scheduler). This repo has no `vercel.json`; do not assume Vercel cron exists on the current plan.
+- AI: `GET` or `POST /api/ai/run` with `Authorization: Bearer AI_RUNNER_SECRET` (or `CRON_SECRET`). `vercel.json` registers a daily Vercel Cron at 16:00 UTC (`0 16 * * *`) so the mind can run with no laptop on. Hobby plans cannot schedule more than once per day; more frequent crons fail the deploy. `npm run ai:runner` remains a fallback. Click-through activation: [activate-ai.md](activate-ai.md).
 - Defaults: 2 decisions per run, 30 minutes between a citizen's decisions, 12/hour, 48/day, 8k prompt chars, 512 output tokens, 20s timeout.
 - Fair queue: `ai_claim_citizens` orders by `last_decision_at` nulls first with `SKIP LOCKED`.
 

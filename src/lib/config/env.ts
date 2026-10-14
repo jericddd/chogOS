@@ -29,8 +29,10 @@ export type AppConfig = {
   aiApiKey?: string;
   aiModel?: string;
   aiBaseUrl?: string;
-  /** Server-only. POST /api/ai/run stays closed until this is set. */
+  /** Server-only. POST /api/ai/run stays closed until this or cronSecret is set. */
   aiRunnerSecret?: string;
+  /** Server-only. Vercel Cron sends this as Authorization: Bearer <CRON_SECRET>. */
+  cronSecret?: string;
   /** Explicit enable. Credentials alone do not start the mind. */
   aiRunnerEnabled: boolean;
   aiDecisionsPerRun: number;
@@ -184,11 +186,12 @@ export function readAppConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     supabaseAnonKey: blankToUndefined(env.SUPABASE_ANON_KEY),
     supabaseServiceRoleKey: blankToUndefined(env.SUPABASE_SERVICE_ROLE_KEY),
     aiProvider,
-    aiApiKey: blankToUndefined(env.AI_API_KEY),
+    aiApiKey: blankToUndefined(env.AI_API_KEY) ?? blankToUndefined(env.GEMINI_API_KEY),
     aiModel:
       blankToUndefined(env.AI_MODEL) ?? (aiProvider === "gemini" ? "gemini-3.8-flash" : undefined),
     aiBaseUrl: optionalHttpsUrl(blankToUndefined(env.AI_BASE_URL), "AI_BASE_URL"),
     aiRunnerSecret: blankToUndefined(env.AI_RUNNER_SECRET),
+    cronSecret: blankToUndefined(env.CRON_SECRET),
     aiRunnerEnabled: blankToUndefined(env.AI_RUNNER_ENABLED) === "true",
     aiDecisionsPerRun: readBoundedInt(env.AI_DECISIONS_PER_RUN, "AI_DECISIONS_PER_RUN", 2, 1, 8),
     aiMinDecisionIntervalSeconds: readBoundedInt(

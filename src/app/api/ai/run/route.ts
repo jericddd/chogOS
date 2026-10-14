@@ -4,26 +4,48 @@ import { clientKey, rateLimit } from "@/lib/auth/rate-limit";
 import { runAiMind } from "@/lib/ai/runner";
 import { readAppConfig } from "@/lib/config/env";
 
+/** Hobby-safe ceiling. Two bounded Gemini calls must finish inside one invocation. */
+export const maxDuration = 60;
+
 /**
  * Cloud-side AI decision runner. Independent of world_tick and of the browser.
- * Closed until AI_RUNNER_SECRET and AI_RUNNER_ENABLED=true are set.
+ * Closed until AI_RUNNER_SECRET or CRON_SECRET is set, and AI_RUNNER_ENABLED=true.
+ * Vercel Cron issues GET with Authorization: Bearer <CRON_SECRET>.
  */
-export async function POST(request: Request) {
+function authorize(request: Request): NextResponse | null {
   const config = readAppConfig();
-  if (!config.aiRunnerSecret) {
+  const secrets = [config.aiRunnerSecret, config.cronSecret].filter((value): value is string => Boolean(value));
+  if (secrets.length === 0) {
     return NextResponse.json(
-      { ok: false, error: "Set AI_RUNNER_SECRET before using the AI runner. The route stays closed until then." },
+      { ok: false, error: "Set AI_RUNNER_SECRET or CRON_SECRET before using the AI runner. The route stays closed until then." },
       { status: 403 },
     );
   }
-  if (!bearerMatches(request.headers.get("authorization"), config.aiRunnerSecret)) {
+  if (!secrets.some((secret) => bearerMatches(request.headers.get("authorization"), secret))) {
     return NextResponse.json({ ok: false, error: "Unauthorized." }, { status: 401 });
   }
   if (!rateLimit(`ai-run:${clientKey(request)}`, 10)) {
     return NextResponse.json({ ok: false, error: "Too many requests." }, { status: 429 });
   }
+  return null;
+}
+
+async function handle(request: Request): Promise<NextResponse> {
+  const denied = authorize(request);
+  if (denied) {
+    return denied;
+  }
+  const config = readAppConfig();
   const report = await runAiMind(config);
   const status =
     report.status === "unconfigured" ? 503 : report.status === "disabled" ? 403 : report.status === "error" ? 502 : 200;
   return NextResponse.json({ ok: report.status === "ran" || report.status === "idle", report }, { status });
+}
+
+export async function GET(request: Request): Promise<NextResponse> {
+  return handle(request);
+}
+
+export async function POST(request: Request): Promise<NextResponse> {
+  return handle(request);
 }
