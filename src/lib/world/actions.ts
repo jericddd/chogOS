@@ -1,11 +1,13 @@
 /**
- * Phase 4 seam: how a future decision maker proposes a citizen action.
+ * Phase 4 seam: how the AI mind (or a system operator) proposes a citizen action.
  *
  * propose -> precheck (here, advisory) -> submit as a pending world intent ->
  * world_tick validates it again with world_check_action and either applies it
  * or records the rejection reason. The database check is authoritative.
- * Phase 3 has no caller: nothing here runs an AI model or moves assets.
+ * The model never writes citizen or building rows itself.
  */
+const DECISION_ID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 import { worldDay, worldHour } from "@/lib/world/clock";
 import type { BuildingView, CitizenView } from "@/lib/world/types";
 
@@ -115,7 +117,7 @@ export function validateProposal(proposal: ActionProposal): ActionCheck {
   if (proposal.source !== "ai" && proposal.source !== "system") {
     return { ok: false, reason: "invalid decision source" };
   }
-  if (proposal.source === "ai" && !proposal.decisionId) {
+  if (proposal.source === "ai" && (!proposal.decisionId || !DECISION_ID_RE.test(proposal.decisionId))) {
     return { ok: false, reason: "an ai proposal must reference an ai_decisions record" };
   }
   if (proposal.expiresAt && Number.isNaN(Date.parse(proposal.expiresAt))) {

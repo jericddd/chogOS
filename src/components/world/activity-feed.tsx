@@ -39,7 +39,7 @@ function isEmptyFilter(filter: EventFilter): boolean {
 
 function emptyText(filter: EventFilter): string {
   if (filter.source === "ai" || filter.category === "ai") {
-    return "No AI events. The AI mind is not running, so nothing is labeled AI.";
+    return "No AI events. Only genuine model-backed decisions are labeled AI. Rule-based activity stays simulation.";
   }
   if (filter.source === "onchain" || filter.category === "onchain") {
     return "No onchain events. Only activity verified against Monad is labeled onchain, and the world makes no transactions.";

@@ -125,6 +125,8 @@ export type WorldEventView = {
   buildingName: string | null;
   chainStatus: "offchain" | "submitted" | "confirmed";
   txHash: string | null;
+  intentId?: string | null;
+  decisionId?: string | null;
 };
 
 export type RealtimeConfig = { url: string; anonKey: string; channel: string };

@@ -188,7 +188,7 @@ export function toCitizen(row: CitizenRow): CitizenView | null {
 }
 
 export const EVENT_COLUMNS =
-  "id, seq, kind, category, source, summary, occurred_at, world_s, tick_seq, building_id, chain_status, tx_hash, payload";
+  "id, seq, kind, category, source, summary, occurred_at, world_s, tick_seq, building_id, chain_status, tx_hash, payload, intent_id, decision_id";
 
 export type EventRow = {
   id: string;
@@ -204,6 +204,8 @@ export type EventRow = {
   chain_status: "offchain" | "submitted" | "confirmed";
   tx_hash: string | null;
   payload: unknown;
+  intent_id?: string | null;
+  decision_id?: string | null;
 };
 
 function payloadText(payload: unknown, key: string): string | null {
@@ -245,5 +247,7 @@ export function toEvent(row: EventRow): WorldEventView {
     buildingName: payloadText(row.payload, "buildingName"),
     chainStatus: row.chain_status,
     txHash: row.tx_hash,
+    intentId: row.intent_id ?? payloadText(row.payload, "intentId"),
+    decisionId: row.decision_id ?? payloadText(row.payload, "decisionId"),
   };
 }

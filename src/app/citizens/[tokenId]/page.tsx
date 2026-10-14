@@ -9,6 +9,8 @@ import { loadCitizenProfile } from "@/lib/civilization/load-profile";
 import { loadCitizenWalletView } from "@/lib/wallets/load";
 import { SourceBadge } from "@/components/world/event-item";
 import { formatWorldTime } from "@/lib/world/clock";
+import { loadCitizenMind } from "@/lib/ai/load-mind";
+import { TRAIT_LABELS } from "@/lib/ai/personality";
 import { loadCitizenWorld, loadEventPage } from "@/lib/world/load";
 import { KIND_LABEL, ROLE_LABEL, citizenHref, describeCitizenNow } from "@/lib/world/present";
 
@@ -16,14 +18,7 @@ export const metadata: Metadata = {
   title: "Citizen",
 };
 
-const reserved = [
-  "Skills",
-  "Social status",
-  "Wealth",
-  "Relationships",
-  "Goals",
-  "AI memory",
-] as const;
+const reserved = ["Social status", "Wealth", "Relationships"] as const;
 
 export default function CitizenPage({ params }: { params: Promise<{ tokenId: string }> }) {
   return (
@@ -118,6 +113,8 @@ async function CitizenLive({ tokenId }: { tokenId: string }) {
 
         <CitizenInWorld tokenId={citizen.tokenId} />
 
+        <CitizenMindSection tokenId={citizen.tokenId} />
+
         <CitizenHistory tokenId={citizen.tokenId} fallback={profile.events} />
 
         <CitizenWalletPanel view={wallet} />
@@ -191,9 +188,95 @@ async function CitizenInWorld({ tokenId }: { tokenId: string }) {
         <div>
           <dt className="text-xs tracking-[0.14em] text-muted uppercase">Decided by</dt>
           <dd className="mt-1">{here.decisionSource === "ai" ? "AI mind" : here.decisionSource === "system" ? "System" : "Simulation rules"}</dd>
-          <dd className="mt-1 text-sm text-muted">The AI mind is not running. Rules choose every action.</dd>
+          <dd className="mt-1 text-sm text-muted">
+            {here.decisionSource === "ai"
+              ? "This current activity was queued from a stored AI decision and revalidated by the simulation."
+              : "Rules chose this activity. AI labels appear only after a model-backed runner submits a validated intent."}
+          </dd>
         </div>
       </dl>
+    </section>
+  );
+}
+
+async function CitizenMindSection({ tokenId }: { tokenId: string }) {
+  const mind = await loadCitizenMind(tokenId);
+  if (mind.status !== "ok") {
+    return (
+      <section className="mt-8">
+        <h2 className="font-serif text-2xl">Mind</h2>
+        <p className="mt-2 text-sm leading-6 text-muted">{mind.detail}</p>
+      </section>
+    );
+  }
+  const data = mind.mind;
+  const traits = data.personality
+    ? (Object.entries(TRAIT_LABELS) as Array<[keyof typeof TRAIT_LABELS, string]>)
+    : [];
+  return (
+    <section className="mt-8">
+      <h2 className="font-serif text-2xl">Mind</h2>
+      <p className="mt-2 text-sm leading-6 text-muted">
+        {data.personalityOrigin === "deterministic"
+          ? "Personality is a deterministic profile of this NFT identity. The hosted model is not trained on these rows."
+          : "No personality has been initialized yet."}{" "}
+        {data.aiActive ? "At least one AI decision is stored." : "No AI decision is stored for this citizen."}
+      </p>
+      {data.personality ? (
+        <dl className="mt-4 grid gap-2 sm:grid-cols-2">
+          {traits.map(([key, label]) => (
+            <div key={key} className="rounded-xl border border-line px-3 py-3 text-sm">
+              <dt className="text-muted">{label}</dt>
+              <dd className="mt-1 tabular-nums">{data.personality![key]}</dd>
+            </div>
+          ))}
+        </dl>
+      ) : null}
+      <div className="mt-4 grid gap-4 sm:grid-cols-3">
+        <div>
+          <h3 className="text-xs tracking-[0.14em] text-muted uppercase">Skills</h3>
+          {data.skills.length === 0 ? (
+            <p className="mt-2 text-sm text-muted">Not recorded. Completing supported work can raise a skill.</p>
+          ) : (
+            <ul className="mt-2 text-sm">
+              {data.skills.map((skill) => (
+                <li key={skill.name}>
+                  {skill.name} · {skill.level}/100
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+        <div>
+          <h3 className="text-xs tracking-[0.14em] text-muted uppercase">Goals</h3>
+          {data.goals.length === 0 ? (
+            <p className="mt-2 text-sm text-muted">Not recorded.</p>
+          ) : (
+            <ul className="mt-2 text-sm">
+              {data.goals.slice(0, 4).map((goal) => (
+                <li key={goal.id}>
+                  {goal.title} · {goal.status} · {goal.progress}%
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+        <div>
+          <h3 className="text-xs tracking-[0.14em] text-muted uppercase">Memories</h3>
+          {data.memories.length === 0 ? (
+            <p className="mt-2 text-sm text-muted">Not recorded. Failures are not stored as successes.</p>
+          ) : (
+            <ul className="mt-2 text-sm">
+              {data.memories.slice(0, 3).map((memory) => (
+                <li key={memory.id}>
+                  {memory.content}
+                  {memory.outcome ? ` (${memory.outcome})` : ""}
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      </div>
     </section>
   );
 }

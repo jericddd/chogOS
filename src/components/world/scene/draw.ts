@@ -79,8 +79,19 @@ function drawGround(ctx: Ctx) {
   }
 }
 
-function drawPlots(ctx: Ctx) {
+function drawPlots(ctx: Ctx, buildings: readonly BuildingView[]) {
   for (const plot of PLOTS) {
+    if (
+      buildings.some(
+        (building) =>
+          building.x < plot.x + plot.w &&
+          building.x + building.w > plot.x &&
+          building.y < plot.y + plot.h &&
+          building.y + building.h > plot.y,
+      )
+    ) {
+      continue;
+    }
     const px = plot.x * TILE;
     const py = plot.y * TILE;
     const w = plot.w * TILE;
@@ -461,7 +472,7 @@ export function drawStaticLayer(ctx: Ctx, buildings: readonly BuildingView[]) {
   ctx.imageSmoothingEnabled = false;
   ctx.clearRect(0, 0, WORLD_PX_W, WORLD_PX_H);
   drawGround(ctx);
-  drawPlots(ctx);
+  drawPlots(ctx, buildings);
   drawWater(ctx);
   drawRoads(ctx);
   for (const b of buildings) {

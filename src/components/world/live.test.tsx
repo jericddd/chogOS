@@ -233,7 +233,7 @@ describe("activity feed", () => {
     const store = createLiveStore(snapshot([event(3)]), { fetcher: vi.fn() as unknown as typeof fetch });
     render(<ActivityFeed store={store} />);
     fireEvent.change(screen.getAllByRole("combobox")[1]!, { target: { value: "ai" } });
-    await screen.findByText(/The AI mind is not running/);
+    await screen.findByText(/Only genuine model-backed decisions are labeled AI/);
     expect(String(fetcher.mock.calls[0]![0])).toContain("source=ai");
   });
 });

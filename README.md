@@ -8,9 +8,9 @@ One shared civilization for Chog Genesis citizens on Monad. A participating toke
 - Tailwind CSS 4
 - Supabase Postgres, through `@supabase/supabase-js` and `@supabase/ssr`
 - viem for read-only Monad access
-- A server-side AI provider interface with `none`, `openai`, `anthropic`, and `ajax`
+- A server-side AI provider interface with `none`, `gemini`, `openai`, `anthropic`, and `ajax`
 
-The world renders without Supabase. Founding records and enrollment are stored only after Supabase is configured. The dashboard does not call the AI provider.
+The world renders without Supabase. Founding records and enrollment are stored only after Supabase is configured. The dashboard does not call the AI provider. The optional mind runner is a separate server route and stays off until `AI_RUNNER_ENABLED=true`.
 
 ## Scripts
 
@@ -27,6 +27,8 @@ npm run world:init
 npm run world:expand
 npm run world:admin -- status
 npm run world:runner
+npm run ai:runner
+npm run ai:smoke
 npm run world:speed-report
 npm run verify:cutover
 npm run verify:snapshot
@@ -48,7 +50,7 @@ The home page is the living world: a canvas map of homes, workplaces, and citize
 
 The citizen gallery, Genesis Treasury, and history read Monad when the RPC is reachable. Treasury NFT counts are Chog Genesis holdings, not `$CHOG` balances. If the verified count is not the expected comparison figure, the page says so. Missing metadata uses local artwork. The activity feed lists stored events only.
 
-`POST /api/transactions` still returns 403. The AI provider has no tools and no wallet authority. `AI_PROVIDER=ajax` refuses before any network call.
+`POST /api/transactions` still returns 403. The AI provider has no tools and no wallet authority. `AI_PROVIDER=ajax` refuses before any network call. Gemini is the Phase 4 adapter; it is not enabled in production by this change.
 
 ## Documents
 
@@ -56,6 +58,7 @@ The citizen gallery, Genesis Treasury, and history read Monad when the RPC is re
 - [Phase 2 wallets and treasury](docs/phase-2.md)
 - [Phase 3 living civilization](docs/phase-3.md)
 - [Phase 3.75 verifiable history](docs/phase-3.75.md)
+- [Phase 4 AI mind](docs/phase-4.md)
 - [Architecture](docs/architecture.md)
 - [Database plan](docs/database.md)
 - [Wallet system](docs/wallet-system.md)
@@ -73,7 +76,7 @@ Setup, the hash-checked Safe infrastructure, and the remaining blockers are in [
 
 `20261013040000_phase3_world.sql` adds the world tables and a `world_tick()` function that `pg_cron` runs every few seconds. The world moves at 60× (one world day is 24 real minutes). This speed was chosen from measured runs of the real engine. The browser reads only through `GET /api/world/live` and `GET /api/world/events`. The optional anon key is used only for a Realtime nudge. Nothing in the world is labeled `ai` or `onchain`, because neither source exists yet.
 
-Setup, the time model, the rules, the downtime behavior, and the Phase 4 action interface are in [docs/phase-3.md](docs/phase-3.md).
+Setup, the time model, the rules, the downtime behavior, and the Phase 4 action interface are in [docs/phase-3.md](docs/phase-3.md). The mind itself is in [docs/phase-4.md](docs/phase-4.md). Do not claim it is live until Gemini, the runner, and a persisted `source=ai` outcome have been verified.
 
 ## Phase 3.75
 

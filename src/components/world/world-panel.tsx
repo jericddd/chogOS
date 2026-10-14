@@ -29,6 +29,8 @@ import {
 } from "@/lib/world/present";
 import { describeSpeed } from "@/lib/world/speed";
 import { matchesFilter, mergeEvents } from "@/lib/world/sync";
+import type { CitizenMindView } from "@/lib/ai/mind-view";
+import { TRAIT_LABELS } from "@/lib/ai/personality";
 import type { BuildingView, CitizenView, EventFilter, EventPage, WorldActivity, WorldEventView, WorldSnapshot } from "@/lib/world/types";
 
 const HEALTH_TEXT = {
@@ -269,8 +271,113 @@ function CitizenInspector({
           Open profile
         </Link>
       </div>
+      <CitizenMindFacts tokenId={citizen.tokenId} />
       <EntityHistory filter={{ tokenId: citizen.tokenId }} recent={recent} citizenName={citizenName} allHref={`/activity?citizen=${citizen.tokenId}`} />
     </article>
+  );
+}
+
+function CitizenMindFacts({ tokenId }: { tokenId: string }) {
+  const [mind, setMind] = useState<CitizenMindView | null>(null);
+  const [detail, setDetail] = useState<string | null>(null);
+  useEffect(() => {
+    let gone = false;
+    fetch(`/api/world/mind?citizen=${encodeURIComponent(tokenId)}`, { cache: "no-store" })
+      .then(async (response) => (await response.json()) as { status: string; mind?: CitizenMindView; detail?: string })
+      .then((body) => {
+        if (gone) {
+          return;
+        }
+        if (body.status === "ok" && body.mind) {
+          setMind(body.mind);
+          setDetail(null);
+        } else {
+          setMind(null);
+          setDetail(body.detail ?? "Mind records are not available yet.");
+        }
+      })
+      .catch(() => {
+        if (!gone) {
+          setDetail("Mind records could not be read.");
+        }
+      });
+    return () => {
+      gone = true;
+    };
+  }, [tokenId]);
+
+  if (!mind) {
+    return (
+      <section className="mt-4">
+        <h3 className="text-xs tracking-[0.14em] text-muted uppercase">Mind</h3>
+        <p className="mt-1 text-xs text-muted">{detail ?? "Reading stored mind records…"}</p>
+      </section>
+    );
+  }
+  const traits = mind.personality
+    ? (Object.entries(TRAIT_LABELS) as Array<[keyof typeof TRAIT_LABELS, string]>).map(([key, label]) => ({
+        label,
+        value: mind.personality![key],
+      }))
+    : [];
+  const activeGoals = mind.goals.filter((goal) => ["proposed", "active", "blocked"].includes(goal.status));
+  return (
+    <section className="mt-4">
+      <h3 className="text-xs tracking-[0.14em] text-muted uppercase">Mind</h3>
+      <p className="mt-1 text-xs text-muted">
+        {mind.personalityOrigin === "deterministic"
+          ? "Personality was initialized from this citizen's identity. It is not a live model session."
+          : "No personality row is stored yet."}{" "}
+        {mind.aiActive ? "A stored AI decision exists for this citizen." : "No executed AI decision is stored."}
+      </p>
+      {traits.length > 0 ? (
+        <dl className="mt-2 grid grid-cols-2 gap-2 text-xs">
+          {traits.map((trait) => (
+            <div key={trait.label} className="flex justify-between gap-2 rounded-lg border border-line px-2 py-1">
+              <dt className="text-muted">{trait.label}</dt>
+              <dd className="tabular-nums">{trait.value}</dd>
+            </div>
+          ))}
+        </dl>
+      ) : null}
+      {mind.skills.length > 0 ? (
+        <ul className="mt-2 text-xs">
+          {mind.skills.map((skill) => (
+            <li key={skill.name}>
+              {skill.name} · {skill.level}/100
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className="mt-2 text-xs text-muted">No skills recorded. Skill rises only after completed simulation work.</p>
+      )}
+      {activeGoals.length > 0 ? (
+        <ul className="mt-2 text-xs">
+          {activeGoals.map((goal) => (
+            <li key={goal.id}>
+              {goal.title} · {goal.status} · {goal.progress}%
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className="mt-2 text-xs text-muted">No active goal stored.</p>
+      )}
+      {mind.memories[0] ? (
+        <p className="mt-2 text-xs text-muted">
+          Memory: {mind.memories[0].content}
+          {mind.memories[0].outcome ? ` (${mind.memories[0].outcome})` : ""}
+        </p>
+      ) : null}
+      {mind.decisions[0] ? (
+        <p className="mt-2 text-xs text-muted">
+          Last decision: {mind.decisions[0].status}
+          {mind.decisions[0].summary ? ` · ${mind.decisions[0].summary}` : ""}
+          {mind.decisions[0].model ? ` · ${mind.decisions[0].model}` : ""}
+        </p>
+      ) : (
+        <p className="mt-2 text-xs text-muted">No AI decision has been stored for this citizen.</p>
+      )}
+    </section>
   );
 }
 
@@ -307,10 +414,12 @@ function BuildingInspector({
         <div className="mt-3">
           <p className="text-sm">Under construction · {building.constructionProgress ?? 0}%</p>
           <Progress value={building.constructionProgress ?? 0} tone="bg-[#f0a020]" />
-          <p className="mt-1 text-xs text-muted">Each builder shift adds 4% and uses 3 wood and 2 stone from the Storehouse.</p>
+          <p className="mt-1 text-xs text-muted">
+            Each builder shift adds 4% and uses 3 wood and 2 stone from the Storehouse. A building is complete only after those simulated shifts, not when it was proposed.
+          </p>
         </div>
       ) : building.completedAt ? (
-        <p className="mt-2 text-xs text-muted">Completed by simulated builders.</p>
+        <p className="mt-2 text-xs text-muted">Completed after simulated builder shifts reached 100%.</p>
       ) : null}
       <dl className="mt-4 grid grid-cols-2 gap-3">
         {building.capacity !== null ? (
@@ -475,8 +584,9 @@ function WorldOverview({ snapshot, onPick }: { snapshot: WorldSnapshot; onPick: 
         </label>
       </div>
       <p className="mt-4 text-xs leading-5 text-muted">
-        Citizens follow fixed simulation rules. The AI mind is not running, and nothing here is a balance, a trade,
-        or an onchain action. <Link href="/citizens" className="text-accent">Citizens</Link> ·{" "}
+        Simulation rules still run every tick. AI-labeled activity appears only after a configured cloud runner
+        submits a validated intent. Nothing here is a balance, a trade, or an onchain action.{" "}
+        <Link href="/citizens" className="text-accent">Citizens</Link> ·{" "}
         <Link href="/treasury" className="text-accent">Genesis Treasury</Link> ·{" "}
         <Link href="/activity" className="text-accent">Civilization History</Link>
       </p>
