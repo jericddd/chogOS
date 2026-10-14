@@ -115,7 +115,7 @@ Row level security is enabled on the new tables. `anon` and `authenticated` have
 - `verification_state` is one row for cutover metadata.
 - `ai_decisions` gains provenance columns for Phase 4. No AI rows are inserted here.
 
-`anon` and `authenticated` have no grants on the new tables or on `verify_*` writer functions. `service_role` may select and may execute `verify_cutover`, `verify_hash_historical`, `verify_commit_batch`, `verify_record_correction`, and `verify_record_anchor`. This migration is **not applied** on hosted until an operator pastes it. See [docs/phase-3.75.md](phase-3.75.md).
+`anon` and `authenticated` have no grants on the new tables or on `verify_*` writer functions. `service_role` may select and may execute `verify_cutover`, `verify_hash_historical`, `verify_commit_batch`, `verify_record_correction`, and `verify_record_anchor`. Hosted Postgres keeps `pgcrypto` in `extensions`; `20261014133000_phase375_pgcrypto_path.sql` sets that search_path. Paste both files. See [docs/phase-3.75.md](phase-3.75.md).
 
 ## Not stored
 

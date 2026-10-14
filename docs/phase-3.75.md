@@ -7,7 +7,8 @@ This phase adds a public verification layer on the existing world. It does not i
 | Item | State |
 | --- | --- |
 | Code | In the repository on `cursor/phase-3-75-verifiability-155c` |
-| `20261014120000_phase375_verify.sql` | **Not applied** on hosted Supabase unless an operator pastes it |
+| `20261014120000_phase375_verify.sql` | Applied on hosted only after it is pasted in the SQL editor |
+| `20261014133000_phase375_pgcrypto_path.sql` | Follow-up so hosted `digest()` is visible (`extensions` schema). Required before cutover |
 | EventAnchor | Compiled locally. **Not deployed** to Monad Testnet or Mainnet |
 | Any Merkle root onchain | **None** |
 
