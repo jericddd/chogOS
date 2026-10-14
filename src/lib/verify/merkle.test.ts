@@ -1,0 +1,144 @@
+import { describe, expect, it } from "vitest";
+import { hashEvent } from "@/lib/verify/canonical";
+import { buildEventTree, dumpTree, loadDumpedTree, proofForHash, TREE_FORMAT, verifyInclusion } from "@/lib/verify/merkle";
+import { findDuplicateSeqs, findSeqGaps, verifyEventLocally } from "@/lib/verify/chain";
+
+const h = (n: number) =>
+  hashEvent({
+    id: "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeee" + String(n).padStart(2, "0"),
+    seq: n,
+    kind: "probe",
+    category: "world",
+    source: "system",
+    summary: `n=${n}`,
+    occurredAt: "2026-10-13T00:00:00.000Z",
+    createdAt: "2026-10-13T00:00:00.000Z",
+    chainStatus: "offchain",
+    payload: { n },
+  });
+
+describe("merkle batches", () => {
+  it("proves inclusion and rejects tampers, duplicates, and format mismatches", () => {
+    const hashes = [h(1), h(2), h(3)];
+    const tree = buildEventTree(hashes);
+    expect(tree.format).toBe(TREE_FORMAT);
+    const proof = proofForHash(tree, hashes[1]!);
+    expect(verifyInclusion(tree.root, hashes[1]!, proof.proof)).toBe(true);
+    expect(verifyInclusion(tree.root, hashes[1]!, ["0x" + "00".repeat(32)])).toBe(false);
+    expect(verifyInclusion(tree.root, h(9), proof.proof)).toBe(false);
+    expect(verifyInclusion(tree.root, hashes[1]!, proof.proof, "other-format")).toBe(false);
+    const reordered = buildEventTree([hashes[2]!, hashes[1]!, hashes[0]!]);
+    expect(reordered.root).not.toBe(tree.root);
+    expect(() => buildEventTree([hashes[0]!, hashes[0]!])).toThrow(/Duplicate/);
+    const loaded = loadDumpedTree(dumpTree(tree));
+    expect(loaded.root).toBe(tree.root);
+    expect(verifyInclusion(loaded.root, hashes[1]!, proofForHash(loaded, hashes[1]!).proof)).toBe(true);
+  });
+});
+
+describe("local verifier statuses", () => {
+  it("does not treat API success or a hash match as an onchain anchor", () => {
+    const event = {
+      id: "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeee01",
+      seq: 1,
+      kind: "probe",
+      category: "world",
+      source: "system",
+      summary: "n=1",
+      occurredAt: "2026-10-13T00:00:00.000Z",
+      createdAt: "2026-10-13T00:00:00.000Z",
+      chainStatus: "offchain",
+      payload: { n: 1 },
+      prevEventHash: null,
+    };
+    const stored = hashEvent(event);
+    expect(verifyEventLocally({ event, storedHash: null, integrityClass: null }).status).toBe("unverified");
+    expect(verifyEventLocally({ event, storedHash: stored, integrityClass: "historical" }).status).toBe(
+      "event_hash_verified",
+    );
+    expect(
+      verifyEventLocally({
+        event: { ...event, source: "ai" },
+        storedHash: stored,
+        integrityClass: "historical",
+      }).status,
+    ).toBe("verification_failed");
+    const live = verifyEventLocally({ event, storedHash: stored, integrityClass: "live" });
+    expect(live.status).toBe("log_integrity_verified");
+    const tree = buildEventTree([stored]);
+    const proof = proofForHash(tree, stored);
+    expect(
+      verifyEventLocally({
+        event,
+        storedHash: stored,
+        integrityClass: "live",
+        proof: { format: TREE_FORMAT, root: tree.root, proof: proof.proof },
+        expectedRoot: tree.root,
+      }).status,
+    ).toBe("merkle_proof_verified");
+    const anchor = {
+      chainId: 10143,
+      contract: "0x0000000000000000000000000000000000000001",
+      txHash: "0x" + "11".repeat(32),
+      blockNumber: "1",
+      root: tree.root,
+      batchId: "batch",
+    };
+    expect(
+      verifyEventLocally({
+        event,
+        storedHash: stored,
+        integrityClass: "live",
+        proof: { format: TREE_FORMAT, root: tree.root, proof: proof.proof },
+        expectedRoot: tree.root,
+        anchor,
+      }).status,
+    ).toBe("merkle_proof_verified");
+    expect(
+      verifyEventLocally({
+        event,
+        storedHash: stored,
+        integrityClass: "live",
+        proof: { format: TREE_FORMAT, root: tree.root, proof: proof.proof },
+        expectedRoot: tree.root,
+        anchor,
+        onchainRoot: tree.root,
+        onchainChainId: 143,
+      }).status,
+    ).toBe("verification_failed");
+    expect(
+      verifyEventLocally({
+        event,
+        storedHash: stored,
+        integrityClass: "live",
+        proof: { format: TREE_FORMAT, root: tree.root, proof: proof.proof },
+        expectedRoot: tree.root,
+        anchor,
+        onchainRoot: "0x" + "00".repeat(32),
+        onchainChainId: 10143,
+      }).status,
+    ).toBe("verification_failed");
+    expect(
+      verifyEventLocally({
+        event,
+        storedHash: stored,
+        integrityClass: "live",
+        proof: { format: TREE_FORMAT, root: tree.root, proof: proof.proof },
+        expectedRoot: tree.root,
+        anchor,
+        onchainRoot: tree.root,
+        onchainChainId: 10143,
+      }).status,
+    ).toBe("onchain_anchor_verified");
+    expect(
+      verifyEventLocally({
+        event,
+        storedHash: stored,
+        integrityClass: "live",
+        previous: { seq: 0, hash: "0x" + "ab".repeat(32), prevEventHash: null },
+      }).status,
+    ).toBe("verification_failed");
+    expect(findSeqGaps([1, 2, 4])).toEqual([3]);
+    expect(findDuplicateSeqs([1, 2, 2])).toEqual([2]);
+  });
+});

@@ -65,6 +65,11 @@ export function EventItem({
             {event.chainStatus === "confirmed" && event.txHash ? (
               <span className="font-mono"> · {event.txHash.slice(0, 10)}…</span>
             ) : null}
+            {" "}
+            ·{" "}
+            <Link href={`/verify/events/${event.id}`} className="text-accent hover:underline">
+              Verify
+            </Link>
           </p>
         </div>
       </div>

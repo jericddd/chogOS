@@ -16,9 +16,15 @@
     "world:expand": "tsx scripts/world-expand.ts",
     "world:runner": "tsx scripts/world-runner.ts",
     "world:admin": "tsx scripts/world-admin.ts",
-    "world:speed-report": "tsx scripts/world-speed-report.ts"
+    "world:speed-report": "tsx scripts/world-speed-report.ts",
+    "verify:cutover": "tsx scripts/verify-cutover.ts",
+    "verify:snapshot": "tsx scripts/verify-batch.ts --snapshot",
+    "verify:batch": "tsx scripts/verify-batch.ts",
+    "verify:anchor": "tsx scripts/verify-anchor.ts",
+    "verify:contracts-local": "forge test --root contracts"
   },
   "dependencies": {
+    "@openzeppelin/merkle-tree": "^1.0.8",
     "@supabase/ssr": "^0.12.7",
     "@supabase/supabase-js": "^2.117.3",
     "next": "16.4.0",

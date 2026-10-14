@@ -36,6 +36,8 @@ The home page is now a persistent 2D pixel-art world. Every eligible existing ci
    `scheduler.job` shows the `pg_cron` job. If it says `none`, enable `pg_cron` under Database, Extensions in the Supabase dashboard, then run the two `do $$ ... $$` blocks at the end of the migration again. Until then, `npm run world:runner` ticks from any trusted machine.
 4. Optional: set `SUPABASE_ANON_KEY` so browsers receive realtime nudges. The anon key is public by design and has no table grants; it can only join the broadcast channel.
 
+Verification of history (hashes, Merkle batches, the EventAnchor contract) is Phase 3.75. It is documented in [phase-3.75.md](phase-3.75.md) and is not applied on hosted until that SQL file is pasted.
+
 Operator commands, all recorded as system events:
 
 ```bash
