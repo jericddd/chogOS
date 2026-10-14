@@ -5,7 +5,7 @@
  *   npm run verify:batch              # live unbatched events
  *   npm run verify:snapshot           # historical snapshot after cutover
  */
-import { buildEventTree, dumpTree, proofForHash, TREE_FORMAT } from "../src/lib/verify/merkle";
+import { buildEventTree, proofForHash, TREE_FORMAT } from "../src/lib/verify/merkle";
 import { explainRpcError, openOperatorClient } from "./world-client";
 
 const snapshot = process.argv.includes("--snapshot") || process.env.npm_lifecycle_event === "verify:snapshot";
@@ -39,7 +39,7 @@ async function main(): Promise<void> {
       .is("merkle_batch_id", null)
       .not("event_hash", "is", null)
       .order("seq", { ascending: true })
-      .limit(512);
+      .limit(128);
     if (error) {
       console.error(error.message);
       process.exit(1);
@@ -61,13 +61,23 @@ async function main(): Promise<void> {
       eventCount: rows.length,
       root: tree.root,
       treeFormat: TREE_FORMAT,
-      dump: dumpTree(tree),
+      dump: {},
       proofs,
     };
-    const committed = await client.rpc("verify_commit_batch", { p_batch: payload });
+    let committed = await client.rpc("verify_commit_batch", { p_batch: payload });
+    if (committed.error && /statement timeout|57014/i.test(committed.error.message)) {
+      console.error("timeout, retrying once", explainRpcError(committed.error));
+      await new Promise((resolve) => setTimeout(resolve, 2000));
+      committed = await client.rpc("verify_commit_batch", { p_batch: payload });
+    }
     if (committed.error) {
       console.error(explainRpcError(committed.error));
       process.exit(1);
+    }
+    const result = committed.data as { status?: string } | null;
+    if (result?.status === "duplicate_root" || result?.status === "duplicate_range") {
+      console.log(JSON.stringify({ result, skipped: true, count: rows.length }, null, 2));
+      continue;
     }
     console.log(JSON.stringify({ result: committed.data, root: tree.root, count: rows.length }, null, 2));
   }
