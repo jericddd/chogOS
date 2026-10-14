@@ -28,7 +28,7 @@ A balance observation stores a raw integer and the block it was read at. Spendin
 
 ## AI decision-making
 
-`AiProvider` can complete a text request through OpenAI-compatible chat completions or the Anthropic messages API. The default provider is `none`, and calling it throws. The interface has no tool list, no wallet client, and no route.
+`AiProvider` can complete a text request through Gemini `generateContent`, OpenAI-compatible chat completions, or the Anthropic messages API. The default provider is `none`, and calling it throws. Ajax still refuses. The interface has no tool list, no wallet client, and no public decision route. `POST /api/ai/run` is bearer-protected and disabled until `AI_RUNNER_ENABLED=true`.
 
 Later, a decision is written to `ai_decisions` before anyone prepares a proposal. Acceptance of a decision is still not permission to move funds. The wallet has to accept the call.
 
@@ -78,6 +78,10 @@ The simulation is a single PL/pgSQL function, `world_tick()`, scheduled by `pg_c
 ## Verifiable history (Phase 3.75)
 
 Canonical event documents and SHA-256 hashes live in `src/lib/verify`. Merkle batches use OpenZeppelin `StandardMerkleTree`. The browser recomputes proofs; `GET /api/verify/events/[id]` only supplies data. `EventAnchor` can record roots later. Nothing in this phase sends a transaction or labels simulated work as onchain.
+
+## AI mind (Phase 4)
+
+The simulation stays in `world_tick()`. A separate runner builds a bounded citizen context, calls the configured provider, validates JSON, and inserts `world_intents` or a house on a surveyed plot. Outcome feedback writes memories, skills, and goals. Details are in [phase-4.md](phase-4.md).
 
 ## Intentionally absent
 

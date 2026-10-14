@@ -295,8 +295,12 @@ export function buildingById(id: string): BuildingDef | undefined {
   return BUILDINGS.find((building) => building.id === id);
 }
 
-function inRect(rect: Rect, x: number, y: number): boolean {
+export function inRect(rect: Rect, x: number, y: number): boolean {
   return x >= rect.x && x < rect.x + rect.w && y >= rect.y && y < rect.y + rect.h;
+}
+
+export function rectsOverlap(a: Rect, b: Rect): boolean {
+  return a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
 }
 
 export function inBounds(x: number, y: number, width = GRID_W, height = GRID_H): boolean {
@@ -340,7 +344,10 @@ function tileKey(x: number, y: number, width: number): number {
   return y * width + x;
 }
 
-function walkableOn(width: number, height: number, roads: readonly Rect[], buildings: readonly BuildingDef[]): Uint8Array {
+/** Buildings that participate in road walking: doors plus open commons interiors. */
+export type PathBuilding = Pick<BuildingDef, "id" | "kind" | "rect" | "door">;
+
+export function walkableOn(width: number, height: number, roads: readonly Rect[], buildings: readonly PathBuilding[]): Uint8Array {
   const grid = new Uint8Array(width * height);
   for (let y = 0; y < height; y += 1) {
     for (let x = 0; x < width; x += 1) {
@@ -373,9 +380,9 @@ export function walkableGrid(): Uint8Array {
   return walkable;
 }
 
-function pathOn(
-  from: BuildingDef,
-  to: BuildingDef,
+export function pathOn(
+  from: PathBuilding,
+  to: PathBuilding,
   width: number,
   height: number,
   grid: Uint8Array,
@@ -448,7 +455,7 @@ export function pathBetween(fromId: string, toId: string): Tile[] | null {
 
 export type RouteRow = { from: string; to: string; steps: number };
 
-function routesOn(width: number, height: number, roads: readonly Rect[], buildings: readonly BuildingDef[]): RouteRow[] {
+function routesOn(width: number, height: number, roads: readonly Rect[], buildings: readonly PathBuilding[]): RouteRow[] {
   const grid = walkableOn(width, height, roads, buildings);
   const rows: RouteRow[] = [];
   for (const from of buildings) {

@@ -115,7 +115,21 @@ Row level security is enabled on the new tables. `anon` and `authenticated` have
 - `verification_state` is one row for cutover metadata.
 - `ai_decisions` gains provenance columns for Phase 4. No AI rows are inserted here.
 
-`anon` and `authenticated` have no grants on the new tables or on `verify_*` writer functions. `service_role` may select and may execute `verify_cutover`, `verify_hash_historical`, `verify_commit_batch`, `verify_record_correction`, and `verify_record_anchor`. This migration is **not applied** on hosted until an operator pastes it. See [docs/phase-3.75.md](phase-3.75.md).
+`anon` and `authenticated` have no grants on the new tables or on `verify_*` writer functions. `service_role` may select and may execute `verify_cutover`, `verify_hash_historical`, `verify_commit_batch`, `verify_record_correction`, and `verify_record_anchor`. Hosted Postgres keeps `pgcrypto` in `extensions`; `20261014133000_phase375_pgcrypto_path.sql` sets that search_path. Paste both files. See [docs/phase-3.75.md](phase-3.75.md).
+
+## Phase 4 mind
+
+`20261014180000_phase4_ai_mind.sql` is additive. It does not insert founding citizens, reset the clock, or rerun event cutover.
+
+- `citizen_personalities` is one deterministic trait row per citizen.
+- `citizen_goals` holds a bounded lifecycle (`proposed` through `superseded`).
+- `citizen_skills.experience` and `citizen_skill_awards` make skill grants idempotent.
+- `ai_memories` gains category, source event, outcome, and uniqueness guards.
+- `ai_decisions` status includes `queued`, `executed`, `expired`, and `superseded`.
+- `world_plots` lists genesis-v1.1 lots. `world_place_building` is the only insert path for a new house.
+- `ai_usage_counters`, `ai_scheduler_state`, and `ai_citizen_claims` cap and serialize inference.
+
+The hosted project does not apply a file merely because it is in git. Paste this migration when activating the mind. See [phase-4.md](phase-4.md).
 
 ## Not stored
 

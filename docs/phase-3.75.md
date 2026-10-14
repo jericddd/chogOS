@@ -7,7 +7,10 @@ This phase adds a public verification layer on the existing world. It does not i
 | Item | State |
 | --- | --- |
 | Code | In the repository on `cursor/phase-3-75-verifiability-155c` |
-| `20261014120000_phase375_verify.sql` | **Not applied** on hosted Supabase unless an operator pastes it |
+| `20261014120000_phase375_verify.sql` | Applied on hosted |
+| `20261014133000_phase375_pgcrypto_path.sql` | Applied on hosted |
+| Cutover | Hosted cutover at seq 31657 on 2026-10-14 |
+| Historical snapshot | Hashed and batched offchain. `snapshot_committed_at` is the batch time, not original `occurred_at` |
 | EventAnchor | Compiled locally. **Not deployed** to Monad Testnet or Mainnet |
 | Any Merkle root onchain | **None** |
 

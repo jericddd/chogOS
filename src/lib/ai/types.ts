@@ -8,12 +8,18 @@ export type AiMessage = {
 export type AiCompletionRequest = {
   purpose: string;
   messages: AiMessage[];
+  /** JSON Schema for providers that support structured output. */
+  responseSchema?: Record<string, unknown>;
+  timeoutMs?: number;
+  maxOutputTokens?: number;
 };
 
 export type AiCompletion = {
-  provider: "openai" | "anthropic";
+  provider: AiProviderId;
   model: string;
   text: string;
+  promptChars?: number;
+  outputTokens?: number;
 };
 
 /**
@@ -23,4 +29,18 @@ export type AiCompletion = {
 export interface AiProvider {
   readonly id: AiProviderId;
   complete(request: AiCompletionRequest): Promise<AiCompletion>;
+}
+
+export type AiHaltCode = "quota" | "rate_limit" | "billing" | "timeout" | "unavailable" | "invalid" | "disabled";
+
+export class AiProviderError extends Error {
+  readonly code: AiHaltCode;
+  readonly halt: boolean;
+
+  constructor(message: string, code: AiHaltCode, halt: boolean) {
+    super(message);
+    this.name = "AiProviderError";
+    this.code = code;
+    this.halt = halt;
+  }
 }

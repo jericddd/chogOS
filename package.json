@@ -15,6 +15,8 @@
     "world:init": "tsx scripts/world-init.ts",
     "world:expand": "tsx scripts/world-expand.ts",
     "world:runner": "tsx scripts/world-runner.ts",
+    "ai:runner": "tsx scripts/ai-runner.ts",
+    "ai:smoke": "tsx scripts/ai-smoke.ts",
     "world:admin": "tsx scripts/world-admin.ts",
     "world:speed-report": "tsx scripts/world-speed-report.ts",
     "verify:cutover": "tsx scripts/verify-cutover.ts",

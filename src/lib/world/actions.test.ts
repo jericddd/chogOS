@@ -57,7 +57,16 @@ describe("phase 4 action interface", () => {
   it("refuses malformed proposals and AI proposals without a decision record", () => {
     expect(validateProposal({ tokenId: "7", action: "work", buildingId: "market", source: "system" })).toEqual({ ok: true });
     expect(validateProposal({ tokenId: "7", action: "work", buildingId: "market", source: "ai" }).ok).toBe(false);
-    expect(validateProposal({ tokenId: "7", action: "work", buildingId: "market", source: "ai", decisionId: "d" }).ok).toBe(true);
+    expect(
+      validateProposal({
+        tokenId: "7",
+        action: "work",
+        buildingId: "market",
+        source: "ai",
+        decisionId: "11111111-1111-4111-8111-111111111111",
+      }).ok,
+    ).toBe(true);
+    expect(validateProposal({ tokenId: "7", action: "work", buildingId: "market", source: "ai", decisionId: "d" }).ok).toBe(false);
     expect(validateProposal({ tokenId: "7; drop", action: "work", buildingId: "market", source: "system" }).ok).toBe(false);
     expect(validateProposal({ tokenId: "7", action: "transfer" as "work", buildingId: "market", source: "system" }).ok).toBe(false);
     expect(validateProposal({ tokenId: "7", action: "work", buildingId: "Market!", source: "system" }).ok).toBe(false);

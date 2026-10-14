@@ -12,7 +12,7 @@ The home page is now a persistent 2D pixel-art world. Every eligible existing ci
 | Food, wood, stone, tools | Simulated counts from 0 to 400 in the Storehouse. Not tokens, not balances. |
 | Construction of houses 13 to 15 | Simulated. Builders consume simulated wood and stone. |
 | Membership history from Phase 1 | Real, relabeled `source = system`, `category = membership`. |
-| AI events | None. The AI mind is not integrated, so nothing is labeled `ai`. |
+| AI events | None on the hosted world until Phase 4 is applied, the runner is enabled, and a model-backed intent executes. Rule-based activity stays `simulation`. See [phase-4.md](phase-4.md). |
 | Onchain events | None. The world makes no transactions, so nothing is labeled `onchain`. |
 | Scheduler | Needs the migration. `pg_cron` runs `world_tick()` every 5 seconds, or every minute if sub-minute schedules are unsupported. |
 | Browser realtime | Needs `SUPABASE_ANON_KEY`. Without it the browser polls every 4 seconds. |
@@ -152,7 +152,7 @@ The browser clock corrects for skew using the server time in each response. It n
 3. Submit: `submitIntent` (`src/lib/world/intents.ts`, server-only) inserts one pending intent per citizen. There is no HTTP route for it.
 4. Execute: when the citizen's current activity ends, `world_tick` validates the intent again with `world_check_action`. It applies it with `decision_source = ai` and an `ai`-sourced event, or marks it `rejected` with the reason. Expired intents are marked `expired`.
 
-Nothing in Phase 3 calls `submitIntent`.
+Phase 3 still does not call `submitIntent`. The Phase 4 runner does, from server code only. See [phase-4.md](phase-4.md).
 
 ## Tests
 

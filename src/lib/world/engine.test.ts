@@ -363,9 +363,14 @@ describe("validation and the Phase 4 intent seam", () => {
   });
 
   it("rejects an invalid intent with a reason and applies a valid one with its source", async () => {
-    await db.query(
-      "insert into world_intents (citizen_id, action, building_id, source) values ($1, 'work', 'north-farm', 'ai')",
+    const [decision] = await rows<{ id: string }>(
+      db,
+      "insert into ai_decisions (purpose, status, citizen_id, provider, model) values ('test', 'queued', $1, 'gemini', 'gemini-3.8-flash') returning id",
       [citizen.citizen_id],
+    );
+    await db.query(
+      "insert into world_intents (citizen_id, action, building_id, source, decision_id) values ($1, 'work', 'north-farm', 'ai', $2)",
+      [citizen.citizen_id, decision!.id],
     );
     await runFor(db, START, 3 * 60, 10);
     const [rejected] = await rows<{ status: string; reason: string }>(db, "select status, reason from world_intents");
@@ -377,9 +382,14 @@ describe("validation and the Phase 4 intent seam", () => {
       "select ends_at, activity from citizen_world_state where citizen_id = $1",
       [citizen.citizen_id],
     );
-    await db.query(
-      "insert into world_intents (citizen_id, action, building_id, source) values ($1, 'socialize', 'commons-square', 'ai')",
+    const [second] = await rows<{ id: string }>(
+      db,
+      "insert into ai_decisions (purpose, status, citizen_id, provider, model) values ('test', 'queued', $1, 'gemini', 'gemini-3.8-flash') returning id",
       [citizen.citizen_id],
+    );
+    await db.query(
+      "insert into world_intents (citizen_id, action, building_id, source, decision_id) values ($1, 'socialize', 'commons-square', 'ai', $2)",
+      [citizen.citizen_id, second!.id],
     );
     expect(state!.ends_at).toBeTruthy();
     for (let seconds = 3 * 60 + 10; seconds < 20 * 60; seconds += 10) {
@@ -550,7 +560,10 @@ describe("database access", () => {
   it("gives browsers nothing and gives the server read access plus the runner functions only", async () => {
     const db = await openWorldDb();
     const privilege = async (sql: string) => (await rows<{ ok: boolean }>(db, `select ${sql} as ok`))[0]!.ok;
-    for (const table of ["world_buildings", "world_state", "citizen_world_state", "world_routes", "world_intents", "world_regions"]) {
+    expect(await privilege("has_function_privilege('service_role', 'world_place_building(text,text,text,text,integer,integer,jsonb,text,uuid,uuid)', 'execute')")).toBe(true);
+    expect(await privilege("has_function_privilege('anon', 'world_place_building(text,text,text,text,integer,integer,jsonb,text,uuid,uuid)', 'execute')")).toBe(false);
+    expect(await privilege("has_function_privilege('service_role', 'world_ensure_minds()', 'execute')")).toBe(true);
+    for (const table of ["world_buildings", "world_state", "citizen_world_state", "world_routes", "world_intents", "world_regions", "world_plots"]) {
       for (const role of ["anon", "authenticated"]) {
         expect(await privilege(`has_table_privilege('${role}', '${table}', 'select')`)).toBe(false);
       }

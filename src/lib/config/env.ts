@@ -2,7 +2,7 @@ import { getAddress, type Address } from "viem";
 import { z } from "zod";
 import { addresses } from "@/lib/blockchain/addresses";
 
-export type AiProviderId = "none" | "openai" | "anthropic" | "ajax";
+export type AiProviderId = "none" | "openai" | "anthropic" | "ajax" | "gemini";
 export type NftIndexerId = "none" | "alchemy" | "custom";
 
 export type AppConfig = {
@@ -29,6 +29,17 @@ export type AppConfig = {
   aiApiKey?: string;
   aiModel?: string;
   aiBaseUrl?: string;
+  /** Server-only. POST /api/ai/run stays closed until this is set. */
+  aiRunnerSecret?: string;
+  /** Explicit enable. Credentials alone do not start the mind. */
+  aiRunnerEnabled: boolean;
+  aiDecisionsPerRun: number;
+  aiMinDecisionIntervalSeconds: number;
+  aiMaxDecisionsPerHour: number;
+  aiMaxDecisionsPerDay: number;
+  aiMaxPromptChars: number;
+  aiMaxOutputTokens: number;
+  aiRequestTimeoutMs: number;
   /** Optional. Displayed as the intended EventAnchor contract. Unset means not deployed. */
   eventAnchorAddress?: Address;
   eventAnchorChainId?: 143 | 10143;
@@ -82,6 +93,27 @@ function optionalHttpsUrl(
   return url.toString().replace(/\/$/, "");
 }
 
+function readBoundedInt(
+  value: string | undefined,
+  label: string,
+  fallback: number,
+  min: number,
+  max: number,
+): number {
+  const raw = blankToUndefined(value);
+  if (!raw) {
+    return fallback;
+  }
+  if (!/^[0-9]+$/.test(raw)) {
+    throw new Error(`Invalid ${label}. Use a non-negative integer.`);
+  }
+  const parsed = Number(raw);
+  if (!Number.isSafeInteger(parsed) || parsed < min || parsed > max) {
+    throw new Error(`Invalid ${label}. Use an integer from ${min} to ${max}.`);
+  }
+  return parsed;
+}
+
 function readExpectedCount(value: string | undefined): number {
   const raw = blankToUndefined(value) ?? "59";
   if (!/^[0-9]+$/.test(raw)) {
@@ -107,8 +139,14 @@ export function readAppConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
   }
 
   const aiProvider = blankToUndefined(env.AI_PROVIDER) ?? "none";
-  if (aiProvider !== "none" && aiProvider !== "openai" && aiProvider !== "anthropic" && aiProvider !== "ajax") {
-    throw new Error("Invalid AI_PROVIDER. Use none, openai, anthropic, or ajax.");
+  if (
+    aiProvider !== "none" &&
+    aiProvider !== "openai" &&
+    aiProvider !== "anthropic" &&
+    aiProvider !== "ajax" &&
+    aiProvider !== "gemini"
+  ) {
+    throw new Error("Invalid AI_PROVIDER. Use none, gemini, openai, anthropic, or ajax.");
   }
 
   const nftIndexer = blankToUndefined(env.NFT_INDEXER) ?? "none";
@@ -147,8 +185,24 @@ export function readAppConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     supabaseServiceRoleKey: blankToUndefined(env.SUPABASE_SERVICE_ROLE_KEY),
     aiProvider,
     aiApiKey: blankToUndefined(env.AI_API_KEY),
-    aiModel: blankToUndefined(env.AI_MODEL),
+    aiModel:
+      blankToUndefined(env.AI_MODEL) ?? (aiProvider === "gemini" ? "gemini-3.8-flash" : undefined),
     aiBaseUrl: optionalHttpsUrl(blankToUndefined(env.AI_BASE_URL), "AI_BASE_URL"),
+    aiRunnerSecret: blankToUndefined(env.AI_RUNNER_SECRET),
+    aiRunnerEnabled: blankToUndefined(env.AI_RUNNER_ENABLED) === "true",
+    aiDecisionsPerRun: readBoundedInt(env.AI_DECISIONS_PER_RUN, "AI_DECISIONS_PER_RUN", 2, 1, 8),
+    aiMinDecisionIntervalSeconds: readBoundedInt(
+      env.AI_MIN_DECISION_INTERVAL_SECONDS,
+      "AI_MIN_DECISION_INTERVAL_SECONDS",
+      1800,
+      60,
+      86_400,
+    ),
+    aiMaxDecisionsPerHour: readBoundedInt(env.AI_MAX_DECISIONS_PER_HOUR, "AI_MAX_DECISIONS_PER_HOUR", 12, 1, 500),
+    aiMaxDecisionsPerDay: readBoundedInt(env.AI_MAX_DECISIONS_PER_DAY, "AI_MAX_DECISIONS_PER_DAY", 48, 1, 2000),
+    aiMaxPromptChars: readBoundedInt(env.AI_MAX_PROMPT_CHARS, "AI_MAX_PROMPT_CHARS", 8000, 500, 32_000),
+    aiMaxOutputTokens: readBoundedInt(env.AI_MAX_OUTPUT_TOKENS, "AI_MAX_OUTPUT_TOKENS", 512, 64, 4096),
+    aiRequestTimeoutMs: readBoundedInt(env.AI_REQUEST_TIMEOUT_MS, "AI_REQUEST_TIMEOUT_MS", 20_000, 1000, 120_000),
     eventAnchorAddress: (() => {
       const raw = blankToUndefined(env.EVENT_ANCHOR_ADDRESS);
       return raw ? requireAddress(raw, "EVENT_ANCHOR_ADDRESS") : undefined;
