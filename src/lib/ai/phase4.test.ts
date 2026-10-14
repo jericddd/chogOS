@@ -6,7 +6,7 @@ import { createGeminiProvider, geminiEndpoint } from "@/lib/ai/providers/gemini"
 import { createProviderFromConfig } from "@/lib/ai/resolve";
 import { parseDecisionOutput } from "@/lib/ai/schema";
 import { AiProviderError } from "@/lib/ai/types";
-import { readAppConfig } from "@/lib/config/env";
+import { aiStatusLabel, readAppConfig } from "@/lib/config/env";
 import { validateProposal } from "@/lib/world/actions";
 import { planHousePlacement, surveyedPlots } from "@/lib/world/placement";
 import { BUILDINGS } from "@/lib/world/layout";
@@ -199,6 +199,12 @@ describe("budgets", () => {
     const config = readAppConfig({} as NodeJS.ProcessEnv);
     expect(config.aiMaxDecisionsPerHour).toBe(12);
     expect(config.aiRunnerEnabled).toBe(false);
+    expect(aiStatusLabel(config)).toBe("Awaiting AI activation");
+    expect(
+      aiStatusLabel(
+        readAppConfig({ AI_PROVIDER: "gemini", AI_RUNNER_ENABLED: "true" } as unknown as NodeJS.ProcessEnv),
+      ),
+    ).toBe("AI mind on Gemini");
     expect(
       evaluateBudget(config, { hourInvocations: 12, dayInvocations: 1, haltUntil: null, haltReason: null }).ok,
     ).toBe(false);

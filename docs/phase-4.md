@@ -88,25 +88,15 @@ New events reuse `chogos-event-v1` hashing. `intent_id` and `decision_id` are st
 
 `npm run ai:smoke` makes one real Gemini request and does not write world rows.
 
-This agent environment had no `AI_API_KEY` or `GEMINI_API_KEY`. A live `generateContent` call was **not** made. Mocked provider tests must not be read as live inference.
+A live `POST /api/ai/run` on production at 2026-10-14T20:01Z returned:
 
-Against the hosted database on 2026-10-14:
+- `provider=gemini`, `model=gemini-3.8-flash`
+- claimed 2, inferred 1, submitted 1 (shop), one Gemini HTTP 503 on the second citizen
+- The submitted intent executed through `world_tick()`. `civilization_events` seq 35557 is `source=ai`, kind `citizen.market_visit`.
 
-| Check | Result |
-| --- | --- |
-| Layout | `genesis-v1.1` hash `b1745d8d` |
-| Citizens / buildings | 59 / 25 |
-| Event sources in the live feed | `simulation` only |
-| `GET /api/world/mind?citizen=7` | 503 `migration_pending` |
-| `POST /api/ai/run` | 403 (no `AI_RUNNER_SECRET`) |
-| `POST /api/transactions` | 403 |
+Automatic runs after that depend on Vercel Cron (Hobby: once daily at 16:00 UTC). Opening the homepage still does not call the model.
 
-A genuine model decision has changed persisted world state only when:
-
-1. `ai:smoke` (or an equivalent live complete) returned JSON from Gemini, and
-2. A row with `source=ai` exists in `civilization_events` or a `world_buildings` row was inserted by `world_place_building` with `p_source=ai` after a stored `ai_decisions` row.
-
-Until those two are observed on the hosted database, do not claim production AI is active.
+`POST /api/transactions` remains 403.
 
 ## Security
 
