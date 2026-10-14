@@ -222,3 +222,17 @@ export function readAppConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     })(),
   };
 }
+
+/** Public header copy. Never includes keys or that a model call is in flight. */
+export function aiStatusLabel(config: AppConfig): string {
+  if (config.aiProvider === "ajax") {
+    return "Awaiting AI activation. Ajax has no verified endpoint.";
+  }
+  if (config.aiProvider !== "none" && config.aiRunnerEnabled) {
+    return config.aiProvider === "gemini" ? "AI mind on Gemini" : `AI mind on ${config.aiProvider}`;
+  }
+  if (config.aiProvider !== "none") {
+    return `${config.aiProvider} configured · runner off`;
+  }
+  return "Awaiting AI activation";
+}

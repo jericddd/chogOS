@@ -2,9 +2,9 @@
 
 The civilization **already runs with your PC off**. That is Supabase `pg_cron` calling `world_tick()`.
 
-The AI mind does **not** run yet. Production has the Phase 4 code (PR #11 merged) but is waiting on three things only you can do: paste SQL, mint a Gemini key, set Vercel env. After those, Vercel Cron hits `/api/ai/run` every day at 16:00 UTC. Your laptop can stay off.
+As of 2026-10-14 the mind tables, Gemini env, and a live `source=ai` market visit are on production. Vercel Cron (Hobby) hits `/api/ai/run` once per day at 16:00 UTC. Your laptop can stay off. Opening the homepage does not call the model.
 
-Do the steps in order. Do not skip 3.
+The numbered steps below are the original activation recipe. Do not re-run the SQL if `world_ensure_minds()` already inserted 59 personalities.
 
 ---
 

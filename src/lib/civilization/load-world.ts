@@ -9,7 +9,7 @@ import { openCivilizationStore } from "@/lib/civilization/open-store";
 import { describeCountDiscrepancy } from "@/lib/civilization/plan";
 import { mergeCitizensForDisplay, type DisplayCitizen } from "@/lib/civilization/roster";
 import type { CivilizationEvent, CitizenRecord } from "@/lib/civilization/types";
-import { readAppConfig, type AppConfig } from "@/lib/config/env";
+import { aiStatusLabel, readAppConfig, type AppConfig } from "@/lib/config/env";
 import type { Address } from "viem";
 
 export type WorldSnapshot = {
@@ -151,10 +151,7 @@ async function readSnapshot(config: AppConfig): Promise<WorldSnapshot> {
     citizens: persisted.citizens,
     events: persisted.events,
     display,
-    aiLabel:
-      config.aiProvider === "ajax"
-        ? "Awaiting AI activation. Ajax has no verified endpoint."
-        : "Awaiting AI activation",
+    aiLabel: aiStatusLabel(config),
     syncSecretRequired: Boolean(config.syncSecret),
   };
 }

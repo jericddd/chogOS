@@ -1,5 +1,14 @@
 import { Suspense } from "react";
 import { CivilizationNav } from "@/components/shell/nav";
+import { aiStatusLabel, readAppConfig } from "@/lib/config/env";
+
+function headerAiStatus(): string {
+  try {
+    return aiStatusLabel(readAppConfig());
+  } catch {
+    return "Awaiting AI activation";
+  }
+}
 
 export function AppShell({ children }: { children: React.ReactNode }) {
   return (
@@ -19,7 +28,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           <p className="text-right text-xs leading-5 text-muted">
             Genesis founded
             <br />
-            Awaiting AI activation
+            {headerAiStatus()}
           </p>
         </div>
         <div className="mx-auto max-w-7xl px-4 pb-4 sm:px-6">
