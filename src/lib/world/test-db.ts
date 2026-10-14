@@ -1,6 +1,7 @@
 import { readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 import { PGlite } from "@electric-sql/pglite";
+import { pgcrypto } from "@electric-sql/pglite/contrib/pgcrypto";
 import { initializationLayout } from "@/lib/world/layout";
 
 export const NFT = "0xc96d31F8626c6D03Fae5dCD3d61e3FB9F4a73763";
@@ -19,7 +20,7 @@ export function migrationFiles(): string[] {
  * plus the Supabase roles, so grants can be checked. Test data stays here.
  */
 export async function openWorldDb(options: { before?: (db: PGlite) => Promise<void> } = {}): Promise<PGlite> {
-  const db = new PGlite();
+  const db = new PGlite({ extensions: { pgcrypto } });
   await db.exec(`
     create role anon nologin;
     create role authenticated nologin;

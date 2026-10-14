@@ -28,6 +28,10 @@ npm run world:expand
 npm run world:admin -- status
 npm run world:runner
 npm run world:speed-report
+npm run verify:cutover
+npm run verify:snapshot
+npm run verify:batch
+npm run verify:contracts-local
 ```
 
 `verify:contracts` checks the public Monad RPCs and does not print holder balances. `discover:treasury` reads ChogTreasury NFT holdings from the collection contract and confirms each id with `ownerOf`. The `world:*` commands found, inspect, and tick the Phase 3 world with the service role key from a trusted machine. They are described in [docs/phase-3.md](docs/phase-3.md).
@@ -51,6 +55,7 @@ The citizen gallery, Genesis Treasury, and history read Monad when the RPC is re
 - [Phase 1 setup](docs/phase-1.md)
 - [Phase 2 wallets and treasury](docs/phase-2.md)
 - [Phase 3 living civilization](docs/phase-3.md)
+- [Phase 3.75 verifiable history](docs/phase-3.75.md)
 - [Architecture](docs/architecture.md)
 - [Database plan](docs/database.md)
 - [Wallet system](docs/wallet-system.md)
@@ -69,3 +74,7 @@ Setup, the hash-checked Safe infrastructure, and the remaining blockers are in [
 `20261013040000_phase3_world.sql` adds the world tables and a `world_tick()` function that `pg_cron` runs every few seconds. The world moves at 60× (one world day is 24 real minutes). This speed was chosen from measured runs of the real engine. The browser reads only through `GET /api/world/live` and `GET /api/world/events`. The optional anon key is used only for a Realtime nudge. Nothing in the world is labeled `ai` or `onchain`, because neither source exists yet.
 
 Setup, the time model, the rules, the downtime behavior, and the Phase 4 action interface are in [docs/phase-3.md](docs/phase-3.md).
+
+## Phase 3.75
+
+History can be sealed with a canonical SHA-256, a live hash chain, and OpenZeppelin Merkle batches. `/verify` is read-only. The EventAnchor contract is not deployed. No root has been verified on Monad. Setup is in [docs/phase-3.75.md](docs/phase-3.75.md).

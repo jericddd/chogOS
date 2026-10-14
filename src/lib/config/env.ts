@@ -29,6 +29,9 @@ export type AppConfig = {
   aiApiKey?: string;
   aiModel?: string;
   aiBaseUrl?: string;
+  /** Optional. Displayed as the intended EventAnchor contract. Unset means not deployed. */
+  eventAnchorAddress?: Address;
+  eventAnchorChainId?: 143 | 10143;
 };
 
 const DEFAULT_IPFS_GATEWAY = "https://gateway.pinata.cloud/ipfs";
@@ -146,5 +149,19 @@ export function readAppConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     aiApiKey: blankToUndefined(env.AI_API_KEY),
     aiModel: blankToUndefined(env.AI_MODEL),
     aiBaseUrl: optionalHttpsUrl(blankToUndefined(env.AI_BASE_URL), "AI_BASE_URL"),
+    eventAnchorAddress: (() => {
+      const raw = blankToUndefined(env.EVENT_ANCHOR_ADDRESS);
+      return raw ? requireAddress(raw, "EVENT_ANCHOR_ADDRESS") : undefined;
+    })(),
+    eventAnchorChainId: (() => {
+      const raw = blankToUndefined(env.EVENT_ANCHOR_CHAIN_ID);
+      if (!raw) {
+        return undefined;
+      }
+      if (raw !== "143" && raw !== "10143") {
+        throw new Error("Invalid EVENT_ANCHOR_CHAIN_ID. Use 143 or 10143.");
+      }
+      return raw === "143" ? 143 : 10143;
+    })(),
   };
 }
