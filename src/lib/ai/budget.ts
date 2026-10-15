@@ -53,6 +53,11 @@ export function evaluateBudget(config: AppConfig, usage: UsageSnapshot, now: Dat
   return { ok: true };
 }
 
+/** 404 on a fallback model is not a quota event. Clear it so the next poke can run. */
+export function isRetriableHaltReason(reason: string | null): boolean {
+  return Boolean(reason && /not available to this account/i.test(reason));
+}
+
 export function haltFromError(error: AiProviderError, now: Date = new Date()): { until: string; reason: string } | null {
   if (!error.halt) {
     return null;

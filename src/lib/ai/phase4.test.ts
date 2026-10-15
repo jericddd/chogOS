@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { evaluateBudget, haltFromError, usagePeriods } from "@/lib/ai/budget";
+import { evaluateBudget, haltFromError, isRetriableHaltReason, usagePeriods } from "@/lib/ai/budget";
 import { buildDecisionContext } from "@/lib/ai/context";
 import { preferredFeasibleAction, rankActions, type PersonalityTraits } from "@/lib/ai/personality";
 import { timeoutWithinDeadline } from "@/lib/ai/invocation";
@@ -7,6 +7,7 @@ import {
   createGeminiProvider,
   GEMINI_HOBBY_FALLBACK_MODEL,
   GEMINI_HOBBY_MODEL,
+  GEMINI_HOBBY_MODELS,
   geminiEndpoint,
   geminiModelsToTry,
   geminiThinkingConfig,
@@ -152,8 +153,9 @@ describe("Gemini adapter", () => {
     });
     expect(completion.provider).toBe("gemini");
     expect(completion.model).toBe(GEMINI_HOBBY_MODEL);
-    expect(geminiModelsToTry("gemini-3.8-flash")).toEqual([GEMINI_HOBBY_MODEL, GEMINI_HOBBY_FALLBACK_MODEL]);
-    expect(geminiThinkingConfig(GEMINI_HOBBY_MODEL)).toEqual({ thinkingBudget: 0 });
+    expect(geminiModelsToTry("gemini-3.8-flash")).toEqual([...GEMINI_HOBBY_MODELS]);
+    expect(geminiThinkingConfig(GEMINI_HOBBY_MODEL)).toEqual({ thinkingLevel: "MINIMAL" });
+    expect(geminiThinkingConfig("gemini-3.8-flash")).toEqual({ thinkingLevel: "LOW" });
     const firstCall = fetchSpy.mock.calls[0] as unknown as [string, RequestInit];
     expect(firstCall[0]).toContain(`/models/${GEMINI_HOBBY_MODEL}:generateContent`);
     expect(geminiEndpoint("gemini-3.8-flash")).toBe(
@@ -162,7 +164,7 @@ describe("Gemini adapter", () => {
     const init = firstCall[1];
     const body = JSON.parse(String(init.body)) as { generationConfig: Record<string, unknown> };
     expect(body.generationConfig.responseMimeType).toBe("application/json");
-    expect(body.generationConfig.thinkingConfig).toEqual({ thinkingBudget: 0 });
+    expect(body.generationConfig.thinkingConfig).toEqual({ thinkingLevel: "MINIMAL" });
     expect(init.headers).toMatchObject({ "x-goog-api-key": "test-key" });
   });
 
@@ -213,7 +215,7 @@ describe("Gemini adapter", () => {
     expect(fetchSpy).toHaveBeenCalledTimes(2);
   });
 
-  it("falls back to 2.0 Flash when 2.5 Flash is missing", async () => {
+  it("falls back to the next Hobby model when the first is missing", async () => {
     const fetchSpy = vi.fn()
       .mockResolvedValueOnce(new Response(JSON.stringify({ error: { message: "model is not found" } }), { status: 404 }))
       .mockResolvedValueOnce(
@@ -244,7 +246,7 @@ describe("Gemini adapter", () => {
   it("surfaces Gemini HTTP 400 body text and does not halt", async () => {
     const fetchSpy = vi.fn(
       async () =>
-        new Response(JSON.stringify({ error: { message: "MINIMAL thinking is not supported" } }), { status: 400 }),
+        new Response(JSON.stringify({ error: { message: "invalid argument: responseSchema" } }), { status: 400 }),
     );
     vi.stubGlobal("fetch", fetchSpy);
     const config = readAppConfig({
@@ -258,8 +260,25 @@ describe("Gemini adapter", () => {
         (caught: unknown) => caught,
       );
     expect(error).toMatchObject({ code: "invalid", halt: false });
-    expect(String(error)).toMatch(/MINIMAL thinking is not supported/);
+    expect(String(error)).toMatch(/invalid argument: responseSchema/);
     expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not halt the mind when a Gemini model id is missing", async () => {
+    const fetchSpy = vi.fn(
+      async () => new Response(JSON.stringify({ error: { message: "model is not found" } }), { status: 404 }),
+    );
+    vi.stubGlobal("fetch", fetchSpy);
+    const config = readAppConfig({
+      AI_PROVIDER: "gemini",
+      AI_API_KEY: "test-key",
+      AI_MODEL: "gemini-2.5-flash",
+    } as unknown as NodeJS.ProcessEnv);
+    await expect(
+      createGeminiProvider(config).complete({ purpose: "x", messages: [{ role: "user", content: "x" }] }),
+    ).rejects.toMatchObject({ code: "unavailable", halt: false });
+    expect(isRetriableHaltReason("The configured Gemini model is not available to this account.")).toBe(true);
+    expect(isRetriableHaltReason("Gemini free-tier quota is exhausted. New inference is halted.")).toBe(false);
   });
 
   it("does not retry a timed-out Gemini request", async () => {

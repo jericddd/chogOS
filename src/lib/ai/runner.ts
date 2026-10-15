@@ -1,7 +1,7 @@
 import "server-only";
 import { randomUUID } from "node:crypto";
 import { getAiProvider } from "@/lib/ai/provider";
-import { evaluateBudget, haltFromError, usagePeriods, type UsageSnapshot } from "@/lib/ai/budget";
+import { evaluateBudget, haltFromError, isRetriableHaltReason, usagePeriods, type UsageSnapshot } from "@/lib/ai/budget";
 import { timeoutWithinDeadline } from "@/lib/ai/invocation";
 import { buildDecisionContext, contextCommitment, decisionMessages } from "@/lib/ai/context";
 import { DECISION_RESPONSE_SCHEMA, isWorldAction, parseDecisionOutput } from "@/lib/ai/schema";
@@ -228,7 +228,14 @@ export async function runAiMind(config: AppConfig = readAppConfig()): Promise<Mi
 
   try {
     await client.rpc("world_ensure_minds");
-    const usage = await readUsage(client);
+    let usage = await readUsage(client);
+    if (isRetriableHaltReason(usage.haltReason)) {
+      await client
+        .from("ai_scheduler_state")
+        .update({ halt_until: null, halt_reason: null, last_error: null })
+        .eq("singleton", true);
+      usage = { ...usage, haltUntil: null, haltReason: null };
+    }
     const budget = evaluateBudget(config, usage);
     if (!budget.ok) {
       await client

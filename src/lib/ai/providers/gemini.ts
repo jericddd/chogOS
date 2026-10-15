@@ -2,9 +2,20 @@ import type { AppConfig } from "@/lib/config/env";
 import { AiProviderError, type AiCompletion, type AiCompletionRequest, type AiProvider } from "@/lib/ai/types";
 
 export const GEMINI_DEFAULT_MODEL = "gemini-3.8-flash";
-/** Live `gemini-3.8-flash` LOW thinking exceeded 40s on Vercel Hobby. */
-export const GEMINI_HOBBY_MODEL = "gemini-2.5-flash";
-export const GEMINI_HOBBY_FALLBACK_MODEL = "gemini-2.0-flash";
+/**
+ * This AI Studio key has `gemini-3.8-flash` (LOW thinking timed out on Hobby).
+ * 2.5/2.0 404'd and wrongly halted the mind. Try 3.x lite/MINIMAL first, then 3.8.
+ */
+export const GEMINI_HOBBY_MODELS = [
+  "gemini-3.5-flash-lite",
+  "gemini-3.6-flash",
+  "gemini-3-flash-preview",
+  "gemini-2.5-flash",
+  "gemini-2.0-flash",
+  "gemini-3.8-flash",
+] as const;
+export const GEMINI_HOBBY_MODEL = GEMINI_HOBBY_MODELS[0];
+export const GEMINI_HOBBY_FALLBACK_MODEL = GEMINI_HOBBY_MODELS[1];
 /** Fastest thinking 3.8 Flash accepts. `MINIMAL` returns HTTP 400 on this model. */
 export const GEMINI_THINKING_LEVEL = "LOW";
 const DEFAULT_HOST = "https://generativelanguage.googleapis.com/v1beta";
@@ -12,7 +23,7 @@ const DEFAULT_HOST = "https://generativelanguage.googleapis.com/v1beta";
 export function geminiModelsToTry(configured: string): string[] {
   const model = configured.trim();
   if (model === "gemini-3.8-flash" || model.startsWith("gemini-3.8-flash")) {
-    return [GEMINI_HOBBY_MODEL, GEMINI_HOBBY_FALLBACK_MODEL];
+    return [...GEMINI_HOBBY_MODELS];
   }
   return [model];
 }
@@ -21,7 +32,18 @@ export function geminiThinkingConfig(model: string): Record<string, unknown> {
   if (model.startsWith("gemini-2.")) {
     return { thinkingBudget: 0 };
   }
-  return { thinkingLevel: GEMINI_THINKING_LEVEL };
+  if (model.startsWith("gemini-3.8")) {
+    return { thinkingLevel: GEMINI_THINKING_LEVEL };
+  }
+  return { thinkingLevel: "MINIMAL" };
+}
+
+function isMissingModel(status: number, bodyText: string): boolean {
+  return status === 404 || /not found|is not found|unknown model/.test(bodyText.toLowerCase());
+}
+
+function isThinkingRejected(status: number, bodyText: string): boolean {
+  return status === 400 && /thinking|minimal|thinking_budget|thinkingbudget/.test(bodyText.toLowerCase());
 }
 
 export function geminiEndpoint(model: string, baseUrl?: string): string {
@@ -52,8 +74,8 @@ function classifyGeminiFailure(status: number, bodyText: string): AiProviderErro
       true,
     );
   }
-  if (status === 404 || /not found|is not found|unknown model/.test(lower)) {
-    return new AiProviderError("The configured Gemini model is not available to this account.", "unavailable", true);
+  if (isMissingModel(status, bodyText)) {
+    return new AiProviderError("The configured Gemini model is not available to this account.", "unavailable", false);
   }
   if (status >= 500) {
     return new AiProviderError(`Gemini returned HTTP ${status}.`, "unavailable", false);
@@ -204,7 +226,10 @@ export function createGeminiProvider(config: AppConfig): AiProvider {
 
           const failure = classifyGeminiFailure(response.status, bodyText);
           lastFailure = failure;
-          if (response.status === 404 && model !== models[models.length - 1]) {
+          const skipModel =
+            (isMissingModel(response.status, bodyText) || isThinkingRejected(response.status, bodyText)) &&
+            model !== models[models.length - 1];
+          if (skipModel) {
             break;
           }
           const retryable = !failure.halt && failure.code === "unavailable" && response.status >= 500;
