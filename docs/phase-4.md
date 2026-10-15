@@ -65,7 +65,7 @@ The engine still has no free-form map generator. Phase 4 can start a **house** o
 - AI: `GET` or `POST /api/ai/run` with `Authorization: Bearer AI_RUNNER_SECRET` (or `CRON_SECRET`).
 - Vercel Hobby Cron remains daily at 16:00 UTC. Do not make it more frequent; Hobby deploys fail.
 - GitHub Actions (`.github/workflows/ai-mind.yml`) POSTs the same route every **30 real minutes**. `schedule` only runs from the default branch (`main`). Keep Vercel Hobby as a backup poke.
-- Defaults: 1 decision per run (Vercel Hobby dies at 60s if several Gemini calls share one invocation), 30 minutes between a citizen's decisions, 12/hour, 48/day, 8k prompt chars, 512 output tokens, 20s timeout. Gemini 5xx is retried once; timeouts are not. Quota and billing errors are not retried and never fail over to paid. The runner returns before the host timeout instead of being killed mid-call.
+- Defaults: 1 decision per run (Vercel Hobby dies at 60s if several Gemini calls share one invocation), 30 minutes between a citizen's decisions, 12/hour, 48/day, 8k prompt chars, 512 output tokens, 20s timeout. Gemini thinking level is `LOW` (`MINIMAL` 400s on `gemini-3.8-flash`). Gemini 5xx is retried once; timeouts are not. Quota and billing errors are not retried and never fail over to paid. The runner returns before the host timeout instead of being killed mid-call.
 - Fair queue: `ai_claim_citizens` orders by `last_decision_at` nulls first with `SKIP LOCKED`. Click-through: [activate-ai.md](activate-ai.md).
 - Fair queue: `ai_claim_citizens` orders by `last_decision_at` nulls first with `SKIP LOCKED`.
 

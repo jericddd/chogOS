@@ -3,7 +3,7 @@ import { evaluateBudget, haltFromError, usagePeriods } from "@/lib/ai/budget";
 import { buildDecisionContext } from "@/lib/ai/context";
 import { preferredFeasibleAction, rankActions, type PersonalityTraits } from "@/lib/ai/personality";
 import { timeoutWithinDeadline } from "@/lib/ai/invocation";
-import { createGeminiProvider, geminiEndpoint } from "@/lib/ai/providers/gemini";
+import { createGeminiProvider, GEMINI_THINKING_LEVEL, geminiEndpoint } from "@/lib/ai/providers/gemini";
 import { createProviderFromConfig } from "@/lib/ai/resolve";
 import { parseDecisionOutput } from "@/lib/ai/schema";
 import { AiProviderError } from "@/lib/ai/types";
@@ -152,7 +152,8 @@ describe("Gemini adapter", () => {
     const init = firstCall[1];
     const body = JSON.parse(String(init.body)) as { generationConfig: Record<string, unknown> };
     expect(body.generationConfig.responseMimeType).toBe("application/json");
-    expect(body.generationConfig.thinkingConfig).toEqual({ thinkingLevel: "MINIMAL" });
+    expect(body.generationConfig.thinkingConfig).toEqual({ thinkingLevel: GEMINI_THINKING_LEVEL });
+    expect(GEMINI_THINKING_LEVEL).toBe("LOW");
     expect(init.headers).toMatchObject({ "x-goog-api-key": "test-key" });
   });
 
@@ -201,6 +202,27 @@ describe("Gemini adapter", () => {
     });
     expect(completion.text).toContain("rest");
     expect(fetchSpy).toHaveBeenCalledTimes(2);
+  });
+
+  it("surfaces Gemini HTTP 400 body text and does not halt", async () => {
+    const fetchSpy = vi.fn(
+      async () =>
+        new Response(JSON.stringify({ error: { message: "MINIMAL thinking is not supported" } }), { status: 400 }),
+    );
+    vi.stubGlobal("fetch", fetchSpy);
+    const config = readAppConfig({
+      AI_PROVIDER: "gemini",
+      AI_API_KEY: "test-key",
+    } as unknown as NodeJS.ProcessEnv);
+    const error = await createGeminiProvider(config)
+      .complete({ purpose: "x", messages: [{ role: "user", content: "x" }] })
+      .then(
+        () => null,
+        (caught: unknown) => caught,
+      );
+    expect(error).toMatchObject({ code: "invalid", halt: false });
+    expect(String(error)).toMatch(/MINIMAL thinking is not supported/);
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
   });
 
   it("does not retry a timed-out Gemini request", async () => {
