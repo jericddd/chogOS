@@ -59,6 +59,7 @@ The citizen gallery, Genesis Treasury, and history read Monad when the RPC is re
 - [Phase 3 living civilization](docs/phase-3.md)
 - [Phase 3.75 verifiable history](docs/phase-3.75.md)
 - [Phase 4 AI mind](docs/phase-4.md)
+- [Phase 5 civil works](docs/phase-5.md)
 - [Turn the AI mind on](docs/activate-ai.md)
 - [Architecture](docs/architecture.md)
 - [Database plan](docs/database.md)
@@ -82,3 +83,7 @@ Setup, the time model, the rules, the downtime behavior, and the Phase 4 action 
 ## Phase 3.75
 
 History can be sealed with a canonical SHA-256, a live hash chain, and OpenZeppelin Merkle batches. `/verify` is read-only. The EventAnchor contract is not deployed. No root has been verified on Monad. Setup is in [docs/phase-3.75.md](docs/phase-3.75.md).
+
+## Phase 5a
+
+The mind may propose `build` with `buildKind` `house`, `farm`, or `workshop`. The server still chooses a vacant road-served lot. Completed farms and workshops join the existing farmer and crafter production rules. Roads, forest lots, and town-wide shortage goals are later slices. Setup is in [docs/phase-5.md](docs/phase-5.md). The additive SQL is not live on hosted Supabase until an operator pastes it.

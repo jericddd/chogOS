@@ -81,7 +81,7 @@ Canonical event documents and SHA-256 hashes live in `src/lib/verify`. Merkle ba
 
 ## AI mind (Phase 4)
 
-The simulation stays in `world_tick()`. A separate runner builds a bounded citizen context, calls the configured provider, validates JSON, and inserts `world_intents` or a house on a surveyed plot. Outcome feedback writes memories, skills, and goals. Details are in [phase-4.md](phase-4.md).
+The simulation stays in `world_tick()`. A separate runner builds a bounded citizen context, calls the configured provider, validates JSON, and inserts `world_intents` or a house, farm, or workshop on a surveyed plot. Outcome feedback writes memories, skills, and goals. Details are in [phase-4.md](phase-4.md) and [phase-5.md](phase-5.md).
 
 ## Intentionally absent
 

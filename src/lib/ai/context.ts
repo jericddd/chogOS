@@ -2,7 +2,11 @@ import { createHash } from "node:crypto";
 import { preferredFeasibleAction, rankActions, type PersonalityTraits, type RankedAction } from "@/lib/ai/personality";
 import { precheckAction, WORLD_ACTIONS, type ResourceStock, type WorldAction } from "@/lib/world/actions";
 import { worldHour } from "@/lib/world/clock";
+import { CONSTRUCT_KINDS, type ConstructKind } from "@/lib/world/layout";
 import type { BuildingView, CitizenView } from "@/lib/world/types";
+
+export const FOOD_SHORTAGE = 40;
+export const TOOLS_SHORTAGE = 4;
 
 export type GoalSnippet = {
   id: string;
@@ -31,6 +35,16 @@ export type FeasibleOption = {
   name: string;
 };
 
+export type ConstructionContext = {
+  canBuild: boolean;
+  vacantServedLots: number;
+  reservedLots: number;
+  validKinds: readonly ConstructKind[];
+  suggestedBuildKind: ConstructKind | "none";
+  counts: Record<ConstructKind, number>;
+  underConstruction: Array<{ id: string; kind: string; name: string; progress: number | null }>;
+};
+
 export type DecisionContext = {
   tokenId: string;
   citizenId: string;
@@ -51,7 +65,18 @@ export type DecisionContext = {
   canBuild: boolean;
   suggested: RankedAction;
   ranked: RankedAction[];
+  construction: ConstructionContext;
 };
+
+export function preferredBuildKind(stock: { food: number; tools: number }): ConstructKind {
+  if (stock.food < FOOD_SHORTAGE) {
+    return "farm";
+  }
+  if (stock.tools < TOOLS_SHORTAGE) {
+    return "workshop";
+  }
+  return "house";
+}
 
 export function listFeasibleActions(
   citizen: CitizenView,
@@ -85,6 +110,39 @@ export function listFeasibleActions(
   return options;
 }
 
+function constructionFromBuildings(
+  buildings: readonly BuildingView[],
+  canBuild: boolean,
+  vacantServedLots: number,
+  reservedLots: number,
+  stock: { food: number; tools: number },
+): ConstructionContext {
+  const counts: Record<ConstructKind, number> = { house: 0, farm: 0, workshop: 0 };
+  const underConstruction: ConstructionContext["underConstruction"] = [];
+  for (const building of buildings) {
+    if (building.kind === "house" || building.kind === "farm" || building.kind === "workshop") {
+      counts[building.kind] += 1;
+    }
+    if (building.status === "under_construction") {
+      underConstruction.push({
+        id: building.id,
+        kind: building.kind,
+        name: building.name,
+        progress: building.constructionProgress,
+      });
+    }
+  }
+  return {
+    canBuild,
+    vacantServedLots,
+    reservedLots,
+    validKinds: CONSTRUCT_KINDS,
+    suggestedBuildKind: canBuild ? preferredBuildKind(stock) : "none",
+    counts,
+    underConstruction: underConstruction.slice(0, 8),
+  };
+}
+
 export function buildDecisionContext(input: {
   citizenId: string;
   citizen: CitizenView;
@@ -96,6 +154,8 @@ export function buildDecisionContext(input: {
   goals: GoalSnippet[];
   memories: MemorySnippet[];
   canBuild: boolean;
+  vacantServedLots?: number;
+  reservedLots?: number;
 }): DecisionContext {
   const feasible = listFeasibleActions(input.citizen, input.buildings, input.worldS, input.stock);
   const rankedSeed: RankedAction[] = [
@@ -103,6 +163,13 @@ export function buildDecisionContext(input: {
     ...(input.canBuild ? (["build"] as const) : []),
   ];
   const ranked = rankActions(input.personality, rankedSeed);
+  const construction = constructionFromBuildings(
+    input.buildings,
+    input.canBuild,
+    input.vacantServedLots ?? (input.canBuild ? 1 : 0),
+    input.reservedLots ?? 0,
+    input.stock,
+  );
   return {
     tokenId: input.citizen.tokenId,
     citizenId: input.citizenId,
@@ -125,6 +192,7 @@ export function buildDecisionContext(input: {
     canBuild: input.canBuild,
     suggested: preferredFeasibleAction(input.personality, rankedSeed) ?? "rest",
     ranked,
+    construction,
   };
 }
 
@@ -149,6 +217,7 @@ export function contextCommitment(context: DecisionContext): string {
     feasible: context.feasible,
     canBuild: context.canBuild,
     suggested: context.suggested,
+    construction: context.construction,
   };
   return `0x${createHash("sha256").update(JSON.stringify(body)).digest("hex")}`;
 }
@@ -157,9 +226,12 @@ export function decisionMessages(context: DecisionContext, maxChars: number): { 
   const system = [
     "You decide the next supported action for one chogOS citizen.",
     "Return JSON only. Do not write SQL, code, URLs, or contract calls.",
-    "Choose only from the feasible actions. For construction, action=build and buildKind=house; do not invent coordinates.",
+    "Choose only from the feasible actions.",
+    "For construction, action=build and buildKind must be house, farm, or workshop.",
+    "Do not invent coordinates, lots, costs, or completion. The server places the building.",
+    "Use the real storehouse stock. Prefer a farm when food is low and a workshop when tools are low, if construction is available.",
     "A rejected workplace should not be repeated unless conditions changed.",
-    "source=ai is applied only if this JSON is later validated. You cannot complete a goal by saying it is complete.",
+    "source=ai is applied only if this JSON is later validated. You cannot complete a goal or a building by saying it is complete.",
     "The free Gemini tier may use this prompt to improve Google products. Do not include secrets. None are provided.",
   ].join(" ");
 
@@ -186,6 +258,7 @@ export function decisionMessages(context: DecisionContext, maxChars: number): { 
     canBuild: context.canBuild,
     suggested: context.suggested,
     ranked: context.ranked,
+    construction: context.construction,
   });
 
   if (system.length + user.length <= maxChars) {
@@ -195,6 +268,10 @@ export function decisionMessages(context: DecisionContext, maxChars: number): { 
     ...JSON.parse(user),
     memories: context.memories.slice(0, 3),
     feasible: context.feasible.slice(0, 10),
+    construction: {
+      ...context.construction,
+      underConstruction: context.construction.underConstruction.slice(0, 3),
+    },
   };
   return { system, user: JSON.stringify(trimmed).slice(0, Math.max(200, maxChars - system.length - 32)) };
 }

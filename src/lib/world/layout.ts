@@ -28,6 +28,10 @@ export type BuildingKind =
 
 export type WorkRole = "farmer" | "woodcutter" | "stonecutter" | "crafter" | "merchant" | "builder";
 
+/** Kinds the Phase 5a engine may place on a surveyed lot. The model may pick one of these; it may not pick coordinates. */
+export const CONSTRUCT_KINDS = ["house", "farm", "workshop"] as const;
+export type ConstructKind = (typeof CONSTRUCT_KINDS)[number];
+
 export type Rect = { x: number; y: number; w: number; h: number };
 export type Tile = { x: number; y: number };
 
@@ -287,8 +291,8 @@ function lotRow(y: number, xs: number[]): Rect[] {
 /** Packed-earth lots. Drawn as undeveloped land, never as constructed buildings. */
 export const PLOTS: readonly Rect[] = [
   ...lotRow(2, [64, 68, 72, 76, 80, 84]),
-  ...lotRow(11, [64, 68, 72, 76]),
-  ...lotRow(57, [33, 37, 41, 45, 49]),
+  ...lotRow(11, [64, 68, 72, 76, 80, 84, 92, 96, 100]),
+  ...lotRow(57, [33, 37, 41, 45, 49, 53, 57, 61, 65, 69, 73]),
 ];
 
 export function buildingById(id: string): BuildingDef | undefined {

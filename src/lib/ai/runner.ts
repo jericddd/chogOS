@@ -11,7 +11,7 @@ import { readAppConfig, type AppConfig } from "@/lib/config/env";
 import { createServiceRoleClient } from "@/lib/db/client";
 import { precheckAction, validateProposal, type ActionProposal } from "@/lib/world/actions";
 import { submitIntent } from "@/lib/world/intents";
-import { planHousePlacement } from "@/lib/world/placement";
+import { planConstruction, surveyedPlots, type ConstructKind } from "@/lib/world/placement";
 import { toBuilding, toCitizen, type BuildingRow, type CitizenRow } from "@/lib/world/rows";
 import type { BuildingView, CitizenView } from "@/lib/world/types";
 
@@ -294,7 +294,8 @@ export async function runAiMind(config: AppConfig = readAppConfig()): Promise<Mi
           continue;
         }
 
-        const canBuild = planHousePlacement(bundle.buildings, bundle.occupiedPlots).ok;
+        const plots = surveyedPlots();
+        const canBuild = planConstruction(bundle.buildings, bundle.occupiedPlots, "house").ok;
         const context = buildDecisionContext({
           citizenId: row.claimed_citizen_id,
           citizen: bundle.citizen,
@@ -306,6 +307,8 @@ export async function runAiMind(config: AppConfig = readAppConfig()): Promise<Mi
           goals: bundle.goals,
           memories: bundle.memories,
           canBuild,
+          vacantServedLots: plots.filter((plot) => plot.served && !bundle.occupiedPlots.has(plot.id)).length,
+          reservedLots: plots.filter((plot) => !plot.served).length,
         });
         const commitment = contextCommitment(context);
         const messages = decisionMessages(context, config.aiMaxPromptChars);
@@ -406,7 +409,17 @@ export async function runAiMind(config: AppConfig = readAppConfig()): Promise<Mi
             report.decisions.push({ tokenId: row.token_id, status: "rejected", detail: "construction is not available" });
             continue;
           }
-          const plan = planHousePlacement(bundle.buildings, bundle.occupiedPlots);
+          const buildKind = parsed.decision.buildKind;
+          if (buildKind === "none") {
+            await client
+              .from("ai_decisions")
+              .update({ status: "rejected", validation_result: "unsupported build kind" })
+              .eq("id", decisionId);
+            report.rejected += 1;
+            report.decisions.push({ tokenId: row.token_id, status: "rejected", detail: "unsupported build kind" });
+            continue;
+          }
+          const plan = planConstruction(bundle.buildings, bundle.occupiedPlots, buildKind as ConstructKind);
           if (!plan.ok) {
             await client
               .from("ai_decisions")
@@ -418,7 +431,7 @@ export async function runAiMind(config: AppConfig = readAppConfig()): Promise<Mi
           }
           const { data: placed, error: placeError } = await client.rpc("world_place_building", {
             p_plot: plan.plan.plotId,
-            p_kind: "house",
+            p_kind: plan.plan.kind,
             p_id: plan.plan.buildingId,
             p_name: plan.plan.name,
             p_door_x: plan.plan.door.x,
@@ -458,7 +471,8 @@ export async function runAiMind(config: AppConfig = readAppConfig()): Promise<Mi
             {
               ...bundle.buildings[0]!,
               id: workTarget,
-              kind: "house",
+              kind: plan.plan.kind,
+              name: plan.plan.name,
               status: "under_construction",
               role: "builder",
               constructionProgress: 0,

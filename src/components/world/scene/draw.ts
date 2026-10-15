@@ -476,7 +476,7 @@ export function drawStaticLayer(ctx: Ctx, buildings: readonly BuildingView[]) {
   drawWater(ctx);
   drawRoads(ctx);
   for (const b of buildings) {
-    if (b.kind === "farm") drawFarm(ctx, b);
+    if (b.kind === "farm" && b.status !== "under_construction") drawFarm(ctx, b);
     if (b.kind === "commons") drawCommons(ctx, b);
     if (b.kind === "market") drawMarket(ctx, b);
     if (b.kind === "quarry") drawQuarry(ctx, b);
@@ -491,6 +491,11 @@ export function drawStaticLayer(ctx: Ctx, buildings: readonly BuildingView[]) {
           drawHouseBody(ctx, b, ROOFS[hash32(b.id) % ROOFS.length]!);
         }
         break;
+      case "farm":
+        if (b.status === "under_construction") {
+          drawConstruction(ctx, b);
+        }
+        break;
       case "hall":
         drawHouseBody(ctx, b, ["#1f7f86", "#175f64"], "#e2d4b4");
         rect(ctx, b.x * TILE + 21, b.y * TILE + 2, 6, 9, "#3dffb0");
@@ -499,7 +504,11 @@ export function drawStaticLayer(ctx: Ctx, buildings: readonly BuildingView[]) {
         drawForest(ctx, b);
         break;
       case "workshop":
-        drawWorkshop(ctx, b);
+        if (b.status === "under_construction") {
+          drawConstruction(ctx, b);
+        } else {
+          drawWorkshop(ctx, b);
+        }
         break;
       case "storehouse":
         drawStorehouse(ctx, b);
