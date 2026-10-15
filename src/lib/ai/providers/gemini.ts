@@ -87,7 +87,8 @@ export function createGeminiProvider(config: AppConfig): AiProvider {
   return {
     id: "gemini",
     async complete(request: AiCompletionRequest): Promise<AiCompletion> {
-      if (!config.aiApiKey) {
+      const apiKey = config.aiApiKey;
+      if (!apiKey) {
         throw new AiProviderError("Gemini is selected, but AI_API_KEY (or GEMINI_API_KEY) is not set.", "disabled", true);
       }
 
@@ -119,35 +120,54 @@ export function createGeminiProvider(config: AppConfig): AiProvider {
         generationConfig,
       };
 
-      const controller = new AbortController();
-      const timeout = setTimeout(
-        () => controller.abort(),
-        request.timeoutMs ?? config.aiRequestTimeoutMs,
-      );
+      const endpoint = geminiEndpoint(model, config.aiBaseUrl);
+      const headers = {
+        "x-goog-api-key": apiKey,
+        "Content-Type": "application/json",
+      };
+      const timeoutMs = request.timeoutMs ?? config.aiRequestTimeoutMs;
+      const maxAttempts = 2;
+      let bodyText = "";
+      let response: Response | undefined;
 
-      let response: Response;
-      try {
-        response = await fetch(geminiEndpoint(model, config.aiBaseUrl), {
-          method: "POST",
-          headers: {
-            "x-goog-api-key": config.aiApiKey,
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify(payload),
-          signal: controller.signal,
-        });
-      } catch (error) {
-        if (error instanceof Error && error.name === "AbortError") {
-          throw new AiProviderError("Gemini request timed out.", "timeout", false);
+      for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), timeoutMs);
+        try {
+          response = await fetch(endpoint, {
+            method: "POST",
+            headers,
+            body: JSON.stringify(payload),
+            signal: controller.signal,
+          });
+        } catch (error) {
+          if (attempt < maxAttempts) {
+            await new Promise((resolve) => setTimeout(resolve, 800));
+            continue;
+          }
+          if (error instanceof Error && error.name === "AbortError") {
+            throw new AiProviderError("Gemini request timed out.", "timeout", false);
+          }
+          throw new AiProviderError("Gemini request failed to reach the API.", "unavailable", false);
+        } finally {
+          clearTimeout(timeout);
         }
-        throw new AiProviderError("Gemini request failed to reach the API.", "unavailable", false);
-      } finally {
-        clearTimeout(timeout);
+
+        bodyText = await response.text();
+        if (response.ok) {
+          break;
+        }
+        const failure = classifyGeminiFailure(response.status, bodyText);
+        const retryable = !failure.halt && failure.code === "unavailable" && response.status >= 500;
+        if (retryable && attempt < maxAttempts) {
+          await new Promise((resolve) => setTimeout(resolve, 800));
+          continue;
+        }
+        throw failure;
       }
 
-      const bodyText = await response.text();
-      if (!response.ok) {
-        throw classifyGeminiFailure(response.status, bodyText);
+      if (!response?.ok) {
+        throw new AiProviderError("Gemini request failed to reach the API.", "unavailable", false);
       }
 
       let body: unknown;

@@ -10,7 +10,7 @@ One shared civilization for Chog Genesis citizens on Monad. A participating toke
 - viem for read-only Monad access
 - A server-side AI provider interface with `none`, `gemini`, `openai`, `anthropic`, and `ajax`
 
-The world renders without Supabase. Founding records and enrollment are stored only after Supabase is configured. The dashboard does not call the AI provider. The optional mind runner is a separate server route and stays off until `AI_RUNNER_ENABLED=true`.
+The world renders without Supabase. Founding records and enrollment are stored only after Supabase is configured. The dashboard does not call the AI provider. The optional mind runner is a separate server route and stays off until `AI_RUNNER_ENABLED=true`. GitHub Actions can poke it every 30 real minutes so Hobby Vercel Cron is not the only timer.
 
 ## Scripts
 

@@ -1,0 +1,47 @@
+# Pokes the production mind. Does not tick the world. Does not run on page views.
+# GitHub only fires `schedule` from the default branch (`main` today).
+name: AI mind
+
+on:
+  schedule:
+    - cron: "*/30 * * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: ai-mind
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    permissions:
+      contents: read
+    steps:
+      - name: Call POST /api/ai/run
+        env:
+          AI_RUNNER_SECRET: ${{ secrets.AI_RUNNER_SECRET }}
+          AI_RUNNER_URL: ${{ vars.AI_RUNNER_URL }}
+        run: |
+          set -euo pipefail
+          url="${AI_RUNNER_URL:-https://chogos.vercel.app/api/ai/run}"
+          if [ -z "${AI_RUNNER_SECRET:-}" ]; then
+            echo "Add repository secret AI_RUNNER_SECRET (same value as Vercel AI_RUNNER_SECRET)."
+            echo "https://github.com/jericddd/chogOS/settings/secrets/actions"
+            if [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ]; then
+              exit 1
+            fi
+            exit 0
+          fi
+          code="$(curl -sS -o /tmp/ai-mind.json -w "%{http_code}" -X POST \
+            -H "Authorization: Bearer ${AI_RUNNER_SECRET}" \
+            -H "Content-Type: application/json" \
+            --max-time 90 \
+            "$url")"
+          python3 -c 'from pathlib import Path; print(Path("/tmp/ai-mind.json").read_text()[:2000])'
+          echo "http $code"
+          if [ "$code" = "200" ]; then
+            exit 0
+          fi
+          echo "Mind runner returned HTTP $code"
+          exit 1

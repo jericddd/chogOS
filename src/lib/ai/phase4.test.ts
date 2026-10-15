@@ -165,6 +165,7 @@ describe("Gemini adapter", () => {
       code: "quota",
       halt: true,
     });
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
     fetchSpy.mockResolvedValueOnce(
       new Response(JSON.stringify({ error: { message: "Please enable billing to continue" } }), { status: 403 }),
     );
@@ -173,6 +174,31 @@ describe("Gemini adapter", () => {
       halt: true,
     });
     expect(config.aiProvider).toBe("gemini");
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+  });
+
+  it("retries a single Gemini 503", async () => {
+    const fetchSpy = vi.fn()
+      .mockResolvedValueOnce(new Response("unavailable", { status: 503 }))
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            candidates: [{ content: { parts: [{ text: '{"action":"rest","summary":"Rest.","rationale":"Night."}' }] } }],
+          }),
+          { status: 200 },
+        ),
+      );
+    vi.stubGlobal("fetch", fetchSpy);
+    const config = readAppConfig({
+      AI_PROVIDER: "gemini",
+      AI_API_KEY: "test-key",
+    } as unknown as NodeJS.ProcessEnv);
+    const completion = await createGeminiProvider(config).complete({
+      purpose: "x",
+      messages: [{ role: "user", content: "x" }],
+    });
+    expect(completion.text).toContain("rest");
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
   });
 
   it("does not call Ajax or an unconfigured provider", async () => {
