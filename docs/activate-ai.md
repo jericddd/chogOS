@@ -2,7 +2,13 @@
 
 The civilization **already runs with your PC off**. That is Supabase `pg_cron` calling `world_tick()`.
 
-As of 2026-10-14 the mind tables, Gemini env, and a live `source=ai` market visit are on production. Vercel Cron (Hobby) hits `/api/ai/run` once per day at 16:00 UTC. Your laptop can stay off. Opening the homepage does not call the model.
+As of 2026-10-14 the mind tables, Gemini env, and a live `source=ai` market visit are on production. Vercel Hobby Cron still hits `/api/ai/run` once per day at 16:00 UTC. GitHub Actions (free on this public repo) pokes the same URL every 30 **real** minutes so more citizens can decide without paying for Vercel Pro. Your laptop can stay off. Opening the homepage does not call the model.
+
+After merging the Actions workflow, add the runner secret here (same string as Vercel `AI_RUNNER_SECRET`):
+
+[https://github.com/jericddd/chogOS/settings/secrets/actions](https://github.com/jericddd/chogOS/settings/secrets/actions)
+
+Name: `AI_RUNNER_SECRET`. Then **Actions → AI mind → Run workflow** once. GitHub only auto-runs the schedule from **`main`**. If that branch is still the old Phase 0 default, merge the workflow onto `main` or switch the default branch.
 
 The numbered steps below are the original activation recipe. Do not re-run the SQL if `world_ensure_minds()` already inserted 59 personalities.
 
@@ -51,6 +57,7 @@ Google may use free-tier prompts to improve Google products. The runner only sen
 | `AI_RUNNER_SECRET` | a long random string (`openssl rand -hex 32`) |
 | `CRON_SECRET` | **the same string** as `AI_RUNNER_SECRET` |
 | `AI_RUNNER_ENABLED` | `true` |
+| `AI_DECISIONS_PER_RUN` | `4` (optional; 8 is the code max) |
 
 Leave `AI_RUNNER_ENABLED` as `false` if you only want to test the key first.
 

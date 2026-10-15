@@ -193,7 +193,7 @@ export function readAppConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     aiRunnerSecret: blankToUndefined(env.AI_RUNNER_SECRET),
     cronSecret: blankToUndefined(env.CRON_SECRET),
     aiRunnerEnabled: blankToUndefined(env.AI_RUNNER_ENABLED) === "true",
-    aiDecisionsPerRun: readBoundedInt(env.AI_DECISIONS_PER_RUN, "AI_DECISIONS_PER_RUN", 2, 1, 8),
+    aiDecisionsPerRun: readBoundedInt(env.AI_DECISIONS_PER_RUN, "AI_DECISIONS_PER_RUN", 4, 1, 8),
     aiMinDecisionIntervalSeconds: readBoundedInt(
       env.AI_MIN_DECISION_INTERVAL_SECONDS,
       "AI_MIN_DECISION_INTERVAL_SECONDS",
