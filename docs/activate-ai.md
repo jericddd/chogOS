@@ -53,7 +53,7 @@ Google may use free-tier prompts to improve Google products. The runner only sen
 | --- | --- |
 | `AI_PROVIDER` | `gemini` |
 | `AI_API_KEY` | the key from step 2 |
-| `AI_MODEL` | `gemini-3.8-flash` |
+| `AI_MODEL` | `gemini-3.8-flash` (leave this; Hobby actually calls `gemini-2.5-flash` with thinking off so it finishes before Vercel’s 60s kill) |
 | `AI_RUNNER_SECRET` | a long random string (`openssl rand -hex 32`) |
 | `CRON_SECRET` | **the same string** as `AI_RUNNER_SECRET` |
 | `AI_RUNNER_ENABLED` | `true` |

@@ -3,7 +3,14 @@ import { evaluateBudget, haltFromError, usagePeriods } from "@/lib/ai/budget";
 import { buildDecisionContext } from "@/lib/ai/context";
 import { preferredFeasibleAction, rankActions, type PersonalityTraits } from "@/lib/ai/personality";
 import { timeoutWithinDeadline } from "@/lib/ai/invocation";
-import { createGeminiProvider, GEMINI_THINKING_LEVEL, geminiEndpoint } from "@/lib/ai/providers/gemini";
+import {
+  createGeminiProvider,
+  GEMINI_HOBBY_FALLBACK_MODEL,
+  GEMINI_HOBBY_MODEL,
+  geminiEndpoint,
+  geminiModelsToTry,
+  geminiThinkingConfig,
+} from "@/lib/ai/providers/gemini";
 import { createProviderFromConfig } from "@/lib/ai/resolve";
 import { parseDecisionOutput } from "@/lib/ai/schema";
 import { AiProviderError } from "@/lib/ai/types";
@@ -144,16 +151,18 @@ describe("Gemini adapter", () => {
       responseSchema: { type: "object" },
     });
     expect(completion.provider).toBe("gemini");
-    expect(completion.model).toBe("gemini-3.8-flash");
+    expect(completion.model).toBe(GEMINI_HOBBY_MODEL);
+    expect(geminiModelsToTry("gemini-3.8-flash")).toEqual([GEMINI_HOBBY_MODEL, GEMINI_HOBBY_FALLBACK_MODEL]);
+    expect(geminiThinkingConfig(GEMINI_HOBBY_MODEL)).toEqual({ thinkingBudget: 0 });
+    const firstCall = fetchSpy.mock.calls[0] as unknown as [string, RequestInit];
+    expect(firstCall[0]).toContain(`/models/${GEMINI_HOBBY_MODEL}:generateContent`);
     expect(geminiEndpoint("gemini-3.8-flash")).toBe(
       "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent",
     );
-    const firstCall = fetchSpy.mock.calls[0] as unknown as [string, RequestInit];
     const init = firstCall[1];
     const body = JSON.parse(String(init.body)) as { generationConfig: Record<string, unknown> };
     expect(body.generationConfig.responseMimeType).toBe("application/json");
-    expect(body.generationConfig.thinkingConfig).toEqual({ thinkingLevel: GEMINI_THINKING_LEVEL });
-    expect(GEMINI_THINKING_LEVEL).toBe("LOW");
+    expect(body.generationConfig.thinkingConfig).toEqual({ thinkingBudget: 0 });
     expect(init.headers).toMatchObject({ "x-goog-api-key": "test-key" });
   });
 
@@ -202,6 +211,34 @@ describe("Gemini adapter", () => {
     });
     expect(completion.text).toContain("rest");
     expect(fetchSpy).toHaveBeenCalledTimes(2);
+  });
+
+  it("falls back to 2.0 Flash when 2.5 Flash is missing", async () => {
+    const fetchSpy = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ error: { message: "model is not found" } }), { status: 404 }))
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            candidates: [{ content: { parts: [{ text: '{"action":"rest","summary":"Rest.","rationale":"Night."}' }] } }],
+          }),
+          { status: 200 },
+        ),
+      );
+    vi.stubGlobal("fetch", fetchSpy);
+    const config = readAppConfig({
+      AI_PROVIDER: "gemini",
+      AI_API_KEY: "test-key",
+      AI_MODEL: "gemini-3.8-flash",
+    } as unknown as NodeJS.ProcessEnv);
+    const completion = await createGeminiProvider(config).complete({
+      purpose: "x",
+      messages: [{ role: "user", content: "x" }],
+    });
+    expect(completion.model).toBe(GEMINI_HOBBY_FALLBACK_MODEL);
+    const first = fetchSpy.mock.calls[0] as unknown as [string, RequestInit];
+    const second = fetchSpy.mock.calls[1] as unknown as [string, RequestInit];
+    expect(first[0]).toContain(GEMINI_HOBBY_MODEL);
+    expect(second[0]).toContain(GEMINI_HOBBY_FALLBACK_MODEL);
   });
 
   it("surfaces Gemini HTTP 400 body text and does not halt", async () => {
