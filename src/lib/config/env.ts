@@ -204,8 +204,8 @@ export function readAppConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     aiMaxDecisionsPerHour: readBoundedInt(env.AI_MAX_DECISIONS_PER_HOUR, "AI_MAX_DECISIONS_PER_HOUR", 12, 1, 500),
     aiMaxDecisionsPerDay: readBoundedInt(env.AI_MAX_DECISIONS_PER_DAY, "AI_MAX_DECISIONS_PER_DAY", 48, 1, 2000),
     aiMaxPromptChars: readBoundedInt(env.AI_MAX_PROMPT_CHARS, "AI_MAX_PROMPT_CHARS", 8000, 500, 32_000),
-    aiMaxOutputTokens: readBoundedInt(env.AI_MAX_OUTPUT_TOKENS, "AI_MAX_OUTPUT_TOKENS", 512, 64, 4096),
-    aiRequestTimeoutMs: readBoundedInt(env.AI_REQUEST_TIMEOUT_MS, "AI_REQUEST_TIMEOUT_MS", 20_000, 1000, 120_000),
+    aiMaxOutputTokens: readBoundedInt(env.AI_MAX_OUTPUT_TOKENS, "AI_MAX_OUTPUT_TOKENS", 2048, 64, 4096),
+    aiRequestTimeoutMs: readBoundedInt(env.AI_REQUEST_TIMEOUT_MS, "AI_REQUEST_TIMEOUT_MS", 40_000, 1000, 120_000),
     eventAnchorAddress: (() => {
       const raw = blankToUndefined(env.EVENT_ANCHOR_ADDRESS);
       return raw ? requireAddress(raw, "EVENT_ANCHOR_ADDRESS") : undefined;

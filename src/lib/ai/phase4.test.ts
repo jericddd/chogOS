@@ -266,6 +266,8 @@ describe("budgets", () => {
     const config = readAppConfig({} as NodeJS.ProcessEnv);
     expect(config.aiMaxDecisionsPerHour).toBe(12);
     expect(config.aiDecisionsPerRun).toBe(1);
+    expect(config.aiRequestTimeoutMs).toBe(40_000);
+    expect(config.aiMaxOutputTokens).toBe(2048);
     expect(timeoutWithinDeadline(0, 20_000, 40_000)).toBe(5_500);
     expect(timeoutWithinDeadline(0, 20_000, 47_000)).toBeNull();
     expect(config.aiRunnerEnabled).toBe(false);
