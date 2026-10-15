@@ -141,6 +141,18 @@ The hosted project does not apply a file merely because it is in git. Paste this
 
 Paste it on the hosted project after review. See [phase-5.md](phase-5.md).
 
+## Phase 5c town needs
+
+`20261015220000_phase5c_town_needs.sql` is additive. It does not reset the clock, rewrite events, or unlock reserved lots.
+
+- `town_needs` has one row per need type (`food_shortage`, `tools_shortage`, `materials_shortage`).
+- A unique primary key plus status hysteresis prevent a new shortage row every tick.
+- `world_evaluate_town_needs()` runs from a trigger after `world_tick()` updates the clock. It reads Storehouse stock. It does not change stock.
+- `world_link_town_need` records that an AI decision responded to an open need. It does not resolve the need.
+- Events `town.need_detected`, `town.need_blocked`, and `town.need_resolved` are `source=system` and reuse `world_record_event` hashing.
+
+`anon` and `authenticated` have no grants. `service_role` may select `town_needs` and execute `world_link_town_need`. Paste this file after Phase 5a. See [phase-5.md](phase-5.md).
+
 ## Not stored
 
 Browser sessions, private keys, session-key material, and live prices are outside this migration. Session keys, when they exist, belong to the wallet contract. The database may store a public description of a permission, not the key that can exercise it.

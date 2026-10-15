@@ -563,7 +563,16 @@ describe("database access", () => {
     expect(await privilege("has_function_privilege('service_role', 'world_place_building(text,text,text,text,integer,integer,jsonb,text,uuid,uuid)', 'execute')")).toBe(true);
     expect(await privilege("has_function_privilege('anon', 'world_place_building(text,text,text,text,integer,integer,jsonb,text,uuid,uuid)', 'execute')")).toBe(false);
     expect(await privilege("has_function_privilege('service_role', 'world_ensure_minds()', 'execute')")).toBe(true);
-    for (const table of ["world_buildings", "world_state", "citizen_world_state", "world_routes", "world_intents", "world_regions", "world_plots"]) {
+    for (const table of [
+      "world_buildings",
+      "world_state",
+      "citizen_world_state",
+      "world_routes",
+      "world_intents",
+      "world_regions",
+      "world_plots",
+      "town_needs",
+    ]) {
       for (const role of ["anon", "authenticated"]) {
         expect(await privilege(`has_table_privilege('${role}', '${table}', 'select')`)).toBe(false);
       }
@@ -578,6 +587,10 @@ describe("database access", () => {
       expect(await privilege(`has_function_privilege('${role}', 'world_initialize(jsonb,integer,text,numeric)', 'execute')`)).toBe(false);
       expect(await privilege(`has_function_privilege('${role}', 'world_expand_layout(jsonb)', 'execute')`)).toBe(false);
     }
+    expect(await privilege("has_function_privilege('service_role', 'world_link_town_need(text,uuid)', 'execute')")).toBe(true);
+    expect(await privilege("has_function_privilege('anon', 'world_link_town_need(text,uuid)', 'execute')")).toBe(false);
+    expect(await privilege("has_function_privilege('anon', 'world_evaluate_town_needs(timestamptz,bigint,bigint)', 'execute')")).toBe(false);
+    expect(await privilege("has_function_privilege('service_role', 'world_evaluate_town_needs(timestamptz,bigint,bigint)', 'execute')")).toBe(false);
     expect(await privilege("has_function_privilege('service_role', 'world_tick()', 'execute')")).toBe(true);
     expect(await privilege("has_function_privilege('service_role', 'world_cron_status()', 'execute')")).toBe(true);
     expect(await privilege("has_function_privilege('service_role', 'world_expand_layout(jsonb)', 'execute')")).toBe(true);

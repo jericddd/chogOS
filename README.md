@@ -86,4 +86,4 @@ History can be sealed with a canonical SHA-256, a live hash chain, and OpenZeppe
 
 ## Phase 5a
 
-The mind may propose `build` with `buildKind` `house`, `farm`, or `workshop`. The server still chooses a vacant road-served lot. Completed farms and workshops join the existing farmer and crafter production rules. Roads, forest lots, and town-wide shortage goals are later slices. Setup is in [docs/phase-5.md](docs/phase-5.md). The additive SQL is not live on hosted Supabase until an operator pastes it.
+The mind may propose `build` with `buildKind` `house`, `farm`, or `workshop`. The server still chooses a vacant road-served lot. Completed farms and workshops join the existing farmer and crafter production rules. Phase 5c adds town-level food, tool, and construction-material needs with hysteresis so the mind can prefer useful work when the Storehouse is actually short. Roads and forest lots remain later slices. Setup is in [docs/phase-5.md](docs/phase-5.md). Additive SQL is not live on hosted Supabase until an operator pastes it.

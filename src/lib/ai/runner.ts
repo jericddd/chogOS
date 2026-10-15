@@ -11,9 +11,25 @@ import { readAppConfig, type AppConfig } from "@/lib/config/env";
 import { createServiceRoleClient } from "@/lib/db/client";
 import { precheckAction, validateProposal, type ActionProposal } from "@/lib/world/actions";
 import { submitIntent } from "@/lib/world/intents";
+import {
+  activeTownNeeds,
+  constructKindForNeed,
+  evaluateTownNeeds,
+  feasibleConstructKinds,
+  jobAddressesNeed,
+  materialsAllowBuilderShift,
+} from "@/lib/world/needs";
 import { planConstruction, surveyedPlots, type ConstructKind } from "@/lib/world/placement";
-import { toBuilding, toCitizen, type BuildingRow, type CitizenRow } from "@/lib/world/rows";
-import type { BuildingView, CitizenView } from "@/lib/world/types";
+import {
+  TOWN_NEED_COLUMNS,
+  toBuilding,
+  toCitizen,
+  toTownNeed,
+  type BuildingRow,
+  type CitizenRow,
+  type TownNeedRow,
+} from "@/lib/world/rows";
+import type { BuildingView, CitizenView, TownNeedView } from "@/lib/world/types";
 
 export type MindRunStatus =
   | "disabled"
@@ -208,6 +224,51 @@ async function loadCitizenBundle(client: Client, citizenId: string): Promise<{
   };
 }
 
+async function loadTownNeeds(
+  client: Client,
+  buildings: BuildingView[],
+  stock: { food: number; wood: number; stone: number; tools: number },
+  occupiedPlots: Set<string>,
+): Promise<TownNeedView[]> {
+  const { data, error } = await client.from("town_needs").select(TOWN_NEED_COLUMNS);
+  if (!error && data) {
+    return (data as TownNeedRow[]).map(toTownNeed).filter((need): need is TownNeedView => need !== null);
+  }
+  const plots = surveyedPlots();
+  return evaluateTownNeeds({
+    food: stock.food,
+    wood: stock.wood,
+    stone: stock.stone,
+    tools: stock.tools,
+    vacantServedLots: plots.filter((plot) => plot.served && !occupiedPlots.has(plot.id)).length,
+    reservedLots: plots.filter((plot) => !plot.served).length,
+    buildings,
+  });
+}
+
+async function linkTownNeed(
+  client: Client,
+  needs: readonly TownNeedView[],
+  citizen: CitizenView,
+  action: string,
+  buildKind: ConstructKind | "none",
+  decisionId: string,
+): Promise<void> {
+  const match = activeTownNeeds(needs).find((need) => {
+    if (action === "build") {
+      return constructKindForNeed(need) === buildKind;
+    }
+    if (action === "work") {
+      return jobAddressesNeed(citizen.role, need.needType);
+    }
+    return false;
+  });
+  if (!match) {
+    return;
+  }
+  await client.rpc("world_link_town_need", { p_need: match.needType, p_decision: decisionId });
+}
+
 export async function runAiMind(config: AppConfig = readAppConfig()): Promise<MindRunReport> {
   if (!config.supabaseUrl || !config.supabaseServiceRoleKey) {
     return emptyReport("unconfigured", config, "Supabase is not configured.");
@@ -295,7 +356,8 @@ export async function runAiMind(config: AppConfig = readAppConfig()): Promise<Mi
         }
 
         const plots = surveyedPlots();
-        const canBuild = planConstruction(bundle.buildings, bundle.occupiedPlots, "house").ok;
+        const townNeeds = await loadTownNeeds(client, bundle.buildings, bundle.stock, bundle.occupiedPlots);
+        const canBuildKinds = feasibleConstructKinds(bundle.buildings, bundle.occupiedPlots, bundle.stock);
         const context = buildDecisionContext({
           citizenId: row.claimed_citizen_id,
           citizen: bundle.citizen,
@@ -306,7 +368,9 @@ export async function runAiMind(config: AppConfig = readAppConfig()): Promise<Mi
           skills: bundle.skills,
           goals: bundle.goals,
           memories: bundle.memories,
-          canBuild,
+          canBuild: canBuildKinds.length > 0,
+          canBuildKinds,
+          townNeeds,
           vacantServedLots: plots.filter((plot) => plot.served && !bundle.occupiedPlots.has(plot.id)).length,
           reservedLots: plots.filter((plot) => !plot.served).length,
         });
@@ -400,15 +464,6 @@ export async function runAiMind(config: AppConfig = readAppConfig()): Promise<Mi
           .eq("id", decisionId);
 
         if (parsed.decision.action === "build") {
-          if (!context.canBuild) {
-            await client
-              .from("ai_decisions")
-              .update({ status: "rejected", validation_result: "no vacant road-served plot is available" })
-              .eq("id", decisionId);
-            report.rejected += 1;
-            report.decisions.push({ tokenId: row.token_id, status: "rejected", detail: "construction is not available" });
-            continue;
-          }
           const buildKind = parsed.decision.buildKind;
           if (buildKind === "none") {
             await client
@@ -417,6 +472,32 @@ export async function runAiMind(config: AppConfig = readAppConfig()): Promise<Mi
               .eq("id", decisionId);
             report.rejected += 1;
             report.decisions.push({ tokenId: row.token_id, status: "rejected", detail: "unsupported build kind" });
+            continue;
+          }
+          if (!materialsAllowBuilderShift(bundle.stock)) {
+            await client
+              .from("ai_decisions")
+              .update({ status: "rejected", validation_result: "not enough wood and stone in the Storehouse" })
+              .eq("id", decisionId);
+            report.rejected += 1;
+            report.decisions.push({
+              tokenId: row.token_id,
+              status: "rejected",
+              detail: "not enough wood and stone in the Storehouse",
+            });
+            continue;
+          }
+          if (!canBuildKinds.includes(buildKind)) {
+            await client
+              .from("ai_decisions")
+              .update({ status: "rejected", validation_result: "construction is not available for that kind" })
+              .eq("id", decisionId);
+            report.rejected += 1;
+            report.decisions.push({
+              tokenId: row.token_id,
+              status: "rejected",
+              detail: "construction is not available for that kind",
+            });
             continue;
           }
           const plan = planConstruction(bundle.buildings, bundle.occupiedPlots, buildKind as ConstructKind);
@@ -456,6 +537,7 @@ export async function runAiMind(config: AppConfig = readAppConfig()): Promise<Mi
             continue;
           }
           report.constructed += 1;
+          await linkTownNeed(client, townNeeds, bundle.citizen, "build", buildKind, decisionId);
           const workTarget = result.buildingId ?? plan.plan.buildingId;
           const workProposal: ActionProposal = {
             tokenId: row.token_id,
@@ -564,6 +646,7 @@ export async function runAiMind(config: AppConfig = readAppConfig()): Promise<Mi
           .update({ status: "queued", intent_id: submitted.intentId, validation_result: null })
           .eq("id", decisionId);
         report.submitted += 1;
+        await linkTownNeed(client, townNeeds, bundle.citizen, proposal.action, "none", decisionId);
         report.decisions.push({
           tokenId: row.token_id,
           status: "queued",

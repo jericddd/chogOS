@@ -456,6 +456,24 @@ describe("decision context", () => {
     });
     expect(hungry.construction.suggestedBuildKind).toBe("farm");
     expect(hungry.stock.food).toBe(12);
+    expect(context.townNeeds.some((need) => need.needType === "tools_shortage" && need.status === "active")).toBe(true);
+    expect(hungry.townNeeds.some((need) => need.needType === "food_shortage" && need.status === "active")).toBe(true);
+    const socialFarmer = buildDecisionContext({
+      citizenId: "11111111-1111-4111-8111-111111111111",
+      citizen: citizen({ role: "farmer", workId: "north-farm" }),
+      buildings: buildings(),
+      worldS: 12 * 3600,
+      stock: { wood: 60, stone: 40, food: 12, tools: 20 },
+      personality: sociable,
+      skills: [],
+      goals: [],
+      memories: [],
+      canBuild: true,
+      vacantServedLots: 20,
+      reservedLots: 6,
+    });
+    expect(socialFarmer.suggested).toBe("work");
+    expect(socialFarmer.feasible.some((option) => option.action === "socialize")).toBe(true);
     const night = buildDecisionContext({
       citizenId: "11111111-1111-4111-8111-111111111111",
       citizen: citizen(),

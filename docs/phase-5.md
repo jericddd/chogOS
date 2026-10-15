@@ -28,9 +28,25 @@ The mind sees storehouse stock, building counts, open sites, and vacant served l
 
 Runtime `world_roads` overlay. An AI/system `build` + `road` places a short segment from a catalog of stubs (not free-draw). `world_plots.served` flips true when a door would touch the new asphalt. That is how the reserved east y=2 lots and true forest lots unlock.
 
-## 5c — Planner pressure (not this slice)
+## 5c — Town needs (this slice)
 
-A town-level goal (“food below 40”) so more than one citizen does not all socialize while the storehouse is empty. Phase 5a only passes stock and a suggested kind; it does not force every citizen to build.
+The engine, not the model, decides whether a shortage exists. `world_evaluate_town_needs()` runs after each `world_tick()` from Storehouse stock and layout facts. One row per need type lives in `town_needs`. Repeating the same stock does not insert another row or another event.
+
+Needs in this slice:
+
+| Need | Activates | Recovers | Why that recovery |
+| --- | --- | --- | --- |
+| `food_shortage` | food &lt; 40 | food ≥ 80 | Genesis initial food; twice the activate line; under the 400 cap |
+| `tools_shortage` | tools &lt; 4 | tools ≥ 12 | Three workshop batches of 4 tools |
+| `materials_shortage` | wood &lt; 3 or stone &lt; 2 | wood ≥ 15 and stone ≥ 10 | Cannot pay one builder shift (3 wood, 2 stone); recovery is five shifts so one gather batch does not flap the flag |
+
+A need stays active in the band between those lines (hysteresis). It does **not** resolve because an AI proposal was queued, an intent is pending, or a farm/workshop finished. Food and tools move only through the existing production rules.
+
+When a need is active and a relevant feasible action exists, ranking prefers that action over an ordinary social visit. Assigned workers keep their jobs so every citizen does not pile onto one site. Off-shift and unemployed citizens may take `build` when a farm or workshop would address the need and a vacant served lot plus materials exist. `world_check_action` / `precheckAction` still gate every intent. `road` is still rejected.
+
+Detection events are `source=system`, kinds `town.need_detected`, `town.need_blocked`, and `town.need_resolved`. They use the ordinary `world_record_event` path and the Phase 3.75 hash trigger. They are not labeled `ai`.
+
+The public inspector shows the persisted rows. If the table has not been applied, it says so instead of inventing a shortage or a clean bill of health.
 
 ## What this is not
 
@@ -38,4 +54,9 @@ Not a real-world sandbox. Not weather, war, marriage, or markets with token bala
 
 ## Operator
 
-After merge, paste `supabase/migrations/20261015200000_phase5a_civil_works.sql` into the hosted SQL editor (same way as Phase 4). Then deploy the app. Do not rerun `verify_cutover`. Do not reset the clock. This file is **not** applied to hosted Supabase merely by existing in git.
+After merge, paste each new migration into the hosted SQL editor (same way as Phase 4). Do not rerun `verify_cutover`. Do not reset the clock. Files in git are **not** applied to hosted Supabase merely by existing in the repo.
+
+- Phase 5a: `supabase/migrations/20261015200000_phase5a_civil_works.sql`
+- Phase 5c: `supabase/migrations/20261015220000_phase5c_town_needs.sql`
+
+The GitHub Actions 30-minute mind poke is unchanged.

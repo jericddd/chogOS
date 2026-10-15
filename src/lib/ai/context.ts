@@ -1,12 +1,20 @@
 import { createHash } from "node:crypto";
-import { preferredFeasibleAction, rankActions, type PersonalityTraits, type RankedAction } from "@/lib/ai/personality";
+import { type PersonalityTraits, type RankedAction } from "@/lib/ai/personality";
 import { precheckAction, WORLD_ACTIONS, type ResourceStock, type WorldAction } from "@/lib/world/actions";
 import { worldHour } from "@/lib/world/clock";
 import { CONSTRUCT_KINDS, type ConstructKind } from "@/lib/world/layout";
-import type { BuildingView, CitizenView } from "@/lib/world/types";
+import {
+  FOOD_SHORTAGE_ACTIVATE,
+  TOOLS_SHORTAGE_ACTIVATE,
+  activeTownNeeds,
+  evaluateTownNeeds,
+  preferredBuildKind as preferredBuildKindFromNeeds,
+  prioritizeTownActions,
+} from "@/lib/world/needs";
+import type { BuildingView, CitizenView, TownNeedView } from "@/lib/world/types";
 
-export const FOOD_SHORTAGE = 40;
-export const TOOLS_SHORTAGE = 4;
+export const FOOD_SHORTAGE = FOOD_SHORTAGE_ACTIVATE;
+export const TOOLS_SHORTAGE = TOOLS_SHORTAGE_ACTIVATE;
 
 export type GoalSnippet = {
   id: string;
@@ -40,6 +48,7 @@ export type ConstructionContext = {
   vacantServedLots: number;
   reservedLots: number;
   validKinds: readonly ConstructKind[];
+  canBuildKinds: ConstructKind[];
   suggestedBuildKind: ConstructKind | "none";
   counts: Record<ConstructKind, number>;
   underConstruction: Array<{ id: string; kind: string; name: string; progress: number | null }>;
@@ -66,16 +75,15 @@ export type DecisionContext = {
   suggested: RankedAction;
   ranked: RankedAction[];
   construction: ConstructionContext;
+  townNeeds: TownNeedView[];
 };
 
-export function preferredBuildKind(stock: { food: number; tools: number }): ConstructKind {
-  if (stock.food < FOOD_SHORTAGE) {
-    return "farm";
-  }
-  if (stock.tools < TOOLS_SHORTAGE) {
-    return "workshop";
-  }
-  return "house";
+export function preferredBuildKind(
+  stock: { food: number; tools: number },
+  needs: readonly TownNeedView[] = [],
+  canBuildKinds: readonly ConstructKind[] = CONSTRUCT_KINDS,
+): ConstructKind | "none" {
+  return preferredBuildKindFromNeeds(stock, needs, canBuildKinds);
 }
 
 export function listFeasibleActions(
@@ -112,10 +120,11 @@ export function listFeasibleActions(
 
 function constructionFromBuildings(
   buildings: readonly BuildingView[],
-  canBuild: boolean,
+  canBuildKinds: readonly ConstructKind[],
   vacantServedLots: number,
   reservedLots: number,
   stock: { food: number; tools: number },
+  needs: readonly TownNeedView[],
 ): ConstructionContext {
   const counts: Record<ConstructKind, number> = { house: 0, farm: 0, workshop: 0 };
   const underConstruction: ConstructionContext["underConstruction"] = [];
@@ -132,12 +141,14 @@ function constructionFromBuildings(
       });
     }
   }
+  const kinds = [...canBuildKinds];
   return {
-    canBuild,
+    canBuild: kinds.length > 0,
     vacantServedLots,
     reservedLots,
     validKinds: CONSTRUCT_KINDS,
-    suggestedBuildKind: canBuild ? preferredBuildKind(stock) : "none",
+    canBuildKinds: kinds,
+    suggestedBuildKind: preferredBuildKind(stock, needs, kinds),
     counts,
     underConstruction: underConstruction.slice(0, 8),
   };
@@ -156,19 +167,45 @@ export function buildDecisionContext(input: {
   canBuild: boolean;
   vacantServedLots?: number;
   reservedLots?: number;
+  townNeeds?: TownNeedView[];
+  canBuildKinds?: ConstructKind[];
 }): DecisionContext {
   const feasible = listFeasibleActions(input.citizen, input.buildings, input.worldS, input.stock);
+  const canBuildKinds =
+    input.canBuildKinds ?? (input.canBuild ? [...CONSTRUCT_KINDS] : []);
+  const canBuild = canBuildKinds.length > 0;
+  const vacantServedLots = input.vacantServedLots ?? (canBuild ? 1 : 0);
+  const reservedLots = input.reservedLots ?? 0;
+  const townNeeds =
+    input.townNeeds ??
+    evaluateTownNeeds({
+      food: input.stock.food,
+      wood: input.stock.wood,
+      stone: input.stock.stone,
+      tools: input.stock.tools,
+      vacantServedLots,
+      reservedLots,
+      buildings: input.buildings,
+    });
   const rankedSeed: RankedAction[] = [
     ...new Set(feasible.map((option) => option.action)),
-    ...(input.canBuild ? (["build"] as const) : []),
+    ...(canBuild ? (["build"] as const) : []),
   ];
-  const ranked = rankActions(input.personality, rankedSeed);
+  const prioritized = prioritizeTownActions({
+    personality: input.personality,
+    rankedSeed,
+    citizen: input.citizen,
+    feasible,
+    needs: townNeeds,
+    canBuildKinds,
+  });
   const construction = constructionFromBuildings(
     input.buildings,
-    input.canBuild,
-    input.vacantServedLots ?? (input.canBuild ? 1 : 0),
-    input.reservedLots ?? 0,
+    canBuildKinds,
+    vacantServedLots,
+    reservedLots,
     input.stock,
+    townNeeds,
   );
   return {
     tokenId: input.citizen.tokenId,
@@ -189,10 +226,11 @@ export function buildDecisionContext(input: {
     hour: worldHour(input.worldS),
     stock: input.stock,
     feasible: feasible.slice(0, 24),
-    canBuild: input.canBuild,
-    suggested: preferredFeasibleAction(input.personality, rankedSeed) ?? "rest",
-    ranked,
+    canBuild,
+    suggested: prioritized.suggested,
+    ranked: prioritized.ranked,
     construction,
+    townNeeds: activeTownNeeds(townNeeds),
   };
 }
 
@@ -218,6 +256,21 @@ export function contextCommitment(context: DecisionContext): string {
     canBuild: context.canBuild,
     suggested: context.suggested,
     construction: context.construction,
+    townNeeds: context.townNeeds.map((need) => ({
+      needType: need.needType,
+      status: need.status,
+      priority: need.priority,
+      blocker: need.blocker,
+      recommendedAction: need.recommendedAction,
+      recommendedKind: need.recommendedKind,
+      evidence: {
+        food: need.evidence.food,
+        wood: need.evidence.wood,
+        stone: need.evidence.stone,
+        tools: need.evidence.tools,
+        vacantServedLots: need.evidence.vacantServedLots,
+      },
+    })),
   };
   return `0x${createHash("sha256").update(JSON.stringify(body)).digest("hex")}`;
 }
@@ -229,7 +282,10 @@ export function decisionMessages(context: DecisionContext, maxChars: number): { 
     "Choose only from the feasible actions.",
     "For construction, action=build and buildKind must be house, farm, or workshop.",
     "Do not invent coordinates, lots, costs, or completion. The server places the building.",
-    "Use the real storehouse stock. Prefer a farm when food is low and a workshop when tools are low, if construction is available.",
+    "Use the real storehouse stock and the listed town needs. Those needs are engine facts, not suggestions you may invent.",
+    "When a listed need is active and a relevant feasible action exists, choose that action instead of an ordinary social visit.",
+    "Prefer a farm when food is short and a workshop when tools are short, but only if construction is listed as available. Do not propose a building when materials or lots are missing.",
+    "A completed farm is not food. A completed workshop is not tools. Do not mark a need resolved.",
     "A rejected workplace should not be repeated unless conditions changed.",
     "source=ai is applied only if this JSON is later validated. You cannot complete a goal or a building by saying it is complete.",
     "The free Gemini tier may use this prompt to improve Google products. Do not include secrets. None are provided.",
@@ -254,6 +310,18 @@ export function decisionMessages(context: DecisionContext, maxChars: number): { 
       importance: memory.importance,
     })),
     world: { hour: Math.round(context.hour * 10) / 10, stock: context.stock },
+    townNeeds: context.townNeeds.map((need) => ({
+      needType: need.needType,
+      status: need.status,
+      priority: need.priority,
+      blocker: need.blocker,
+      recommendedAction: need.recommendedAction,
+      recommendedKind: need.recommendedKind,
+      food: need.evidence.food,
+      wood: need.evidence.wood,
+      stone: need.evidence.stone,
+      tools: need.evidence.tools,
+    })),
     feasible: context.feasible,
     canBuild: context.canBuild,
     suggested: context.suggested,

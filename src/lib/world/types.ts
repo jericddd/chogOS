@@ -1,4 +1,4 @@
-import type { BuildingKind, WorkRole } from "@/lib/world/layout";
+import type { BuildingKind, ConstructKind, WorkRole } from "@/lib/world/layout";
 
 export type WorldActivity =
   | "walking"
@@ -136,6 +136,40 @@ export type WorldUnavailable = {
   detail: string;
 };
 
+export type TownNeedType = "food_shortage" | "tools_shortage" | "materials_shortage";
+export type TownNeedStatus = "inactive" | "active" | "blocked" | "resolved";
+export type TownRecommendedAction = "work" | "build" | "none";
+
+export type TownNeedEvidence = {
+  food: number;
+  wood: number;
+  stone: number;
+  tools: number;
+  vacantServedLots: number;
+  reservedLots: number;
+  farms: number;
+  workshops: number;
+  houses: number;
+  underConstruction: Array<{ id: string; kind: string; progress: number | null }>;
+};
+
+/** Persisted town need. Resolution follows recovered stock, not a proposal. */
+export type TownNeedView = {
+  needType: TownNeedType;
+  status: TownNeedStatus;
+  priority: number;
+  firstDetectedAt: string | null;
+  lastEvaluatedAt: string | null;
+  lastStatusChangedAt: string | null;
+  resolvedAt: string | null;
+  evidence: TownNeedEvidence;
+  blocker: string | null;
+  recommendedAction: TownRecommendedAction;
+  recommendedKind: ConstructKind | "none";
+  lastEventId: string | null;
+  lastDecisionId: string | null;
+};
+
 export type WorldSnapshot = {
   status: "ok";
   clock: ClockView;
@@ -144,6 +178,9 @@ export type WorldSnapshot = {
   /** Newest first. */
   events: WorldEventView[];
   latestSeq: number;
+  townNeeds: TownNeedView[];
+  /** False when the Phase 5c table is not in this database. */
+  townNeedsReady: boolean;
 };
 
 export type WorldLoad = WorldSnapshot | WorldUnavailable;
