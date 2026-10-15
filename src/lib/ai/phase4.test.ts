@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { evaluateBudget, haltFromError, usagePeriods } from "@/lib/ai/budget";
 import { buildDecisionContext } from "@/lib/ai/context";
 import { preferredFeasibleAction, rankActions, type PersonalityTraits } from "@/lib/ai/personality";
+import { timeoutWithinDeadline } from "@/lib/ai/invocation";
 import { createGeminiProvider, geminiEndpoint } from "@/lib/ai/providers/gemini";
 import { createProviderFromConfig } from "@/lib/ai/resolve";
 import { parseDecisionOutput } from "@/lib/ai/schema";
@@ -151,6 +152,7 @@ describe("Gemini adapter", () => {
     const init = firstCall[1];
     const body = JSON.parse(String(init.body)) as { generationConfig: Record<string, unknown> };
     expect(body.generationConfig.responseMimeType).toBe("application/json");
+    expect(body.generationConfig.thinkingConfig).toEqual({ thinkingLevel: "MINIMAL" });
     expect(init.headers).toMatchObject({ "x-goog-api-key": "test-key" });
   });
 
@@ -201,6 +203,23 @@ describe("Gemini adapter", () => {
     expect(fetchSpy).toHaveBeenCalledTimes(2);
   });
 
+  it("does not retry a timed-out Gemini request", async () => {
+    const fetchSpy = vi.fn(async () => {
+      const error = new Error("aborted");
+      error.name = "AbortError";
+      throw error;
+    });
+    vi.stubGlobal("fetch", fetchSpy);
+    const config = readAppConfig({
+      AI_PROVIDER: "gemini",
+      AI_API_KEY: "test-key",
+    } as unknown as NodeJS.ProcessEnv);
+    await expect(
+      createGeminiProvider(config).complete({ purpose: "x", messages: [{ role: "user", content: "x" }] }),
+    ).rejects.toMatchObject({ code: "timeout", halt: false });
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
+
   it("does not call Ajax or an unconfigured provider", async () => {
     const fetchSpy = vi.spyOn(globalThis, "fetch");
     await expect(
@@ -224,6 +243,9 @@ describe("budgets", () => {
   it("stops new inference when the hourly or daily cap is reached", () => {
     const config = readAppConfig({} as NodeJS.ProcessEnv);
     expect(config.aiMaxDecisionsPerHour).toBe(12);
+    expect(config.aiDecisionsPerRun).toBe(1);
+    expect(timeoutWithinDeadline(0, 20_000, 40_000)).toBe(5_500);
+    expect(timeoutWithinDeadline(0, 20_000, 47_000)).toBeNull();
     expect(config.aiRunnerEnabled).toBe(false);
     expect(aiStatusLabel(config)).toBe("Awaiting AI activation");
     expect(

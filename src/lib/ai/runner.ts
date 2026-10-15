@@ -2,6 +2,7 @@ import "server-only";
 import { randomUUID } from "node:crypto";
 import { getAiProvider } from "@/lib/ai/provider";
 import { evaluateBudget, haltFromError, usagePeriods, type UsageSnapshot } from "@/lib/ai/budget";
+import { timeoutWithinDeadline } from "@/lib/ai/invocation";
 import { buildDecisionContext, contextCommitment, decisionMessages } from "@/lib/ai/context";
 import { DECISION_RESPONSE_SCHEMA, isWorldAction, parseDecisionOutput } from "@/lib/ai/schema";
 import { AiProviderError } from "@/lib/ai/types";
@@ -256,10 +257,22 @@ export async function runAiMind(config: AppConfig = readAppConfig()): Promise<Mi
     }
 
     const provider = getAiProvider(config);
+    const startedAt = Date.now();
 
     for (const row of queue) {
       let decided = false;
       try {
+        const providerTimeoutMs = timeoutWithinDeadline(startedAt, config.aiRequestTimeoutMs);
+        if (providerTimeoutMs === null) {
+          report.reason = report.reason ?? "Stopped remaining citizens before the host timeout.";
+          report.decisions.push({
+            tokenId: row.token_id,
+            status: "deferred",
+            detail: "stopped before the host timeout",
+          });
+          continue;
+        }
+
         const currentUsage = await readUsage(client);
         const still = evaluateBudget(config, currentUsage);
         if (!still.ok) {
@@ -317,7 +330,7 @@ export async function runAiMind(config: AppConfig = readAppConfig()): Promise<Mi
               { role: "user", content: messages.user },
             ],
             responseSchema: DECISION_RESPONSE_SCHEMA,
-            timeoutMs: config.aiRequestTimeoutMs,
+            timeoutMs: providerTimeoutMs,
             maxOutputTokens: config.aiMaxOutputTokens,
           });
         } catch (error) {
