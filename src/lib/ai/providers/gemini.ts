@@ -2,6 +2,8 @@ import type { AppConfig } from "@/lib/config/env";
 import { AiProviderError, type AiCompletion, type AiCompletionRequest, type AiProvider } from "@/lib/ai/types";
 
 export const GEMINI_DEFAULT_MODEL = "gemini-3.8-flash";
+/** Fastest thinking 3.8 Flash accepts. `MINIMAL` returns HTTP 400 on this model. */
+export const GEMINI_THINKING_LEVEL = "LOW";
 const DEFAULT_HOST = "https://generativelanguage.googleapis.com/v1beta";
 
 export function geminiEndpoint(model: string, baseUrl?: string): string {
@@ -38,7 +40,13 @@ function classifyGeminiFailure(status: number, bodyText: string): AiProviderErro
   if (status >= 500) {
     return new AiProviderError(`Gemini returned HTTP ${status}.`, "unavailable", false);
   }
-  return new AiProviderError(`Gemini request failed with HTTP ${status}.`, "unavailable", false);
+  const snippet = bodyText.replace(/\s+/g, " ").trim().slice(0, 180);
+  const suffix = snippet ? ` ${snippet}` : "";
+  return new AiProviderError(
+    `Gemini request failed with HTTP ${status}.${suffix}`,
+    status === 400 ? "invalid" : "unavailable",
+    false,
+  );
 }
 
 function readGeminiText(body: unknown): string | undefined {
@@ -107,7 +115,7 @@ export function createGeminiProvider(config: AppConfig): AiProvider {
       const generationConfig: Record<string, unknown> = {
         temperature: 0.3,
         maxOutputTokens: request.maxOutputTokens ?? config.aiMaxOutputTokens,
-        thinkingConfig: { thinkingLevel: "MINIMAL" },
+        thinkingConfig: { thinkingLevel: GEMINI_THINKING_LEVEL },
       };
       if (request.responseSchema) {
         generationConfig.responseMimeType = "application/json";
