@@ -57,7 +57,7 @@ Google may use free-tier prompts to improve Google products. The runner only sen
 | `AI_RUNNER_SECRET` | a long random string (`openssl rand -hex 32`) |
 | `CRON_SECRET` | **the same string** as `AI_RUNNER_SECRET` |
 | `AI_RUNNER_ENABLED` | `true` |
-| `AI_DECISIONS_PER_RUN` | `4` (optional; 8 is the code max) |
+| `AI_DECISIONS_PER_RUN` | `1` (keep at 1 on Vercel Hobby; 4+ hits the 60s function timeout) |
 
 Leave `AI_RUNNER_ENABLED` as `false` if you only want to test the key first.
 

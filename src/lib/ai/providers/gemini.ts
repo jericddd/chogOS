@@ -107,7 +107,7 @@ export function createGeminiProvider(config: AppConfig): AiProvider {
       const generationConfig: Record<string, unknown> = {
         temperature: 0.3,
         maxOutputTokens: request.maxOutputTokens ?? config.aiMaxOutputTokens,
-        thinkingConfig: { thinkingLevel: "LOW" },
+        thinkingConfig: { thinkingLevel: "MINIMAL" },
       };
       if (request.responseSchema) {
         generationConfig.responseMimeType = "application/json";
@@ -141,12 +141,12 @@ export function createGeminiProvider(config: AppConfig): AiProvider {
             signal: controller.signal,
           });
         } catch (error) {
+          if (error instanceof Error && error.name === "AbortError") {
+            throw new AiProviderError("Gemini request timed out.", "timeout", false);
+          }
           if (attempt < maxAttempts) {
             await new Promise((resolve) => setTimeout(resolve, 800));
             continue;
-          }
-          if (error instanceof Error && error.name === "AbortError") {
-            throw new AiProviderError("Gemini request timed out.", "timeout", false);
           }
           throw new AiProviderError("Gemini request failed to reach the API.", "unavailable", false);
         } finally {

@@ -4,7 +4,7 @@ import { clientKey, rateLimit } from "@/lib/auth/rate-limit";
 import { runAiMind } from "@/lib/ai/runner";
 import { readAppConfig } from "@/lib/config/env";
 
-/** Hobby-safe ceiling. Two bounded Gemini calls must finish inside one invocation. */
+/** Hobby-safe ceiling. One bounded Gemini call must finish inside this window. */
 export const maxDuration = 60;
 
 /**
