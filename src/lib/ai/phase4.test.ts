@@ -17,7 +17,7 @@ import { parseDecisionOutput } from "@/lib/ai/schema";
 import { AiProviderError } from "@/lib/ai/types";
 import { aiStatusLabel, readAppConfig } from "@/lib/config/env";
 import { validateProposal } from "@/lib/world/actions";
-import { planHousePlacement, surveyedPlots } from "@/lib/world/placement";
+import { planConstruction, planHousePlacement, surveyedPlots } from "@/lib/world/placement";
 import { BUILDINGS } from "@/lib/world/layout";
 import type { BuildingView, CitizenView } from "@/lib/world/types";
 
@@ -122,6 +122,33 @@ describe("structured decisions", () => {
       ).ok,
     ).toBe(false);
     expect(validateProposal({ tokenId: "7", action: "work", buildingId: "workshop-a", source: "ai" }).ok).toBe(false);
+    const farm = parseDecisionOutput(
+      JSON.stringify({
+        action: "build",
+        buildingId: "",
+        buildKind: "farm",
+        x: 114,
+        y: 4,
+        summary: "Raise a farm for food.",
+        rationale: "Storehouse food is low.",
+      }),
+    );
+    expect(farm.ok).toBe(true);
+    if (farm.ok) {
+      expect(farm.decision.buildKind).toBe("farm");
+      expect(farm.decision.buildingId).toBe("");
+      expect(farm.decision).not.toHaveProperty("x");
+    }
+    expect(
+      parseDecisionOutput(
+        JSON.stringify({ action: "build", buildingId: "", buildKind: "road", summary: "Lay a road.", rationale: "Reach the woods." }),
+      ).ok,
+    ).toBe(false);
+    expect(
+      parseDecisionOutput(
+        JSON.stringify({ action: "build", buildingId: "", summary: "Build something.", rationale: "The town should grow." }),
+      ).ok,
+    ).toBe(false);
   });
 });
 
@@ -348,7 +375,7 @@ describe("budgets", () => {
 describe("construction placement", () => {
   it("uses a road-served plot and rejects overlap, without inventing coordinates", () => {
     const plots = surveyedPlots();
-    expect(plots.filter((plot) => plot.served).length).toBe(9);
+    expect(plots.filter((plot) => plot.served).length).toBe(20);
     expect(plots.filter((plot) => plot.rect.y === 2).every((plot) => !plot.served)).toBe(true);
     const views = buildings();
     const first = planHousePlacement(views);
@@ -377,6 +404,13 @@ describe("construction placement", () => {
     ];
     expect(planHousePlacement(withHouse, occupied).ok).toBe(true);
     expect(planHousePlacement(withHouse, new Set(plots.filter((p) => p.served).map((p) => p.id))).ok).toBe(false);
+    const farm = planConstruction(views, new Set(), "farm");
+    expect(farm.ok).toBe(true);
+    if (farm.ok) {
+      expect(farm.plan.kind).toBe("farm");
+      expect(farm.plan.buildingId).toMatch(/^farm-\d+$/);
+    }
+    expect(planConstruction(views, new Set(), "workshop").ok).toBe(true);
   });
 });
 
@@ -398,10 +432,30 @@ describe("decision context", () => {
         relatedBuildingId: "workshop-a",
       })),
       canBuild: true,
+      vacantServedLots: 20,
+      reservedLots: 6,
     });
     expect(context.memories.length).toBeLessThanOrEqual(8);
     expect(context.feasible.some((option) => option.action === "work" && option.buildingId === "workshop-a")).toBe(true);
     expect(context.suggested).toBe("work");
+    expect(context.construction.validKinds).toEqual(["house", "farm", "workshop"]);
+    expect(context.construction.suggestedBuildKind).toBe("workshop");
+    const hungry = buildDecisionContext({
+      citizenId: "11111111-1111-4111-8111-111111111111",
+      citizen: citizen(),
+      buildings: buildings(),
+      worldS: 12 * 3600,
+      stock: { wood: 60, stone: 40, food: 12, tools: 0 },
+      personality: industrious,
+      skills: [],
+      goals: [],
+      memories: [],
+      canBuild: true,
+      vacantServedLots: 20,
+      reservedLots: 6,
+    });
+    expect(hungry.construction.suggestedBuildKind).toBe("farm");
+    expect(hungry.stock.food).toBe(12);
     const night = buildDecisionContext({
       citizenId: "11111111-1111-4111-8111-111111111111",
       citizen: citizen(),

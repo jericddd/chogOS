@@ -1,5 +1,6 @@
 import {
   BUILDINGS,
+  CONSTRUCT_KINDS,
   GRID_H,
   GRID_W,
   PLOTS,
@@ -11,12 +12,15 @@ import {
   pathOn,
   rectsOverlap,
   walkableOn,
+  type ConstructKind,
   type PathBuilding,
   type Rect,
   type RouteRow,
   type Tile,
 } from "@/lib/world/layout";
 import type { BuildingView } from "@/lib/world/types";
+
+export type { ConstructKind };
 
 export type SurveyedPlot = {
   id: string;
@@ -82,55 +86,92 @@ export function toPathBuilding(building: Pick<BuildingView, "id" | "kind" | "x" 
   };
 }
 
-export function nextHouseId(existingIds: readonly string[]): string {
+export function nextConstructionId(kind: ConstructKind, existingIds: readonly string[]): string {
   let max = 0;
+  const pattern = new RegExp(`^${kind}-(\\d+)$`);
   for (const id of existingIds) {
-    const match = /^house-(\d+)$/.exec(id);
+    const match = pattern.exec(id);
     if (match) {
       max = Math.max(max, Number(match[1]));
     }
   }
-  return `house-${String(Math.max(max, BUILDINGS.filter((b) => b.kind === "house").length) + 1).padStart(2, "0")}`;
+  const seeded = BUILDINGS.filter((building) => building.kind === kind).length;
+  return `${kind}-${String(Math.max(max, seeded) + 1).padStart(2, "0")}`;
+}
+
+export function nextHouseId(existingIds: readonly string[]): string {
+  return nextConstructionId("house", existingIds);
+}
+
+export function constructionName(kind: ConstructKind, buildingId: string): string {
+  const index = /^[a-z]+-(\d+)$/.exec(buildingId)?.[1] ?? "01";
+  if (kind === "house") {
+    return `House ${index}`;
+  }
+  if (kind === "farm") {
+    return `Farm ${index}`;
+  }
+  return `Workshop ${index}`;
 }
 
 export type PlacementPlan = {
   plotId: string;
   buildingId: string;
   name: string;
+  kind: ConstructKind;
   rect: Rect;
   door: Tile;
   routes: RouteRow[];
 };
 
-export function planHousePlacement(
+function plotBlocked(
+  plot: SurveyedPlot,
+  occupiedRects: readonly Rect[],
+): boolean {
+  if (occupiedRects.some((rect) => rectsOverlap(rect, plot.rect))) {
+    return true;
+  }
+  for (let index = 0; index < plot.rect.w * plot.rect.h; index += 1) {
+    const x = plot.rect.x + (index % plot.rect.w);
+    const y = plot.rect.y + Math.floor(index / plot.rect.w);
+    if (isWaterTile(x, y) || isRoad(x, y)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Chooses the next vacant road-served lot, a door on that road, and a complete
+ * route table. Kind comes from the caller. Coordinates never come from the model.
+ */
+export function planConstruction(
   buildings: readonly Pick<BuildingView, "id" | "kind" | "name" | "x" | "y" | "w" | "h" | "doorX" | "doorY">[],
   occupiedPlotIds: ReadonlySet<string> = new Set(),
+  kind: ConstructKind = "house",
 ): { ok: true; plan: PlacementPlan } | { ok: false; reason: string } {
+  if (!CONSTRUCT_KINDS.includes(kind)) {
+    return { ok: false, reason: "unsupported construction kind" };
+  }
   const existing = buildings.map(toPathBuilding);
   const occupiedRects = buildings.map((b) => ({ x: b.x, y: b.y, w: b.w, h: b.h }));
   const plots = surveyedPlots().filter((plot) => plot.served && !occupiedPlotIds.has(plot.id));
 
   for (const plot of plots) {
-    if (occupiedRects.some((rect) => rectsOverlap(rect, plot.rect))) {
-      continue;
-    }
-    if (
-      [...Array(plot.rect.w * plot.rect.h).keys()].some((index) => {
-        const x = plot.rect.x + (index % plot.rect.w);
-        const y = plot.rect.y + Math.floor(index / plot.rect.w);
-        return isWaterTile(x, y) || isRoad(x, y);
-      })
-    ) {
+    if (plotBlocked(plot, occupiedRects)) {
       continue;
     }
     const door = chooseDoor(plot.rect);
     if (!door) {
       continue;
     }
-    const buildingId = nextHouseId(buildings.map((b) => b.id));
+    const buildingId = nextConstructionId(
+      kind,
+      buildings.map((building) => building.id),
+    );
     const added: PathBuilding = {
       id: buildingId,
-      kind: "house",
+      kind,
       rect: plot.rect,
       door,
     };
@@ -151,13 +192,13 @@ export function planHousePlacement(
     if (!connected) {
       continue;
     }
-    const index = Number(/^house-(\d+)$/.exec(buildingId)?.[1] ?? 0);
     return {
       ok: true,
       plan: {
         plotId: plot.id,
         buildingId,
-        name: `House ${String(index).padStart(2, "0")}`,
+        name: constructionName(kind, buildingId),
+        kind,
         rect: plot.rect,
         door,
         routes,
@@ -166,4 +207,11 @@ export function planHousePlacement(
   }
 
   return { ok: false, reason: "no vacant road-served plot is available" };
+}
+
+export function planHousePlacement(
+  buildings: readonly Pick<BuildingView, "id" | "kind" | "name" | "x" | "y" | "w" | "h" | "doorX" | "doorY">[],
+  occupiedPlotIds: ReadonlySet<string> = new Set(),
+): { ok: true; plan: PlacementPlan } | { ok: false; reason: string } {
+  return planConstruction(buildings, occupiedPlotIds, "house");
 }

@@ -1,12 +1,14 @@
+import { CONSTRUCT_KINDS, type ConstructKind } from "@/lib/world/layout";
 import { WORLD_ACTIONS, type WorldAction } from "@/lib/world/actions";
 
 export const DECISION_ACTIONS = [...WORLD_ACTIONS, "build"] as const;
 export type DecisionAction = (typeof DECISION_ACTIONS)[number];
+export type DecisionBuildKind = ConstructKind | "none";
 
 export type ParsedDecision = {
   action: DecisionAction;
   buildingId: string;
-  buildKind: "house" | "none";
+  buildKind: DecisionBuildKind;
   goalId: string | null;
   summary: string;
   rationale: string;
@@ -17,7 +19,7 @@ export const DECISION_RESPONSE_SCHEMA: Record<string, unknown> = {
   properties: {
     action: { type: "string", enum: [...DECISION_ACTIONS] },
     buildingId: { type: "string" },
-    buildKind: { type: "string", enum: ["house", "none"] },
+    buildKind: { type: "string", enum: [...CONSTRUCT_KINDS, "none"] },
     goalId: { type: "string" },
     summary: { type: "string" },
     rationale: { type: "string" },
@@ -36,9 +38,14 @@ function asRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
 }
 
+function isConstructKind(value: unknown): value is ConstructKind {
+  return typeof value === "string" && (CONSTRUCT_KINDS as readonly string[]).includes(value);
+}
+
 /**
  * Independent of the provider. Structured output is not trusted until this
- * passes. Extra fields are dropped. SQL, URLs, and code are not accepted as actions.
+ * passes. Extra fields (including coordinates) are dropped. SQL, URLs, and
+ * code are not accepted as actions. Missing or unknown build kinds are rejected.
  */
 export function parseDecisionOutput(text: string): { ok: true; decision: ParsedDecision } | { ok: false; reason: string } {
   let raw: unknown;
@@ -85,7 +92,14 @@ export function parseDecisionOutput(text: string): { ok: true; decision: ParsedD
     return { ok: false, reason: "decision text may not include URLs" };
   }
 
-  const buildKind = body.buildKind === "house" || action === "build" ? "house" : "none";
+  let buildKind: DecisionBuildKind = "none";
+  if (action === "build") {
+    if (!isConstructKind(body.buildKind)) {
+      return { ok: false, reason: "unsupported build kind" };
+    }
+    buildKind = body.buildKind;
+  }
+
   const goalRaw = typeof body.goalId === "string" ? body.goalId.trim() : "";
   const goalId = goalRaw && UUID_RE.test(goalRaw) ? goalRaw : null;
 
@@ -93,7 +107,7 @@ export function parseDecisionOutput(text: string): { ok: true; decision: ParsedD
     ok: true,
     decision: {
       action: action as DecisionAction,
-      buildingId: action === "build" ? buildingId : buildingId,
+      buildingId: action === "build" ? "" : buildingId,
       buildKind,
       goalId,
       summary,

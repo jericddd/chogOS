@@ -148,6 +148,10 @@ describe("world layout", () => {
         }
       }
     }
+    const extraEast = PLOTS.filter((plot) => plot.y === 11 && plot.x >= 80);
+    const extraSouth = PLOTS.filter((plot) => plot.y === 57 && plot.x >= 53);
+    expect(extraEast.map((plot) => plot.x)).toEqual([80, 84, 92, 96, 100]);
+    expect(extraSouth.map((plot) => plot.x)).toEqual([53, 57, 61, 65, 69, 73]);
   });
 
   it("has enough homes and shelter for the founding population", () => {

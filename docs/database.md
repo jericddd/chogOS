@@ -126,10 +126,20 @@ Row level security is enabled on the new tables. `anon` and `authenticated` have
 - `citizen_skills.experience` and `citizen_skill_awards` make skill grants idempotent.
 - `ai_memories` gains category, source event, outcome, and uniqueness guards.
 - `ai_decisions` status includes `queued`, `executed`, `expired`, and `superseded`.
-- `world_plots` lists genesis-v1.1 lots. `world_place_building` is the only insert path for a new house.
+- `world_plots` lists genesis-v1.1 lots. `world_place_building` is the only insert path for a new house, farm, or workshop.
 - `ai_usage_counters`, `ai_scheduler_state`, and `ai_citizen_claims` cap and serialize inference.
 
 The hosted project does not apply a file merely because it is in git. Paste this migration when activating the mind. See [phase-4.md](phase-4.md).
+
+## Phase 5a civil works
+
+`20261015200000_phase5a_civil_works.sql` is additive. It does not reset the clock, rewrite events, or unlock reserved y=2 lots.
+
+- Eleven extra road-served lots on existing east y=11 and south y=57 roads.
+- `world_place_building` accepts `house`, `farm`, and `workshop`.
+- Completing a farm or workshop converts builders at that site to farmer/crafter jobs and reuses the existing batch production rules.
+
+Paste it on the hosted project after review. See [phase-5.md](phase-5.md).
 
 ## Not stored
 

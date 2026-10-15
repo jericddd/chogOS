@@ -27,6 +27,7 @@ import {
   describeCitizenNow,
   profileHref,
 } from "@/lib/world/present";
+import { regionAt } from "@/lib/world/layout";
 import { describeSpeed } from "@/lib/world/speed";
 import { matchesFilter, mergeEvents } from "@/lib/world/sync";
 import type { CitizenMindView } from "@/lib/ai/mind-view";
@@ -399,12 +400,17 @@ function BuildingInspector({
   const here = snapshot.citizens.filter((c) => c.locationId === building.id && c.activity !== "unavailable");
   const coming = snapshot.citizens.filter((c) => c.activity === "walking" && c.destinationId === building.id);
   const stock = Object.entries(building.stock);
+  const region = regionAt(building.x, building.y);
   return (
     <article aria-label={building.name}>
       <div className="flex items-start justify-between gap-3">
         <div>
           <p className="text-[0.68rem] tracking-[0.16em] text-violet uppercase">{KIND_LABEL[building.kind]}</p>
           <h2 className="font-serif text-2xl tracking-tight">{building.name}</h2>
+          <p className="mt-1 text-xs text-muted">
+            {building.id} · {building.x},{building.y}
+            {region ? ` · ${region.name}` : ""}
+          </p>
         </div>
         <button type="button" onClick={onClose} className="rounded-md px-2 py-1 text-sm text-muted hover:bg-background hover:text-foreground" aria-label="Close inspector">
           ✕
@@ -472,6 +478,20 @@ function BuildingInspector({
           <h3 className="text-xs tracking-[0.14em] text-muted uppercase">Residents</h3>
           <ul className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-sm">
             {residents.map((c) => (
+              <li key={c.tokenId}>
+                <CitizenLink citizen={c} />
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+      {workers.length > 0 && building.role && building.kind !== "house" ? (
+        <div className="mt-4">
+          <h3 className="text-xs tracking-[0.14em] text-muted uppercase">
+            {building.status === "under_construction" ? "Builders" : `${ROLE_LABEL[building.role]}s`}
+          </h3>
+          <ul className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-sm">
+            {workers.map((c) => (
               <li key={c.tokenId}>
                 <CitizenLink citizen={c} />
               </li>
