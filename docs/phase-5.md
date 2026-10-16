@@ -22,11 +22,15 @@ When the site reaches 100%:
 
 Food is not awarded because a farm was built. Tools are not awarded because a workshop was built.
 
-The mind sees storehouse stock, building counts, open sites, and vacant served lots. `buildKind` must be `house`, `farm`, or `workshop`. Missing or unknown kinds, including `road`, are rejected. Extra JSON fields such as coordinates are dropped.
+The mind sees storehouse stock, building counts, open sites, and vacant served lots. Extra JSON fields such as coordinates are dropped.
 
-## 5b — Roads (not this slice)
+## 5b — Roads (this slice)
 
-Runtime `world_roads` overlay. An AI/system `build` + `road` places a short segment from a catalog of stubs (not free-draw). `world_plots.served` flips true when a door would touch the new asphalt. That is how the reserved east y=2 lots and true forest lots unlock.
+Runtime overlay table `world_roads`. The model may send `action=build`, `buildKind=road`, and `roadStubId` equal to a catalog id. It never supplies tiles or coordinates. `world_place_road` revalidates the catalog geometry, consumes 3 wood and 2 stone once, writes the overlay, and `world_refresh_plot_service` marks a plot served only when a real road tile is cardinally adjacent to its footprint.
+
+Six catalog stubs (`east-y2-64` through `east-y2-84`) bridge the connected east `y=10` highway to the reserved lots at `y=2`. Each spur lays tiles at `y=9,8` (to join town) and `y=6,5` (to reach the lot), using the existing `y=7` strip in between. Placing `east-y2-64` serves `plot-64-2` and leaves the other five reserved until their own stubs are placed. Overlay tiles merge into the existing TypeScript pathfinder (`pathAcross` / `walkableOn`). Placement is atomic: there is no partial traversable road. A stub is rejected unless every tile is reachable from the founding road network.
+
+`road` is not a Phase 5a construct kind. Houses, farms, and workshops still use `world_place_building` on vacant served lots. Newly served lots become eligible for that path. Town needs (Phase 5c) are unchanged.
 
 ## 5c — Town needs (this slice)
 
@@ -42,7 +46,7 @@ Needs in this slice:
 
 A need stays active in the band between those lines (hysteresis). It does **not** resolve because an AI proposal was queued, an intent is pending, or a farm/workshop finished. Food and tools move only through the existing production rules.
 
-When a need is active and a relevant feasible action exists, ranking prefers that action over an ordinary social visit. Assigned workers keep their jobs so every citizen does not pile onto one site. Off-shift and unemployed citizens may take `build` when a farm or workshop would address the need and a vacant served lot plus materials exist. `world_check_action` / `precheckAction` still gate every intent. `road` is still rejected.
+When a need is active and a relevant feasible action exists, ranking prefers that action over an ordinary social visit. Assigned workers keep their jobs so every citizen does not pile onto one site. Off-shift and unemployed citizens may take `build` when a farm or workshop would address the need and a vacant served lot plus materials exist. `world_check_action` / `precheckAction` still gate every intent. Road stubs are a separate catalog action, not a shortage type.
 
 Detection events are `source=system`, kinds `town.need_detected`, `town.need_blocked`, and `town.need_resolved`. They use the ordinary `world_record_event` path and the Phase 3.75 hash trigger. They are not labeled `ai`.
 
@@ -58,5 +62,8 @@ After merge, paste each new migration into the hosted SQL editor (same way as Ph
 
 - Phase 5a: `supabase/migrations/20261015200000_phase5a_civil_works.sql`
 - Phase 5c: `supabase/migrations/20261015220000_phase5c_town_needs.sql`
+- Phase 5b: `supabase/migrations/20261016200000_phase5b_roads.sql`
+
+Phase 5b SQL is **not** applied to hosted Supabase by this pull request. Paste it after review. Do not rerun `world:init` or `verify_cutover`.
 
 The GitHub Actions 30-minute mind poke is unchanged.

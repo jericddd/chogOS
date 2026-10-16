@@ -170,6 +170,17 @@ export type TownNeedView = {
   lastDecisionId: string | null;
 };
 
+export type RoadOverlayView = {
+  id: string;
+  stubId: string;
+  name: string;
+  tiles: Array<{ x: number; y: number }>;
+  status: "complete";
+  servedPlotIds: string[];
+  completedAt: string | null;
+  source: EventSource;
+};
+
 export type WorldSnapshot = {
   status: "ok";
   clock: ClockView;
@@ -181,6 +192,9 @@ export type WorldSnapshot = {
   townNeeds: TownNeedView[];
   /** False when the Phase 5c table is not in this database. */
   townNeedsReady: boolean;
+  roads: RoadOverlayView[];
+  /** False when the Phase 5b table is not in this database. */
+  roadsReady: boolean;
 };
 
 export type WorldLoad = WorldSnapshot | WorldUnavailable;

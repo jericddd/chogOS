@@ -6,13 +6,14 @@ import {
   TILE,
   decorations,
   hash32,
-  isRoad,
   isWaterTile,
   regionAt,
+  type Tile,
   type WorkRole,
 } from "@/lib/world/layout";
+import { isRoadAt, overlayTileSet } from "@/lib/world/roads";
 import { WORLD_PX_H, WORLD_PX_W, type Placement } from "@/lib/world/scene";
-import type { BuildingView, CitizenView, WorldActivity } from "@/lib/world/types";
+import type { BuildingView, CitizenView, RoadOverlayView, WorldActivity } from "@/lib/world/types";
 
 type Ctx = CanvasRenderingContext2D;
 
@@ -134,10 +135,11 @@ function drawWater(ctx: Ctx) {
   }
 }
 
-function drawRoads(ctx: Ctx) {
+function drawRoads(ctx: Ctx, overlay: Set<string>) {
+  const paved = (x: number, y: number) => isRoadAt(x, y, overlay);
   for (let ty = 0; ty < GRID_H; ty += 1) {
     for (let tx = 0; tx < GRID_W; tx += 1) {
-      if (!isRoad(tx, ty)) {
+      if (!paved(tx, ty)) {
         continue;
       }
       const px = tx * TILE;
@@ -147,10 +149,10 @@ function drawRoads(ctx: Ctx) {
         for (let i = 0; i < TILE; i += 4) {
           rect(ctx, px, py + i, TILE, 1, "#5c4228");
         }
-        if (!isRoad(tx - 1, ty)) {
+        if (!paved(tx - 1, ty)) {
           rect(ctx, px, py, 2, TILE, "#3d2c1b");
         }
-        if (!isRoad(tx + 1, ty)) {
+        if (!paved(tx + 1, ty)) {
           rect(ctx, px + TILE - 2, py, 2, TILE, "#3d2c1b");
         }
         continue;
@@ -161,16 +163,19 @@ function drawRoads(ctx: Ctx) {
         const p = hash32(`p:${s}:${i}`);
         rect(ctx, px + (p % 15), py + ((p >> 4) % 15), 1, 1, pick(PEBBLE, p >> 8));
       }
-      if (!isRoad(tx, ty - 1)) {
+      if (overlay.has(`${tx},${ty}`)) {
+        rect(ctx, px + 6, py + 6, 4, 4, "#7d654c");
+      }
+      if (!paved(tx, ty - 1)) {
         rect(ctx, px, py, TILE, 1, ROAD_EDGE);
       }
-      if (!isRoad(tx, ty + 1)) {
+      if (!paved(tx, ty + 1)) {
         rect(ctx, px, py + TILE - 1, TILE, 1, ROAD_EDGE);
       }
-      if (!isRoad(tx - 1, ty)) {
+      if (!paved(tx - 1, ty)) {
         rect(ctx, px, py, 1, TILE, ROAD_EDGE);
       }
-      if (!isRoad(tx + 1, ty)) {
+      if (!paved(tx + 1, ty)) {
         rect(ctx, px + TILE - 1, py, 1, TILE, ROAD_EDGE);
       }
     }
@@ -202,8 +207,11 @@ function drawPine(ctx: Ctx, cx: number, by: number, variant: number) {
   rect(ctx, cx - 1, by - 12, 1, 1, "#3c8a5c");
 }
 
-function drawDecor(ctx: Ctx) {
+function drawDecor(ctx: Ctx, overlay: Set<string>) {
   for (const item of decorations()) {
+    if (overlay.has(`${item.x},${item.y}`)) {
+      continue;
+    }
     const px = item.x * TILE;
     const py = item.y * TILE;
     switch (item.kind) {
@@ -468,20 +476,21 @@ function drawMarket(ctx: Ctx, b: BuildingView) {
 }
 
 /** Terrain, roads, decor, and building shells. Redrawn only when a building's status changes. */
-export function drawStaticLayer(ctx: Ctx, buildings: readonly BuildingView[]) {
+export function drawStaticLayer(ctx: Ctx, buildings: readonly BuildingView[], overlay: readonly Tile[] = []) {
+  const overlaySet = overlayTileSet(overlay);
   ctx.imageSmoothingEnabled = false;
   ctx.clearRect(0, 0, WORLD_PX_W, WORLD_PX_H);
   drawGround(ctx);
   drawPlots(ctx, buildings);
   drawWater(ctx);
-  drawRoads(ctx);
+  drawRoads(ctx, overlaySet);
   for (const b of buildings) {
     if (b.kind === "farm" && b.status !== "under_construction") drawFarm(ctx, b);
     if (b.kind === "commons") drawCommons(ctx, b);
     if (b.kind === "market") drawMarket(ctx, b);
     if (b.kind === "quarry") drawQuarry(ctx, b);
   }
-  drawDecor(ctx);
+  drawDecor(ctx, overlaySet);
   for (const b of buildings) {
     switch (b.kind) {
       case "house":
@@ -517,8 +526,8 @@ export function drawStaticLayer(ctx: Ctx, buildings: readonly BuildingView[]) {
   }
 }
 
-export function staticLayerKey(buildings: readonly BuildingView[]): string {
-  return buildings.map((b) => `${b.id}:${b.status}`).join("|");
+export function staticLayerKey(buildings: readonly BuildingView[], overlay: readonly Tile[] = []): string {
+  return `${buildings.map((b) => `${b.id}:${b.status}`).join("|")}#${overlay.map((tile) => `${tile.x},${tile.y}`).join(";")}`;
 }
 
 // Citizens ------------------------------------------------------------------
@@ -762,6 +771,18 @@ export function drawSelection(ctx: Ctx, building: BuildingView | undefined, t: n
   ctx.strokeStyle = `rgba(61,255,176,${pulse})`;
   ctx.lineWidth = 1.5;
   ctx.strokeRect(building.x * TILE - 1.5, building.y * TILE - 1.5, building.w * TILE + 3, building.h * TILE + 3);
+}
+
+export function drawRoadSelection(ctx: Ctx, road: RoadOverlayView | undefined, t: number) {
+  if (!road) {
+    return;
+  }
+  const pulse = 0.6 + Math.sin(t / 300) * 0.3;
+  ctx.strokeStyle = `rgba(240,200,80,${pulse})`;
+  ctx.lineWidth = 1.5;
+  for (const tile of road.tiles) {
+    ctx.strokeRect(tile.x * TILE - 1.5, tile.y * TILE - 1.5, TILE + 3, TILE + 3);
+  }
 }
 
 export function drawLabel(ctx: Ctx, text: string, cx: number, top: number) {

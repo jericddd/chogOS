@@ -1,5 +1,16 @@
-import { GENESIS_V1_GRID_H, GENESIS_V1_GRID_W, GRID_H, GRID_W, TILE, hash32, pathBetween, type Tile } from "@/lib/world/layout";
-import type { BuildingView, CitizenView } from "@/lib/world/types";
+import {
+  GENESIS_V1_GRID_H,
+  GENESIS_V1_GRID_W,
+  GRID_H,
+  GRID_W,
+  TILE,
+  hash32,
+  pathAcross,
+  type PathBuilding,
+  type Tile,
+} from "@/lib/world/layout";
+import { overlayRoadAt } from "@/lib/world/roads";
+import type { BuildingView, CitizenView, RoadOverlayView } from "@/lib/world/types";
 
 export const WORLD_PX_W = GRID_W * TILE;
 export const WORLD_PX_H = GRID_H * TILE;
@@ -62,22 +73,34 @@ function walkPoint(path: Tile[], progress: number): { x: number; y: number; dx: 
  * same road path the server used to price the trip; arrivals wait at the
  * destination door until the server applies the arrival.
  */
+function asPathBuilding(building: BuildingView): PathBuilding {
+  return {
+    id: building.id,
+    kind: building.kind,
+    rect: { x: building.x, y: building.y, w: building.w, h: building.h },
+    door: { x: building.doorX, y: building.doorY },
+  };
+}
+
 export function placeCitizens(
   citizens: readonly CitizenView[],
   buildings: ReadonlyMap<string, BuildingView>,
   worldS: number,
+  overlay: readonly Tile[] = [],
 ): Placement[] {
   const placements: Placement[] = [];
   const present = new Map<string, CitizenView[]>();
+  const graph = [...buildings.values()].map(asPathBuilding);
 
   for (const citizen of citizens) {
     if (citizen.activity === "unavailable") {
       continue;
     }
     if (citizen.activity === "walking" && citizen.originId && citizen.destinationId) {
-      const path = pathBetween(citizen.originId, citizen.destinationId);
       const from = buildings.get(citizen.originId);
       const to = buildings.get(citizen.destinationId);
+      const path =
+        from && to ? pathAcross(asPathBuilding(from), asPathBuilding(to), graph, overlay) : null;
       const route: Tile[] = path ?? [from, to].filter((b): b is BuildingView => Boolean(b)).map((b) => ({ x: b.doorX, y: b.doorY }));
       if (route.length === 0) {
         continue;
@@ -207,7 +230,11 @@ export function screenToTile(camera: Camera, sx: number, sy: number): { x: numbe
   return { x: (sx - camera.x) / camera.scale / TILE, y: (sy - camera.y) / camera.scale / TILE };
 }
 
-export type Hit = { type: "citizen"; tokenId: string } | { type: "building"; id: string } | null;
+export type Hit =
+  | { type: "citizen"; tokenId: string }
+  | { type: "building"; id: string }
+  | { type: "road"; id: string }
+  | null;
 
 /** Citizens win over buildings. The nearest visible sprite within its body radius is picked. */
 export function hitTest(
@@ -215,6 +242,7 @@ export function hitTest(
   placements: readonly Placement[],
   buildings: readonly BuildingView[],
   camera: Camera,
+  roads: readonly RoadOverlayView[] = [],
 ): Hit {
   const radius = Math.max(0.45, 9 / (camera.scale * TILE));
   let best: { tokenId: string; d: number } | null = null;
@@ -236,6 +264,10 @@ export function hitTest(
     if (tile.x >= building.x && tile.x < building.x + building.w && tile.y >= building.y && tile.y < building.y + building.h) {
       return { type: "building", id: building.id };
     }
+  }
+  const road = overlayRoadAt(tile.x, tile.y, roads);
+  if (road) {
+    return { type: "road", id: road.id };
   }
   return null;
 }

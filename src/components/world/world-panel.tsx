@@ -21,6 +21,7 @@ import {
   KIND_LABEL,
   RESOURCE_LABEL,
   ROLE_LABEL,
+  SOURCE_LABEL,
   buildingHref,
   citizenHref,
   citizenLabel,
@@ -33,7 +34,8 @@ import { matchesFilter, mergeEvents } from "@/lib/world/sync";
 import type { CitizenMindView } from "@/lib/ai/mind-view";
 import { TRAIT_LABELS } from "@/lib/ai/personality";
 import { describeTownNeed, describeTownNeedsBanner } from "@/lib/world/needs";
-import type { BuildingView, CitizenView, EventFilter, EventPage, WorldActivity, WorldEventView, WorldSnapshot } from "@/lib/world/types";
+import { describeRoadsBanner } from "@/lib/world/roads";
+import type { BuildingView, CitizenView, EventFilter, EventPage, RoadOverlayView, WorldActivity, WorldEventView, WorldSnapshot } from "@/lib/world/types";
 
 const HEALTH_TEXT = {
   live: { label: "Live", tone: "bg-accent", detail: "The shared simulation is running." },
@@ -93,6 +95,7 @@ export function WorldStatus({
       </p>
       {health !== "live" ? <p className="mt-2 text-xs leading-5 text-warning">{info.detail}</p> : null}
       <TownNeedsLine snapshot={snapshot} />
+      <RoadsLine snapshot={snapshot} />
     </div>
   );
 }
@@ -103,6 +106,15 @@ function TownNeedsLine({ snapshot }: { snapshot: WorldSnapshot }) {
     banner.tone === "need" ? "text-warning" : banner.tone === "blocked" ? "text-warning" : "text-muted";
   return (
     <p className={`mt-2 text-xs leading-5 ${tone}`} title={banner.detail}>
+      {banner.title}
+    </p>
+  );
+}
+
+function RoadsLine({ snapshot }: { snapshot: WorldSnapshot }) {
+  const banner = describeRoadsBanner(snapshot.roads ?? [], snapshot.roadsReady ?? false);
+  return (
+    <p className="mt-1 text-xs leading-5 text-muted" title={banner.detail}>
       {banner.title}
     </p>
   );
@@ -555,6 +567,99 @@ const ACTIVITY_ORDER: WorldActivity[] = [
   "idle",
 ];
 
+function RoadsPanel({
+  snapshot,
+  onPick,
+}: {
+  snapshot: WorldSnapshot;
+  onPick: (selection: Selection) => void;
+}) {
+  const banner = describeRoadsBanner(snapshot.roads ?? [], snapshot.roadsReady ?? false);
+  const roads = snapshot.roads ?? [];
+  return (
+    <div className="mt-4 rounded-lg border border-line px-3 py-2">
+      <p className="text-[0.68rem] tracking-[0.14em] text-muted uppercase">Roads</p>
+      <p className="mt-1 text-sm">{banner.title}</p>
+      <p className="mt-0.5 text-xs leading-5 text-muted">{banner.detail}</p>
+      {roads.length > 0 ? (
+        <ul className="mt-2 space-y-1 text-xs leading-5">
+          {roads.map((road) => (
+            <li key={road.id}>
+              <button type="button" onClick={() => onPick({ type: "road", id: road.id })} className="text-left hover:text-accent">
+                {road.name}
+                {road.servedPlotIds.length > 0 ? ` · ${road.servedPlotIds.join(", ")}` : ""}
+              </button>
+            </li>
+          ))}
+        </ul>
+      ) : null}
+    </div>
+  );
+}
+
+function RoadInspector({
+  road,
+  recent,
+  citizenName,
+  onClose,
+}: {
+  road: RoadOverlayView;
+  recent: readonly WorldEventView[];
+  citizenName: (tokenId: string) => string | null;
+  onClose: () => void;
+}) {
+  const now = useNow(15_000);
+  const history = recent.filter(
+    (event) =>
+      (event.kind === "road.placed" && event.summary.includes(road.name)) ||
+      (event.kind === "plot.served" && road.servedPlotIds.some((id) => event.summary.includes(id))),
+  );
+  return (
+    <article aria-label={`Road ${road.name}`}>
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <p className="text-[0.68rem] tracking-[0.16em] text-accent uppercase">Constructed road</p>
+          <h2 className="font-serif text-2xl tracking-tight">{road.name}</h2>
+          <p className="text-xs text-muted">Catalog {road.stubId}</p>
+        </div>
+        <button type="button" onClick={onClose} className="rounded-md px-2 py-1 text-sm text-muted hover:bg-background hover:text-foreground" aria-label="Close inspector">
+          ✕
+        </button>
+      </div>
+      <dl className="mt-3 space-y-1 text-sm">
+        <div className="flex justify-between gap-3">
+          <dt className="text-muted">Status</dt>
+          <dd>{road.status}</dd>
+        </div>
+        <div className="flex justify-between gap-3">
+          <dt className="text-muted">Source</dt>
+          <dd>{SOURCE_LABEL[road.source]}</dd>
+        </div>
+        <div className="flex justify-between gap-3">
+          <dt className="text-muted">Tiles</dt>
+          <dd className="tabular-nums">{road.tiles.map((tile) => `${tile.x},${tile.y}`).join(" → ")}</dd>
+        </div>
+        <div className="flex justify-between gap-3">
+          <dt className="text-muted">Served lots</dt>
+          <dd>{road.servedPlotIds.length > 0 ? road.servedPlotIds.join(", ") : "none yet"}</dd>
+        </div>
+      </dl>
+      <p className="mt-3 text-xs leading-5 text-muted">
+        This overlay is persisted. Citizens walk it through the same pathfinder as the founding roads. The mind cannot invent coordinates.
+      </p>
+      <section className="mt-4">
+        <h3 className="text-xs tracking-[0.14em] text-muted uppercase">Recent history</h3>
+        {history.length === 0 ? <p className="mt-2 text-xs text-muted">No road events in this tab yet.</p> : null}
+        <ul className="mt-1 divide-y divide-line">
+          {history.slice(0, 8).map((event) => (
+            <EventItem key={event.id} event={event} now={now} citizenName={citizenName} compact />
+          ))}
+        </ul>
+      </section>
+    </article>
+  );
+}
+
 function WorldOverview({ snapshot, onPick }: { snapshot: WorldSnapshot; onPick: (selection: Selection) => void }) {
   const present = snapshot.citizens.filter((c) => c.activity !== "unavailable");
   const counts = new Map<WorldActivity, number>();
@@ -580,6 +685,7 @@ function WorldOverview({ snapshot, onPick }: { snapshot: WorldSnapshot; onPick: 
         ))}
       </ul>
       <TownNeedsPanel snapshot={snapshot} />
+      <RoadsPanel snapshot={snapshot} onPick={onPick} />
       {store ? (
         <button
           type="button"
@@ -704,6 +810,12 @@ export function WorldPanel({
     const building = snapshot.buildings.find((b) => b.id === selection.id);
     if (building) {
       return <BuildingInspector key={building.id} building={building} snapshot={snapshot} recent={recent} citizenName={citizenName} onClose={close} />;
+    }
+  }
+  if (selection?.type === "road") {
+    const road = (snapshot.roads ?? []).find((item) => item.id === selection.id);
+    if (road) {
+      return <RoadInspector key={road.id} road={road} recent={recent} citizenName={citizenName} onClose={close} />;
     }
   }
   return <WorldOverview snapshot={snapshot} onPick={onPick} />;

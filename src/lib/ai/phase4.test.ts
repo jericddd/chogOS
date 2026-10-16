@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { evaluateBudget, haltFromError, isRetriableHaltReason, usagePeriods } from "@/lib/ai/budget";
-import { buildDecisionContext } from "@/lib/ai/context";
+import { buildDecisionContext, decisionMessages } from "@/lib/ai/context";
 import { preferredFeasibleAction, rankActions, type PersonalityTraits } from "@/lib/ai/personality";
 import { timeoutWithinDeadline } from "@/lib/ai/invocation";
 import {
@@ -144,6 +144,38 @@ describe("structured decisions", () => {
         JSON.stringify({ action: "build", buildingId: "", buildKind: "road", summary: "Lay a road.", rationale: "Reach the woods." }),
       ).ok,
     ).toBe(false);
+    expect(
+      parseDecisionOutput(
+        JSON.stringify({
+          action: "build",
+          buildingId: "",
+          buildKind: "road",
+          roadStubId: "invented-path",
+          summary: "Lay a road.",
+          rationale: "Reach the woods.",
+        }),
+      ).ok,
+    ).toBe(false);
+    const road = parseDecisionOutput(
+      JSON.stringify({
+        action: "build",
+        buildingId: "",
+        buildKind: "road",
+        roadStubId: "east-y2-64",
+        x: 99,
+        y: 1,
+        tiles: [{ x: 1, y: 1 }],
+        summary: "Extend the east road.",
+        rationale: "Unlock a reserved lot.",
+      }),
+    );
+    expect(road.ok).toBe(true);
+    if (road.ok) {
+      expect(road.decision.buildKind).toBe("road");
+      expect(road.decision.roadStubId).toBe("east-y2-64");
+      expect(road.decision).not.toHaveProperty("x");
+      expect(road.decision).not.toHaveProperty("tiles");
+    }
     expect(
       parseDecisionOutput(
         JSON.stringify({ action: "build", buildingId: "", summary: "Build something.", rationale: "The town should grow." }),
@@ -487,5 +519,23 @@ describe("decision context", () => {
       canBuild: false,
     });
     expect(night.feasible.some((option) => option.action === "work")).toBe(false);
+    const withRoad = buildDecisionContext({
+      citizenId: "11111111-1111-4111-8111-111111111111",
+      citizen: citizen(),
+      buildings: buildings(),
+      worldS: 12 * 3600,
+      stock: { wood: 60, stone: 40, food: 80, tools: 20 },
+      personality: industrious,
+      skills: [],
+      goals: [],
+      memories: [],
+      canBuild: false,
+      eligibleRoadStubs: [{ id: "east-y2-64", name: "East spur to plot 64,2", servesPlotIds: ["plot-64-2"] }],
+    });
+    expect(withRoad.canBuild).toBe(true);
+    expect(withRoad.construction.roads.canBuildRoad).toBe(true);
+    const messages = decisionMessages(withRoad, 8000);
+    expect(messages.system).toContain("roadStubId");
+    expect(messages.user).toContain("east-y2-64");
   });
 });

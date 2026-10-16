@@ -562,6 +562,10 @@ describe("database access", () => {
     const privilege = async (sql: string) => (await rows<{ ok: boolean }>(db, `select ${sql} as ok`))[0]!.ok;
     expect(await privilege("has_function_privilege('service_role', 'world_place_building(text,text,text,text,integer,integer,jsonb,text,uuid,uuid)', 'execute')")).toBe(true);
     expect(await privilege("has_function_privilege('anon', 'world_place_building(text,text,text,text,integer,integer,jsonb,text,uuid,uuid)', 'execute')")).toBe(false);
+    expect(await privilege("has_function_privilege('service_role', 'world_place_road(text,text,uuid,uuid)', 'execute')")).toBe(true);
+    expect(await privilege("has_function_privilege('anon', 'world_place_road(text,text,uuid,uuid)', 'execute')")).toBe(false);
+    expect(await privilege("has_function_privilege('anon', 'world_refresh_plot_service()', 'execute')")).toBe(false);
+    expect(await privilege("has_function_privilege('service_role', 'world_refresh_plot_service()', 'execute')")).toBe(false);
     expect(await privilege("has_function_privilege('service_role', 'world_ensure_minds()', 'execute')")).toBe(true);
     for (const table of [
       "world_buildings",
@@ -572,6 +576,8 @@ describe("database access", () => {
       "world_regions",
       "world_plots",
       "town_needs",
+      "world_roads",
+      "world_road_catalog",
     ]) {
       for (const role of ["anon", "authenticated"]) {
         expect(await privilege(`has_table_privilege('${role}', '${table}', 'select')`)).toBe(false);

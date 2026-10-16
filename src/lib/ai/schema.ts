@@ -1,14 +1,16 @@
 import { CONSTRUCT_KINDS, type ConstructKind } from "@/lib/world/layout";
+import { ROAD_STUB_IDS } from "@/lib/world/roads";
 import { WORLD_ACTIONS, type WorldAction } from "@/lib/world/actions";
 
 export const DECISION_ACTIONS = [...WORLD_ACTIONS, "build"] as const;
 export type DecisionAction = (typeof DECISION_ACTIONS)[number];
-export type DecisionBuildKind = ConstructKind | "none";
+export type DecisionBuildKind = ConstructKind | "road" | "none";
 
 export type ParsedDecision = {
   action: DecisionAction;
   buildingId: string;
   buildKind: DecisionBuildKind;
+  roadStubId: string | "none";
   goalId: string | null;
   summary: string;
   rationale: string;
@@ -19,7 +21,8 @@ export const DECISION_RESPONSE_SCHEMA: Record<string, unknown> = {
   properties: {
     action: { type: "string", enum: [...DECISION_ACTIONS] },
     buildingId: { type: "string" },
-    buildKind: { type: "string", enum: [...CONSTRUCT_KINDS, "none"] },
+    buildKind: { type: "string", enum: [...CONSTRUCT_KINDS, "road", "none"] },
+    roadStubId: { type: "string" },
     goalId: { type: "string" },
     summary: { type: "string" },
     rationale: { type: "string" },
@@ -93,11 +96,20 @@ export function parseDecisionOutput(text: string): { ok: true; decision: ParsedD
   }
 
   let buildKind: DecisionBuildKind = "none";
+  let roadStubId: string | "none" = "none";
   if (action === "build") {
-    if (!isConstructKind(body.buildKind)) {
+    if (body.buildKind === "road") {
+      const stub = typeof body.roadStubId === "string" ? body.roadStubId.trim() : "";
+      if (!ROAD_STUB_IDS.has(stub)) {
+        return { ok: false, reason: "unknown road stub" };
+      }
+      buildKind = "road";
+      roadStubId = stub;
+    } else if (isConstructKind(body.buildKind)) {
+      buildKind = body.buildKind;
+    } else {
       return { ok: false, reason: "unsupported build kind" };
     }
-    buildKind = body.buildKind;
   }
 
   const goalRaw = typeof body.goalId === "string" ? body.goalId.trim() : "";
@@ -109,6 +121,7 @@ export function parseDecisionOutput(text: string): { ok: true; decision: ParsedD
       action: action as DecisionAction,
       buildingId: action === "build" ? "" : buildingId,
       buildKind,
+      roadStubId,
       goalId,
       summary,
       rationale,

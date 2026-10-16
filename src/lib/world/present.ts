@@ -98,6 +98,10 @@ export function buildingHref(buildingId: string): string {
   return `/?building=${encodeURIComponent(buildingId)}`;
 }
 
+export function roadHref(roadId: string): string {
+  return `/?road=${encodeURIComponent(roadId)}`;
+}
+
 export function profileHref(tokenId: string): string {
   return `/citizens/${encodeURIComponent(tokenId)}`;
 }
