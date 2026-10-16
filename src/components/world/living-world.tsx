@@ -31,6 +31,10 @@ function parseSelection(params: URLSearchParams | null): Selection {
   if (road && /^[a-z0-9-]{2,40}$/.test(road)) {
     return { type: "road", id: road };
   }
+  const project = params?.get("project");
+  if (project && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(project)) {
+    return { type: "project", id: project };
+  }
   return null;
 }
 
@@ -43,6 +47,9 @@ function selectionHref(pathname: string, selection: Selection): string {
   }
   if (selection.type === "road") {
     return `${pathname}?road=${encodeURIComponent(selection.id)}`;
+  }
+  if (selection.type === "project") {
+    return `${pathname}?project=${encodeURIComponent(selection.id)}`;
   }
   return `${pathname}?building=${encodeURIComponent(selection.id)}`;
 }

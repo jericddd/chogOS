@@ -38,6 +38,7 @@ export type Selection =
   | { type: "citizen"; tokenId: string }
   | { type: "building"; id: string }
   | { type: "road"; id: string }
+  | { type: "project"; id: string }
   | null;
 
 export type WorldCanvasHandle = {
@@ -116,6 +117,17 @@ export function WorldCanvas({ snapshot, skewMs, selection, follow, onSelect, onU
       }
       return;
     }
+    if (next.type === "project") {
+      const project = (snap.townProjects ?? []).find((item) => item.id === next.id);
+      if (project?.relatedRoadId) {
+        focusSelection({ type: "road", id: project.relatedRoadId }, zoom);
+      } else if (project?.relatedBuildingId) {
+        focusSelection({ type: "building", id: project.relatedBuildingId }, zoom);
+      }
+      return;
+    }
+    // Imperative camera focus, not render. The frame loop already samples wall time.
+    // eslint-disable-next-line react-hooks/purity -- Date.now is for citizen placement at click time
     const worldS = worldSecondsAt(snap.clock, Date.now() + skew);
     const placed = placeCitizens(
       snap.citizens,

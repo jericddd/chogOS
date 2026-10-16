@@ -26,18 +26,25 @@ import {
   validateRoadStubPlacement,
 } from "@/lib/world/roads";
 import {
+  eligibleProjectCandidates,
+  projectMatchesDecision,
+} from "@/lib/world/projects";
+import {
   ROAD_COLUMNS,
   TOWN_NEED_COLUMNS,
+  TOWN_PROJECT_COLUMNS,
   toBuilding,
   toCitizen,
   toRoad,
   toTownNeed,
+  toTownProject,
   type BuildingRow,
   type CitizenRow,
   type RoadRow,
   type TownNeedRow,
+  type TownProjectRow,
 } from "@/lib/world/rows";
-import type { BuildingView, CitizenView, TownNeedView } from "@/lib/world/types";
+import type { BuildingView, CitizenView, TownNeedView, TownProjectView } from "@/lib/world/types";
 import type { Tile } from "@/lib/world/layout";
 
 export type MindRunStatus =
@@ -267,6 +274,48 @@ async function loadTownNeeds(
   });
 }
 
+async function loadTownProjects(client: Client): Promise<TownProjectView[]> {
+  const { data, error } = await client
+    .from("town_projects")
+    .select(TOWN_PROJECT_COLUMNS)
+    .in("status", ["proposed", "active", "blocked"]);
+  if (error || !data) {
+    return [];
+  }
+  return (data as TownProjectRow[]).map(toTownProject).filter((project): project is TownProjectView => project !== null);
+}
+
+async function linkTownProject(
+  client: Client,
+  projects: readonly TownProjectView[],
+  decision: { action: string; buildKind?: string; roadStubId?: string; projectId?: string | null },
+  decisionId: string,
+  citizenId: string,
+): Promise<void> {
+  const listed = eligibleProjectCandidates(projects);
+  const match = listed.find((candidate) => {
+    const project = projects.find((item) => item.id === candidate.projectId);
+    if (!project || !projectMatchesDecision(project, decision)) {
+      return false;
+    }
+    if (decision.projectId) {
+      return candidate.projectId === decision.projectId;
+    }
+    return true;
+  }) ?? listed.find((candidate) => {
+    const project = projects.find((item) => item.id === candidate.projectId);
+    return project ? projectMatchesDecision(project, decision) : false;
+  });
+  if (!match) {
+    return;
+  }
+  await client.rpc("world_link_town_project", {
+    p_project: match.projectId,
+    p_decision: decisionId,
+    p_citizen: citizenId,
+  });
+}
+
 async function linkTownNeed(
   client: Client,
   needs: readonly TownNeedView[],
@@ -385,6 +434,7 @@ export async function runAiMind(config: AppConfig = readAppConfig()): Promise<Mi
         }));
         const plots = surveyedPlots(overlay);
         const townNeeds = await loadTownNeeds(client, bundle.buildings, bundle.stock, bundle.occupiedPlots, overlay);
+        const townProjects = await loadTownProjects(client);
         const canBuildKinds = feasibleConstructKinds(bundle.buildings, bundle.occupiedPlots, bundle.stock, overlay);
         const eligibleStubs = bundle.roadsReady
           ? eligibleRoadStubs({
@@ -415,6 +465,7 @@ export async function runAiMind(config: AppConfig = readAppConfig()): Promise<Mi
             servesPlotIds: stub.servesPlotIds,
           })),
           completedRoadIds: [...bundle.placedStubIds],
+          townProjects,
         });
         const commitment = contextCommitment(context);
         const messages = decisionMessages(context, config.aiMaxPromptChars);
@@ -576,6 +627,13 @@ export async function runAiMind(config: AppConfig = readAppConfig()): Promise<Mi
               continue;
             }
             report.constructed += 1;
+            await linkTownProject(
+              client,
+              townProjects,
+              parsed.decision,
+              decisionId,
+              row.claimed_citizen_id,
+            );
             report.decisions.push({
               tokenId: row.token_id,
               status: "constructed",
@@ -634,6 +692,7 @@ export async function runAiMind(config: AppConfig = readAppConfig()): Promise<Mi
           }
           report.constructed += 1;
           await linkTownNeed(client, townNeeds, bundle.citizen, "build", buildKind, decisionId);
+          await linkTownProject(client, townProjects, parsed.decision, decisionId, row.claimed_citizen_id);
           const workTarget = result.buildingId ?? plan.plan.buildingId;
           const workProposal: ActionProposal = {
             tokenId: row.token_id,
@@ -743,6 +802,7 @@ export async function runAiMind(config: AppConfig = readAppConfig()): Promise<Mi
           .eq("id", decisionId);
         report.submitted += 1;
         await linkTownNeed(client, townNeeds, bundle.citizen, proposal.action, "none", decisionId);
+        await linkTownProject(client, townProjects, parsed.decision, decisionId, row.claimed_citizen_id);
         report.decisions.push({
           tokenId: row.token_id,
           status: "queued",

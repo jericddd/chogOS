@@ -32,6 +32,21 @@ Six catalog stubs (`east-y2-64` through `east-y2-84`) bridge the connected east 
 
 `road` is not a Phase 5a construct kind. Houses, farms, and workshops still use `world_place_building` on vacant served lots. Newly served lots become eligible for that path. Town needs (Phase 5c) are unchanged.
 
+## 5d — Strategic projects (this slice)
+
+Runtime table `town_projects`. After each tick, `world_advance_town_projects` reads Storehouse stock, town needs, plots, roads, buildings, and house assignments. It may create at most two open projects and advances steps only from those facts. The model receives eligible next actions (`projectId`, `buildKind`, `roadStubId`) and may choose one. It cannot set project status, skip a road, or declare production complete.
+
+Project types in this slice:
+
+| Type | Activates | Completes |
+| --- | --- | --- |
+| `food_production` | Food shortage is actually open | Recovered food, or a new farm's first production batch if one was started |
+| `tool_production` | Tool shortage is actually open | Recovered tools, or a new workshop's first production batch if one was started |
+| `residential` | Citizens without a house assignment exceed unfinished house beds | The new house is actually complete |
+| `territorial` | Reserved lots remain and a catalog stub is unused | That stub is in `world_roads` and its plot is `served` |
+
+A healthy town does not invent a food emergency. It may still open a territorial project. Commons Hall remains a valid shelter; unassigned is not labeled homeless. A queued intent, an AI proposal, or a model sentence does not complete a step. `road` / `house` / `farm` / `workshop` still go through the existing placement RPCs. Town needs still resolve only on recovered stock.
+
 ## 5c — Town needs (this slice)
 
 The engine, not the model, decides whether a shortage exists. `world_evaluate_town_needs()` runs after each `world_tick()` from Storehouse stock and layout facts. One row per need type lives in `town_needs`. Repeating the same stock does not insert another row or another event.
@@ -63,7 +78,8 @@ After merge, paste each new migration into the hosted SQL editor (same way as Ph
 - Phase 5a: `supabase/migrations/20261015200000_phase5a_civil_works.sql`
 - Phase 5c: `supabase/migrations/20261015220000_phase5c_town_needs.sql`
 - Phase 5b: `supabase/migrations/20261016200000_phase5b_roads.sql`
+- Phase 5d: `supabase/migrations/20261016220000_phase5d_town_projects.sql`
 
-Phase 5b SQL is **not** applied to hosted Supabase by this pull request. Paste it after review. Do not rerun `world:init` or `verify_cutover`.
+Phase 5d SQL is **not** applied to hosted Supabase by this pull request. Paste it after review. Do not rerun `world:init` or `verify_cutover`.
 
 The GitHub Actions 30-minute mind poke is unchanged.

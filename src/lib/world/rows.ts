@@ -13,6 +13,13 @@ import {
   type TownNeedStatus,
   type TownNeedType,
   type TownNeedView,
+  type TownProjectBuildKind,
+  type TownProjectEvidence,
+  type TownProjectStatus,
+  type TownProjectStepStatus,
+  type TownProjectStepView,
+  type TownProjectType,
+  type TownProjectView,
   type TownRecommendedAction,
   type WorldActivity,
   type WorldEventView,
@@ -399,6 +406,166 @@ export function toTownNeed(row: TownNeedRow): TownNeedView | null {
     blocker: row.blocker,
     recommendedAction: asRecommendedAction(row.recommended_action),
     recommendedKind: asRecommendedKind(row.recommended_kind),
+    lastEventId: row.last_event_id,
+    lastDecisionId: row.last_decision_id,
+  };
+}
+
+export const TOWN_PROJECT_COLUMNS =
+  "id, project_type, objective_key, name, description, status, priority, need_type, justification, steps, current_step_id, current_step_index, blocker, recommended_action, recommended_kind, recommended_stub_id, related_building_id, related_plot_id, related_road_id, related_citizen_id, evidence, created_at, updated_at, completed_at, last_evaluated_at, last_event_id, last_decision_id";
+
+export type TownProjectRow = {
+  id: string;
+  project_type: string;
+  objective_key: string;
+  name: string;
+  description: string;
+  status: string;
+  priority: Num;
+  need_type: string | null;
+  justification: string;
+  steps: unknown;
+  current_step_id: string | null;
+  current_step_index: Num;
+  blocker: string | null;
+  recommended_action: string | null;
+  recommended_kind: string | null;
+  recommended_stub_id: string | null;
+  related_building_id: string | null;
+  related_plot_id: string | null;
+  related_road_id: string | null;
+  related_citizen_id: string | null;
+  evidence: unknown;
+  created_at: string | null;
+  updated_at: string | null;
+  completed_at: string | null;
+  last_evaluated_at: string | null;
+  last_event_id: string | null;
+  last_decision_id: string | null;
+};
+
+function asProjectType(value: string): TownProjectType | null {
+  return value === "food_production" ||
+    value === "tool_production" ||
+    value === "residential" ||
+    value === "territorial"
+    ? value
+    : null;
+}
+
+function asProjectStatus(value: string): TownProjectStatus {
+  return value === "proposed" ||
+    value === "active" ||
+    value === "blocked" ||
+    value === "completed" ||
+    value === "abandoned" ||
+    value === "cancelled"
+    ? value
+    : "proposed";
+}
+
+function asStepStatus(value: string): TownProjectStepStatus {
+  return value === "pending" ||
+    value === "eligible" ||
+    value === "blocked" ||
+    value === "completed" ||
+    value === "failed" ||
+    value === "skipped"
+    ? value
+    : "pending";
+}
+
+function asProjectKind(value: string | null): TownProjectBuildKind {
+  if (value === "road") {
+    return "road";
+  }
+  return asRecommendedKind(value);
+}
+
+function asTextOrNull(value: unknown): string | null {
+  return typeof value === "string" && value.length > 0 ? value : null;
+}
+
+function asProjectEvidence(value: unknown): TownProjectEvidence {
+  const base = asEvidence(value);
+  const body = value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
+  const stubs = Array.isArray(body.placedStubIds) ? body.placedStubIds.filter((item): item is string => typeof item === "string") : [];
+  return {
+    ...base,
+    houseBeds: num((body.houseBeds as Num) ?? 0),
+    pendingHouseBeds: num((body.pendingHouseBeds as Num) ?? 0),
+    assignedResidents: num((body.assignedResidents as Num) ?? 0),
+    unassignedCitizens: num((body.unassignedCitizens as Num) ?? 0),
+    farmBatches: num((body.farmBatches as Num) ?? 0),
+    workshopBatches: num((body.workshopBatches as Num) ?? 0),
+    placedStubIds: stubs.slice(0, 12),
+  };
+}
+
+function asSteps(value: unknown): TownProjectStepView[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  const steps: TownProjectStepView[] = [];
+  for (const item of value) {
+    if (!item || typeof item !== "object" || Array.isArray(item)) {
+      continue;
+    }
+    const row = item as Record<string, unknown>;
+    const id = asTextOrNull(row.id);
+    if (!id) {
+      continue;
+    }
+    steps.push({
+      id,
+      title: typeof row.title === "string" ? row.title : id,
+      status: asStepStatus(String(row.status ?? "pending")),
+      action: asRecommendedAction(typeof row.action === "string" ? row.action : null),
+      buildKind: asProjectKind(typeof row.buildKind === "string" ? row.buildKind : null),
+      roadStubId: asTextOrNull(row.roadStubId),
+      plotId: asTextOrNull(row.plotId),
+      buildingId: asTextOrNull(row.buildingId),
+      blocker: asTextOrNull(row.blocker),
+      skipped: row.skipped === true,
+      completedAt: asTextOrNull(row.completedAt),
+      eventId: asTextOrNull(row.eventId),
+    });
+  }
+  return steps;
+}
+
+export function toTownProject(row: TownProjectRow): TownProjectView | null {
+  const projectType = asProjectType(row.project_type);
+  if (!projectType) {
+    return null;
+  }
+  const needType = row.need_type ? asNeedType(row.need_type) : null;
+  return {
+    id: row.id,
+    projectType,
+    objectiveKey: row.objective_key,
+    name: row.name,
+    description: row.description,
+    status: asProjectStatus(row.status),
+    priority: num(row.priority),
+    needType,
+    justification: row.justification,
+    steps: asSteps(row.steps),
+    currentStepId: row.current_step_id,
+    currentStepIndex: num(row.current_step_index),
+    blocker: row.blocker,
+    recommendedAction: asRecommendedAction(row.recommended_action),
+    recommendedKind: asProjectKind(row.recommended_kind),
+    recommendedStubId: row.recommended_stub_id,
+    relatedBuildingId: row.related_building_id,
+    relatedPlotId: row.related_plot_id,
+    relatedRoadId: row.related_road_id,
+    relatedCitizenId: row.related_citizen_id,
+    evidence: asProjectEvidence(row.evidence),
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    completedAt: row.completed_at,
+    lastEvaluatedAt: row.last_evaluated_at,
     lastEventId: row.last_event_id,
     lastDecisionId: row.last_decision_id,
   };

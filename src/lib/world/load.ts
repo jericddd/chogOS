@@ -8,6 +8,7 @@ import {
   EVENT_COLUMNS,
   ROAD_COLUMNS,
   TOWN_NEED_COLUMNS,
+  TOWN_PROJECT_COLUMNS,
   WORLD_STATE_COLUMNS,
   toBuilding,
   toCitizen,
@@ -15,11 +16,13 @@ import {
   toEvent,
   toRoad,
   toTownNeed,
+  toTownProject,
   type BuildingRow,
   type CitizenRow,
   type EventRow,
   type RoadRow,
   type TownNeedRow,
+  type TownProjectRow,
   type WorldStateRow,
 } from "@/lib/world/rows";
 import type {
@@ -28,6 +31,7 @@ import type {
   EventPage,
   RoadOverlayView,
   TownNeedView,
+  TownProjectView,
   WorldEventView,
   WorldLive,
   WorldLoad,
@@ -190,14 +194,34 @@ async function readRoads(client: SupabaseClient): Promise<{ ready: boolean; road
   };
 }
 
+async function readTownProjects(client: SupabaseClient): Promise<{ ready: boolean; projects: TownProjectView[] }> {
+  const { data, error } = await client
+    .from("town_projects")
+    .select(TOWN_PROJECT_COLUMNS)
+    .order("priority", { ascending: false });
+  if (error) {
+    if (missingTable(error)) {
+      return { ready: false, projects: [] };
+    }
+    fail(error, "town projects");
+  }
+  return {
+    ready: true,
+    projects: ((data ?? []) as TownProjectRow[])
+      .map(toTownProject)
+      .filter((project): project is TownProjectView => project !== null),
+  };
+}
+
 async function readSnapshot(client: SupabaseClient, events: Promise<WorldEventView[]>): Promise<WorldSnapshot> {
-  const [state, buildings, citizens, list, townNeeds, roads] = await Promise.all([
+  const [state, buildings, citizens, list, townNeeds, roads, townProjects] = await Promise.all([
     readState(client),
     readBuildings(client),
     readCitizens(client),
     events,
     readTownNeeds(client),
     readRoads(client),
+    readTownProjects(client),
   ]);
   return {
     status: "ok",
@@ -210,6 +234,8 @@ async function readSnapshot(client: SupabaseClient, events: Promise<WorldEventVi
     townNeedsReady: townNeeds.ready,
     roads: roads.roads,
     roadsReady: roads.ready,
+    townProjects: townProjects.projects,
+    townProjectsReady: townProjects.ready,
   };
 }
 
