@@ -27,12 +27,18 @@ import {
   drawCitizen,
   drawLabel,
   drawNight,
+  drawRoadSelection,
   drawSelection,
   drawStaticLayer,
   staticLayerKey,
 } from "@/components/world/scene/draw";
+import { completeOverlayTiles } from "@/lib/world/roads";
 
-export type Selection = { type: "citizen"; tokenId: string } | { type: "building"; id: string } | null;
+export type Selection =
+  | { type: "citizen"; tokenId: string }
+  | { type: "building"; id: string }
+  | { type: "road"; id: string }
+  | null;
 
 export type WorldCanvasHandle = {
   zoom: (factor: number) => void;
@@ -101,8 +107,22 @@ export function WorldCanvas({ snapshot, skewMs, selection, follow, onSelect, onU
       }
       return;
     }
+    if (next.type === "road") {
+      const road = (snap.roads ?? []).find((item) => item.id === next.id);
+      const tile = road?.tiles[0];
+      if (tile) {
+        target.current = focusOn(cam, view.current, tile.x + 0.5, tile.y + 0.5, scale);
+        userMoved.current = true;
+      }
+      return;
+    }
     const worldS = worldSecondsAt(snap.clock, Date.now() + skew);
-    const placed = placeCitizens(snap.citizens, buildingMap(snap), worldS).find((p) => p.tokenId === next.tokenId);
+    const placed = placeCitizens(
+      snap.citizens,
+      buildingMap(snap),
+      worldS,
+      completeOverlayTiles(snap.roads ?? []),
+    ).find((p) => p.tokenId === next.tokenId);
     if (placed) {
       target.current = focusOn(cam, view.current, placed.x, placed.y - 0.3, scale);
       userMoved.current = true;
@@ -174,7 +194,8 @@ export function WorldCanvas({ snapshot, skewMs, selection, follow, onSelect, onU
       const { snapshot: snap, skewMs: skew, selection: sel, follow: following } = live.current;
       const byId = buildingMap(snap);
       const worldS = worldSecondsAt(snap.clock, Date.now() + skew);
-      const placed = placeCitizens(snap.citizens, byId, worldS);
+      const overlay = completeOverlayTiles(snap.roads ?? []);
+      const placed = placeCitizens(snap.citizens, byId, worldS, overlay);
       placements.current = placed;
 
       let cam = camera.current ?? fitCamera(view.current);
@@ -193,14 +214,14 @@ export function WorldCanvas({ snapshot, skewMs, selection, follow, onSelect, onU
       }
       camera.current = cam;
 
-      const key = staticLayerKey(snap.buildings);
+      const key = staticLayerKey(snap.buildings, overlay);
       if (!layer || layer.key !== key) {
         const off = document.createElement("canvas");
         off.width = WORLD_PX_W;
         off.height = WORLD_PX_H;
         const offCtx = off.getContext("2d");
         if (offCtx) {
-          drawStaticLayer(offCtx, snap.buildings);
+          drawStaticLayer(offCtx, snap.buildings, overlay);
         }
         layer = { key, canvas: off };
       }
@@ -248,6 +269,11 @@ export function WorldCanvas({ snapshot, skewMs, selection, follow, onSelect, onU
       } else if (hover?.type === "building") {
         drawSelection(ctx, byId.get(hover.id), 0);
       }
+      if (sel?.type === "road") {
+        drawRoadSelection(ctx, (snap.roads ?? []).find((item) => item.id === sel.id), t);
+      } else if (hover?.type === "road") {
+        drawRoadSelection(ctx, (snap.roads ?? []).find((item) => item.id === hover.id), 0);
+      }
       if (sel?.type === "citizen") {
         const p = placed.find((item) => item.tokenId === sel.tokenId);
         const c = citizens.get(sel.tokenId);
@@ -274,7 +300,11 @@ export function WorldCanvas({ snapshot, skewMs, selection, follow, onSelect, onU
   }, []);
 
   useEffect(() => {
-    const key = selection ? (selection.type === "citizen" ? `c:${selection.tokenId}` : `b:${selection.id}`) : "";
+    const key = selection
+      ? selection.type === "citizen"
+        ? `c:${selection.tokenId}`
+        : `${selection.type}:${selection.id}`
+      : "";
     if (key) {
       focusSelection(selection);
     }
@@ -302,7 +332,13 @@ export function WorldCanvas({ snapshot, skewMs, selection, follow, onSelect, onU
       if (!cam) {
         return null;
       }
-      return hitTest(screenToTile(cam, x, y), placements.current, live.current.snapshot.buildings, cam);
+      return hitTest(
+        screenToTile(cam, x, y),
+        placements.current,
+        live.current.snapshot.buildings,
+        cam,
+        live.current.snapshot.roads ?? [],
+      );
     };
 
     const pinchInfo = () => {
@@ -504,6 +540,17 @@ function Tooltip({ tip, snapshot }: { tip: Tip; snapshot: WorldSnapshot }) {
     }
     title = citizenLabel(c);
     lines = [`${c.role ? ROLE_LABEL[c.role] : "No job"} · ${c.origin === "founding" ? "Founding" : "Community"}`, describeCitizenNow(c, buildings)];
+  } else if (tip.hit.type === "road") {
+    const roadId = tip.hit.id;
+    const road = (snapshot.roads ?? []).find((item) => item.id === roadId);
+    if (!road) {
+      return null;
+    }
+    title = road.name;
+    lines = [
+      `Catalog ${road.stubId} · ${road.status}`,
+      road.servedPlotIds.length > 0 ? `Serves ${road.servedPlotIds.join(", ")}` : "No newly served lots recorded",
+    ];
   } else {
     const id = tip.hit.id;
     const b = buildings.get(id);

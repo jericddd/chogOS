@@ -63,6 +63,8 @@ function snapshot(events: WorldEventView[]): WorldSnapshot {
     latestSeq: events[0]?.seq ?? 0,
     townNeeds: [],
     townNeedsReady: false,
+    roads: [],
+    roadsReady: false,
   };
 }
 
@@ -292,6 +294,16 @@ describe("town needs inspector", () => {
     );
     expect(screen.getByText(/Town needs are not in this database yet/)).toBeTruthy();
     expect(screen.queryByText(/Food supply is running low/)).toBeNull();
+  });
+
+  it("shows whether the road overlay has been applied", () => {
+    render(<WorldStatus snapshot={snapshot([])} skewMs={0} link="live" realtime="subscribed" />);
+    expect(screen.getByText(/Road overlay is not in this database yet/)).toBeTruthy();
+    cleanup();
+    render(
+      <WorldStatus snapshot={{ ...snapshot([]), roadsReady: true }} skewMs={0} link="live" realtime="subscribed" />,
+    );
+    expect(screen.getByText(/No constructed road spurs yet/)).toBeTruthy();
   });
 
   it("shows no critical shortage when persisted needs are healthy", () => {

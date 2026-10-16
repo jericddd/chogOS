@@ -3,6 +3,7 @@ import { type PersonalityTraits, type RankedAction } from "@/lib/ai/personality"
 import { precheckAction, WORLD_ACTIONS, type ResourceStock, type WorldAction } from "@/lib/world/actions";
 import { worldHour } from "@/lib/world/clock";
 import { CONSTRUCT_KINDS, type ConstructKind } from "@/lib/world/layout";
+import { ROAD_STUB_STONE, ROAD_STUB_WOOD } from "@/lib/world/roads";
 import {
   FOOD_SHORTAGE_ACTIVATE,
   TOOLS_SHORTAGE_ACTIVATE,
@@ -52,6 +53,13 @@ export type ConstructionContext = {
   suggestedBuildKind: ConstructKind | "none";
   counts: Record<ConstructKind, number>;
   underConstruction: Array<{ id: string; kind: string; name: string; progress: number | null }>;
+  roads: {
+    canBuildRoad: boolean;
+    wood: number;
+    stone: number;
+    eligibleStubs: Array<{ id: string; name: string; servesPlotIds: readonly string[] }>;
+    completedStubIds: string[];
+  };
 };
 
 export type DecisionContext = {
@@ -125,6 +133,8 @@ function constructionFromBuildings(
   reservedLots: number,
   stock: { food: number; tools: number },
   needs: readonly TownNeedView[],
+  eligibleStubs: ConstructionContext["roads"]["eligibleStubs"],
+  completedStubIds: string[],
 ): ConstructionContext {
   const counts: Record<ConstructKind, number> = { house: 0, farm: 0, workshop: 0 };
   const underConstruction: ConstructionContext["underConstruction"] = [];
@@ -142,8 +152,9 @@ function constructionFromBuildings(
     }
   }
   const kinds = [...canBuildKinds];
+  const canBuildRoad = eligibleStubs.length > 0;
   return {
-    canBuild: kinds.length > 0,
+    canBuild: kinds.length > 0 || canBuildRoad,
     vacantServedLots,
     reservedLots,
     validKinds: CONSTRUCT_KINDS,
@@ -151,6 +162,13 @@ function constructionFromBuildings(
     suggestedBuildKind: preferredBuildKind(stock, needs, kinds),
     counts,
     underConstruction: underConstruction.slice(0, 8),
+    roads: {
+      canBuildRoad,
+      wood: ROAD_STUB_WOOD,
+      stone: ROAD_STUB_STONE,
+      eligibleStubs: eligibleStubs.slice(0, 8),
+      completedStubIds: completedStubIds.slice(0, 8),
+    },
   };
 }
 
@@ -169,12 +187,15 @@ export function buildDecisionContext(input: {
   reservedLots?: number;
   townNeeds?: TownNeedView[];
   canBuildKinds?: ConstructKind[];
+  eligibleRoadStubs?: ConstructionContext["roads"]["eligibleStubs"];
+  completedRoadIds?: string[];
 }): DecisionContext {
   const feasible = listFeasibleActions(input.citizen, input.buildings, input.worldS, input.stock);
   const canBuildKinds =
     input.canBuildKinds ?? (input.canBuild ? [...CONSTRUCT_KINDS] : []);
-  const canBuild = canBuildKinds.length > 0;
-  const vacantServedLots = input.vacantServedLots ?? (canBuild ? 1 : 0);
+  const eligibleStubs = input.eligibleRoadStubs ?? [];
+  const canBuild = canBuildKinds.length > 0 || eligibleStubs.length > 0;
+  const vacantServedLots = input.vacantServedLots ?? (canBuildKinds.length > 0 ? 1 : 0);
   const reservedLots = input.reservedLots ?? 0;
   const townNeeds =
     input.townNeeds ??
@@ -206,6 +227,8 @@ export function buildDecisionContext(input: {
     reservedLots,
     input.stock,
     townNeeds,
+    eligibleStubs,
+    input.completedRoadIds ?? [],
   );
   return {
     tokenId: input.citizen.tokenId,
@@ -280,8 +303,8 @@ export function decisionMessages(context: DecisionContext, maxChars: number): { 
     "You decide the next supported action for one chogOS citizen.",
     "Return JSON only. Do not write SQL, code, URLs, or contract calls.",
     "Choose only from the feasible actions.",
-    "For construction, action=build and buildKind must be house, farm, or workshop.",
-    "Do not invent coordinates, lots, costs, or completion. The server places the building.",
+    "For construction, action=build and buildKind must be house, farm, workshop, or road.",
+    "For a road, also set roadStubId to one of the listed eligible stub ids. Do not invent coordinates, tiles, lots, or costs. The server places the segment.",
     "Use the real storehouse stock and the listed town needs. Those needs are engine facts, not suggestions you may invent.",
     "When a listed need is active and a relevant feasible action exists, choose that action instead of an ordinary social visit.",
     "Prefer a farm when food is short and a workshop when tools are short, but only if construction is listed as available. Do not propose a building when materials or lots are missing.",
@@ -327,6 +350,7 @@ export function decisionMessages(context: DecisionContext, maxChars: number): { 
     suggested: context.suggested,
     ranked: context.ranked,
     construction: context.construction,
+    roads: context.construction.roads,
   });
 
   if (system.length + user.length <= maxChars) {

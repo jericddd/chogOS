@@ -27,6 +27,10 @@ function parseSelection(params: URLSearchParams | null): Selection {
   if (building && /^[a-z0-9-]{2,40}$/.test(building)) {
     return { type: "building", id: building };
   }
+  const road = params?.get("road");
+  if (road && /^[a-z0-9-]{2,40}$/.test(road)) {
+    return { type: "road", id: road };
+  }
   return null;
 }
 
@@ -34,9 +38,13 @@ function selectionHref(pathname: string, selection: Selection): string {
   if (!selection) {
     return pathname;
   }
-  return selection.type === "citizen"
-    ? `${pathname}?citizen=${encodeURIComponent(selection.tokenId)}`
-    : `${pathname}?building=${encodeURIComponent(selection.id)}`;
+  if (selection.type === "citizen") {
+    return `${pathname}?citizen=${encodeURIComponent(selection.tokenId)}`;
+  }
+  if (selection.type === "road") {
+    return `${pathname}?road=${encodeURIComponent(selection.id)}`;
+  }
+  return `${pathname}?building=${encodeURIComponent(selection.id)}`;
 }
 
 const UNAVAILABLE_TITLE: Record<WorldUnavailable["status"], string> = {
@@ -70,7 +78,9 @@ export function LivingWorld({ initial, realtime }: { initial: WorldLoad; realtim
   const canvas = useRef<WorldCanvasHandle>(null);
   const stage = useRef<HTMLDivElement>(null);
   const now = useNow(5_000);
-  const selectionKey = selection ? `${selection.type}:${selection.type === "citizen" ? selection.tokenId : selection.id}` : "";
+  const selectionKey = selection
+    ? `${selection.type}:${selection.type === "citizen" ? selection.tokenId : selection.id}`
+    : "";
   const [seenKey, setSeenKey] = useState(selectionKey);
 
   if (selectionKey !== seenKey) {
@@ -97,7 +107,15 @@ export function LivingWorld({ initial, realtime }: { initial: WorldLoad; realtim
       select(null);
       return;
     }
-    select(hit.type === "citizen" ? { type: "citizen", tokenId: hit.tokenId } : { type: "building", id: hit.id });
+    if (hit.type === "citizen") {
+      select({ type: "citizen", tokenId: hit.tokenId });
+      return;
+    }
+    if (hit.type === "road") {
+      select({ type: "road", id: hit.id });
+      return;
+    }
+    select({ type: "building", id: hit.id });
   };
 
   const feedFilter: EventFilter = {};

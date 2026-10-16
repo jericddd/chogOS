@@ -21,15 +21,24 @@ import {
 } from "@/lib/world/needs";
 import { planConstruction, surveyedPlots, type ConstructKind } from "@/lib/world/placement";
 import {
+  completeOverlayTiles,
+  eligibleRoadStubs,
+  validateRoadStubPlacement,
+} from "@/lib/world/roads";
+import {
+  ROAD_COLUMNS,
   TOWN_NEED_COLUMNS,
   toBuilding,
   toCitizen,
+  toRoad,
   toTownNeed,
   type BuildingRow,
   type CitizenRow,
+  type RoadRow,
   type TownNeedRow,
 } from "@/lib/world/rows";
 import type { BuildingView, CitizenView, TownNeedView } from "@/lib/world/types";
+import type { Tile } from "@/lib/world/layout";
 
 export type MindRunStatus =
   | "disabled"
@@ -154,8 +163,11 @@ async function loadCitizenBundle(client: Client, citizenId: string): Promise<{
   goals: Array<{ id: string; kind: string; title: string; status: string; progress: number }>;
   memories: Array<{ content: string; outcome: string | null; importance: number; relatedBuildingId: string | null }>;
   occupiedPlots: Set<string>;
+  overlayTiles: Tile[];
+  placedStubIds: Set<string>;
+  roadsReady: boolean;
 } | null> {
-  const [state, buildingsRes, world, personality, skills, goals, memories, plots] = await Promise.all([
+  const [state, buildingsRes, world, personality, skills, goals, memories, plots, roadsRes] = await Promise.all([
     client
       .from("citizen_world_state")
       .select("*, citizens!inner(token_id, metadata_name, origin)")
@@ -177,6 +189,7 @@ async function loadCitizenBundle(client: Client, citizenId: string): Promise<{
       .order("importance", { ascending: false })
       .limit(8),
     client.from("world_plots").select("id, status"),
+    client.from("world_roads").select(ROAD_COLUMNS),
   ]);
   if (!state.data || !buildingsRes.data || !world.data || !personality.data) {
     return null;
@@ -187,6 +200,10 @@ async function loadCitizenBundle(client: Client, citizenId: string): Promise<{
   }
   const buildings = (buildingsRes.data as BuildingRow[]).map(toBuilding);
   const store = buildings.find((building) => building.id === "storehouse")?.stock ?? {};
+  const roadsReady = !roadsRes.error;
+  const overlayViews = roadsReady
+    ? ((roadsRes.data ?? []) as RoadRow[]).map(toRoad).filter((road): road is NonNullable<ReturnType<typeof toRoad>> => road !== null)
+    : [];
   return {
     citizen,
     buildings,
@@ -221,6 +238,9 @@ async function loadCitizenBundle(client: Client, citizenId: string): Promise<{
         .filter((plot) => plot.status !== "vacant")
         .map((plot) => plot.id),
     ),
+    overlayTiles: completeOverlayTiles(overlayViews),
+    placedStubIds: new Set(overlayViews.map((road) => road.id)),
+    roadsReady,
   };
 }
 
@@ -229,12 +249,13 @@ async function loadTownNeeds(
   buildings: BuildingView[],
   stock: { food: number; wood: number; stone: number; tools: number },
   occupiedPlots: Set<string>,
+  overlay: readonly Tile[] = [],
 ): Promise<TownNeedView[]> {
   const { data, error } = await client.from("town_needs").select(TOWN_NEED_COLUMNS);
   if (!error && data) {
     return (data as TownNeedRow[]).map(toTownNeed).filter((need): need is TownNeedView => need !== null);
   }
-  const plots = surveyedPlots();
+  const plots = surveyedPlots(overlay);
   return evaluateTownNeeds({
     food: stock.food,
     wood: stock.wood,
@@ -355,9 +376,24 @@ export async function runAiMind(config: AppConfig = readAppConfig()): Promise<Mi
           continue;
         }
 
-        const plots = surveyedPlots();
-        const townNeeds = await loadTownNeeds(client, bundle.buildings, bundle.stock, bundle.occupiedPlots);
-        const canBuildKinds = feasibleConstructKinds(bundle.buildings, bundle.occupiedPlots, bundle.stock);
+        const overlay = bundle.overlayTiles;
+        const buildingRects = bundle.buildings.map((building) => ({
+          x: building.x,
+          y: building.y,
+          w: building.w,
+          h: building.h,
+        }));
+        const plots = surveyedPlots(overlay);
+        const townNeeds = await loadTownNeeds(client, bundle.buildings, bundle.stock, bundle.occupiedPlots, overlay);
+        const canBuildKinds = feasibleConstructKinds(bundle.buildings, bundle.occupiedPlots, bundle.stock, overlay);
+        const eligibleStubs = bundle.roadsReady
+          ? eligibleRoadStubs({
+              placedStubIds: bundle.placedStubIds,
+              overlayTiles: overlay,
+              buildings: buildingRects,
+              stock: bundle.stock,
+            })
+          : [];
         const context = buildDecisionContext({
           citizenId: row.claimed_citizen_id,
           citizen: bundle.citizen,
@@ -368,11 +404,17 @@ export async function runAiMind(config: AppConfig = readAppConfig()): Promise<Mi
           skills: bundle.skills,
           goals: bundle.goals,
           memories: bundle.memories,
-          canBuild: canBuildKinds.length > 0,
+          canBuild: canBuildKinds.length > 0 || eligibleStubs.length > 0,
           canBuildKinds,
           townNeeds,
           vacantServedLots: plots.filter((plot) => plot.served && !bundle.occupiedPlots.has(plot.id)).length,
           reservedLots: plots.filter((plot) => !plot.served).length,
+          eligibleRoadStubs: eligibleStubs.map((stub) => ({
+            id: stub.id,
+            name: stub.name,
+            servesPlotIds: stub.servesPlotIds,
+          })),
+          completedRoadIds: [...bundle.placedStubIds],
         });
         const commitment = contextCommitment(context);
         const messages = decisionMessages(context, config.aiMaxPromptChars);
@@ -487,7 +529,61 @@ export async function runAiMind(config: AppConfig = readAppConfig()): Promise<Mi
             });
             continue;
           }
-          if (!canBuildKinds.includes(buildKind)) {
+          if (buildKind === "road") {
+            const stubId = parsed.decision.roadStubId;
+            if (stubId === "none") {
+              await client
+                .from("ai_decisions")
+                .update({ status: "rejected", validation_result: "unknown road stub" })
+                .eq("id", decisionId);
+              report.rejected += 1;
+              report.decisions.push({ tokenId: row.token_id, status: "rejected", detail: "unknown road stub" });
+              continue;
+            }
+            const check = validateRoadStubPlacement({
+              stubId,
+              placedStubIds: bundle.placedStubIds,
+              overlayTiles: overlay,
+              buildings: buildingRects,
+            });
+            if (!check.ok) {
+              await client
+                .from("ai_decisions")
+                .update({ status: "rejected", validation_result: check.reason })
+                .eq("id", decisionId);
+              report.rejected += 1;
+              report.decisions.push({ tokenId: row.token_id, status: "rejected", detail: check.reason });
+              continue;
+            }
+            const { data: placedRoad, error: roadError } = await client.rpc("world_place_road", {
+              p_stub: stubId,
+              p_source: "ai",
+              p_decision: decisionId,
+              p_citizen: row.claimed_citizen_id,
+            });
+            const roadResult = placedRoad as { ok?: boolean; reason?: string } | null;
+            if (roadError || !roadResult?.ok) {
+              await client
+                .from("ai_decisions")
+                .update({ status: "rejected", validation_result: roadResult?.reason ?? "placement rejected" })
+                .eq("id", decisionId);
+              report.rejected += 1;
+              report.decisions.push({
+                tokenId: row.token_id,
+                status: "rejected",
+                detail: roadResult?.reason ?? "placement rejected",
+              });
+              continue;
+            }
+            report.constructed += 1;
+            report.decisions.push({
+              tokenId: row.token_id,
+              status: "constructed",
+              detail: `Placed ${check.stub.name}`,
+            });
+            continue;
+          }
+          if (!canBuildKinds.includes(buildKind as ConstructKind)) {
             await client
               .from("ai_decisions")
               .update({ status: "rejected", validation_result: "construction is not available for that kind" })
@@ -500,7 +596,7 @@ export async function runAiMind(config: AppConfig = readAppConfig()): Promise<Mi
             });
             continue;
           }
-          const plan = planConstruction(bundle.buildings, bundle.occupiedPlots, buildKind as ConstructKind);
+          const plan = planConstruction(bundle.buildings, bundle.occupiedPlots, buildKind as ConstructKind, overlay);
           if (!plan.ok) {
             await client
               .from("ai_decisions")

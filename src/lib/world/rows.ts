@@ -1,4 +1,5 @@
 import { CONSTRUCT_KINDS, type BuildingKind, type ConstructKind, type WorkRole } from "@/lib/world/layout";
+import { roadStubById } from "@/lib/world/roads";
 import {
   EVENT_CATEGORIES,
   EVENT_SOURCES,
@@ -7,6 +8,7 @@ import {
   type ClockView,
   type EventCategory,
   type EventSource,
+  type RoadOverlayView,
   type TownNeedEvidence,
   type TownNeedStatus,
   type TownNeedType,
@@ -317,6 +319,66 @@ function asEvidence(value: unknown): TownNeedEvidence {
         kind: String(item.kind ?? ""),
         progress: numOrNull(item.progress as Num | undefined),
       })),
+  };
+}
+
+export const ROAD_COLUMNS = "id, stub_id, tiles, status, served_plot_ids, source, completed_at";
+
+export type RoadRow = {
+  id: string;
+  stub_id: string;
+  tiles: unknown;
+  status: string;
+  served_plot_ids: unknown;
+  source: string;
+  completed_at: string | null;
+};
+
+function asTiles(value: unknown): Array<{ x: number; y: number }> {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  const tiles: Array<{ x: number; y: number }> = [];
+  for (const item of value) {
+    if (!item || typeof item !== "object" || Array.isArray(item)) {
+      continue;
+    }
+    const x = Number((item as { x?: unknown }).x);
+    const y = Number((item as { y?: unknown }).y);
+    if (!Number.isInteger(x) || !Number.isInteger(y)) {
+      continue;
+    }
+    tiles.push({ x, y });
+  }
+  return tiles;
+}
+
+function asIdList(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value.filter((item): item is string => typeof item === "string" && item.length > 0);
+}
+
+export function toRoad(row: RoadRow): RoadOverlayView | null {
+  if (row.status !== "complete") {
+    return null;
+  }
+  const tiles = asTiles(row.tiles);
+  if (tiles.length === 0) {
+    return null;
+  }
+  const source: EventSource = row.source === "ai" || row.source === "system" ? row.source : "system";
+  const stub = roadStubById(row.stub_id);
+  return {
+    id: row.id,
+    stubId: row.stub_id,
+    name: stub?.name ?? row.id,
+    tiles,
+    status: "complete",
+    servedPlotIds: asIdList(row.served_plot_ids),
+    completedAt: row.completed_at,
+    source,
   };
 }
 

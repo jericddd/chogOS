@@ -330,6 +330,7 @@ export function feasibleConstructKinds(
   buildings: readonly Pick<BuildingView, "id" | "kind" | "name" | "x" | "y" | "w" | "h" | "doorX" | "doorY" | "status">[],
   occupiedPlotIds: ReadonlySet<string>,
   stock: { wood: number; stone: number },
+  overlay: readonly { x: number; y: number }[] = [],
 ): ConstructKind[] {
   if (!materialsAllowBuilderShift(stock)) {
     return [];
@@ -341,7 +342,7 @@ export function feasibleConstructKinds(
     if (under.has(kind)) {
       return false;
     }
-    return planConstruction(buildings, occupiedPlotIds, kind).ok;
+    return planConstruction(buildings, occupiedPlotIds, kind, overlay).ok;
   });
 }
 

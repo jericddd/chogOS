@@ -323,6 +323,22 @@ describe("scene placement", () => {
     const farm = byId.get("north-farm")!;
     expect(hitTest({ x: farm.x + 0.2, y: farm.y + 0.2 }, placed, buildings, cam)).toEqual({ type: "building", id: "north-farm" });
     expect(hitTest({ x: 30, y: 39.5 }, placed, buildings, cam)).toBeNull();
+    const roads = [
+      {
+        id: "east-y2-64",
+        stubId: "east-y2-64",
+        name: "East spur to plot 64,2",
+        tiles: [
+          { x: 65, y: 6 },
+          { x: 65, y: 5 },
+        ],
+        status: "complete" as const,
+        servedPlotIds: ["plot-64-2"],
+        completedAt: null,
+        source: "system" as const,
+      },
+    ];
+    expect(hitTest({ x: 65.2, y: 5.2 }, placed, buildings, cam, roads)).toEqual({ type: "road", id: "east-y2-64" });
     expect(TILE).toBe(16);
   });
 });

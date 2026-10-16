@@ -7,7 +7,6 @@ import {
   ROADS,
   inBounds,
   inRect,
-  isRoad,
   isWaterTile,
   pathOn,
   rectsOverlap,
@@ -18,6 +17,7 @@ import {
   type RouteRow,
   type Tile,
 } from "@/lib/world/layout";
+import { isRoadAt } from "@/lib/world/roads";
 import type { BuildingView } from "@/lib/world/types";
 
 export type { ConstructKind };
@@ -32,16 +32,16 @@ function plotId(rect: Rect): string {
   return `plot-${rect.x}-${rect.y}`;
 }
 
-/** Lots whose door can touch a road. East y=2 lots are reserved until roads reach them. */
-export function surveyedPlots(): SurveyedPlot[] {
+/** Lots whose door can touch a road. East y=2 lots are reserved until overlay roads reach them. */
+export function surveyedPlots(overlay: readonly Tile[] = []): SurveyedPlot[] {
   return PLOTS.map((rect) => ({
     id: plotId(rect),
     rect,
-    served: doorsTouchingRoad(rect).length > 0,
+    served: doorsTouchingRoad(rect, overlay).length > 0,
   }));
 }
 
-export function doorsTouchingRoad(rect: Rect): Tile[] {
+export function doorsTouchingRoad(rect: Rect, overlay: readonly Tile[] = []): Tile[] {
   const doors: Tile[] = [];
   for (let y = rect.y; y < rect.y + rect.h; y += 1) {
     for (let x = rect.x; x < rect.x + rect.w; x += 1) {
@@ -53,7 +53,7 @@ export function doorsTouchingRoad(rect: Rect): Tile[] {
       ];
       if (
         neighbors.some(
-          (tile) => inBounds(tile.x, tile.y) && isRoad(tile.x, tile.y) && !inRect(rect, tile.x, tile.y),
+          (tile) => inBounds(tile.x, tile.y) && isRoadAt(tile.x, tile.y, overlay) && !inRect(rect, tile.x, tile.y),
         )
       ) {
         doors.push({ x, y });
@@ -63,8 +63,8 @@ export function doorsTouchingRoad(rect: Rect): Tile[] {
   return doors;
 }
 
-export function chooseDoor(rect: Rect): Tile | null {
-  const doors = doorsTouchingRoad(rect);
+export function chooseDoor(rect: Rect, overlay: readonly Tile[] = []): Tile | null {
+  const doors = doorsTouchingRoad(rect, overlay);
   if (doors.length === 0) {
     return null;
   }
@@ -127,6 +127,7 @@ export type PlacementPlan = {
 function plotBlocked(
   plot: SurveyedPlot,
   occupiedRects: readonly Rect[],
+  overlay: readonly Tile[] = [],
 ): boolean {
   if (occupiedRects.some((rect) => rectsOverlap(rect, plot.rect))) {
     return true;
@@ -134,7 +135,7 @@ function plotBlocked(
   for (let index = 0; index < plot.rect.w * plot.rect.h; index += 1) {
     const x = plot.rect.x + (index % plot.rect.w);
     const y = plot.rect.y + Math.floor(index / plot.rect.w);
-    if (isWaterTile(x, y) || isRoad(x, y)) {
+    if (isWaterTile(x, y) || isRoadAt(x, y, overlay)) {
       return true;
     }
   }
@@ -149,19 +150,20 @@ export function planConstruction(
   buildings: readonly Pick<BuildingView, "id" | "kind" | "name" | "x" | "y" | "w" | "h" | "doorX" | "doorY">[],
   occupiedPlotIds: ReadonlySet<string> = new Set(),
   kind: ConstructKind = "house",
+  overlay: readonly Tile[] = [],
 ): { ok: true; plan: PlacementPlan } | { ok: false; reason: string } {
   if (!CONSTRUCT_KINDS.includes(kind)) {
     return { ok: false, reason: "unsupported construction kind" };
   }
   const existing = buildings.map(toPathBuilding);
   const occupiedRects = buildings.map((b) => ({ x: b.x, y: b.y, w: b.w, h: b.h }));
-  const plots = surveyedPlots().filter((plot) => plot.served && !occupiedPlotIds.has(plot.id));
+  const plots = surveyedPlots(overlay).filter((plot) => plot.served && !occupiedPlotIds.has(plot.id));
 
   for (const plot of plots) {
-    if (plotBlocked(plot, occupiedRects)) {
+    if (plotBlocked(plot, occupiedRects, overlay)) {
       continue;
     }
-    const door = chooseDoor(plot.rect);
+    const door = chooseDoor(plot.rect, overlay);
     if (!door) {
       continue;
     }
@@ -176,7 +178,7 @@ export function planConstruction(
       door,
     };
     const all = [...existing, added];
-    const grid = walkableOn(GRID_W, GRID_H, ROADS, all);
+    const grid = walkableOn(GRID_W, GRID_H, ROADS, all, overlay);
     const routes: RouteRow[] = [];
     let connected = true;
     for (const other of existing) {
@@ -212,6 +214,7 @@ export function planConstruction(
 export function planHousePlacement(
   buildings: readonly Pick<BuildingView, "id" | "kind" | "name" | "x" | "y" | "w" | "h" | "doorX" | "doorY">[],
   occupiedPlotIds: ReadonlySet<string> = new Set(),
+  overlay: readonly Tile[] = [],
 ): { ok: true; plan: PlacementPlan } | { ok: false; reason: string } {
-  return planConstruction(buildings, occupiedPlotIds, "house");
+  return planConstruction(buildings, occupiedPlotIds, "house", overlay);
 }

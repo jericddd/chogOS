@@ -351,13 +351,24 @@ function tileKey(x: number, y: number, width: number): number {
 /** Buildings that participate in road walking: doors plus open commons interiors. */
 export type PathBuilding = Pick<BuildingDef, "id" | "kind" | "rect" | "door">;
 
-export function walkableOn(width: number, height: number, roads: readonly Rect[], buildings: readonly PathBuilding[]): Uint8Array {
+export function walkableOn(
+  width: number,
+  height: number,
+  roads: readonly Rect[],
+  buildings: readonly PathBuilding[],
+  overlay: readonly Tile[] = [],
+): Uint8Array {
   const grid = new Uint8Array(width * height);
   for (let y = 0; y < height; y += 1) {
     for (let x = 0; x < width; x += 1) {
       if (coversRoad(x, y, roads)) {
         grid[tileKey(x, y, width)] = 1;
       }
+    }
+  }
+  for (const tile of overlay) {
+    if (tile.x >= 0 && tile.y >= 0 && tile.x < width && tile.y < height) {
+      grid[tileKey(tile.x, tile.y, width)] = 1;
     }
   }
   for (const building of buildings) {
@@ -436,6 +447,16 @@ export function pathOn(
 }
 
 const pathCache = new Map<string, Tile[]>();
+
+/** BFS over base roads plus an optional overlay and the given buildings. */
+export function pathAcross(
+  from: PathBuilding,
+  to: PathBuilding,
+  buildings: readonly PathBuilding[],
+  overlay: readonly Tile[] = [],
+): Tile[] | null {
+  return pathOn(from, to, GRID_W, GRID_H, walkableOn(GRID_W, GRID_H, ROADS, buildings, overlay));
+}
 
 /** Breadth-first path between two doors over walkable tiles. Neighbor order is fixed. */
 export function pathBetween(fromId: string, toId: string): Tile[] | null {

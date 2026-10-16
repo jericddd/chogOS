@@ -153,6 +153,18 @@ Paste it on the hosted project after review. See [phase-5.md](phase-5.md).
 
 `anon` and `authenticated` have no grants. `service_role` may select `town_needs` and execute `world_link_town_need`. Paste this file after Phase 5a. See [phase-5.md](phase-5.md).
 
+## Phase 5b roads
+
+`20261016200000_phase5b_roads.sql` is additive. It does not reset the clock, rewrite events, move buildings, or rerun verify cutover.
+
+- `world_road_catalog` is the trusted stub list. Coordinates live here, not in model JSON.
+- `world_roads` is the completed runtime overlay. Primary key is the catalog id, so retries cannot duplicate a spur.
+- `world_place_road` revalidates connectivity, collision, and Storehouse stock (3 wood, 2 stone), then calls `world_refresh_plot_service`.
+- Plot `served` becomes true only when a combined (base + overlay) road tile is cardinally adjacent to the lot. Reserved lots become `vacant` when that happens.
+- Events `road.placed` (`ai` or `system`) and `plot.served` (`simulation`) reuse `world_record_event`.
+
+`anon` and `authenticated` have no grants. `service_role` may select the overlay tables and execute `world_place_road`. The file in git is not applied to hosted Supabase until an operator pastes it.
+
 ## Not stored
 
 Browser sessions, private keys, session-key material, and live prices are outside this migration. Session keys, when they exist, belong to the wallet contract. The database may store a public description of a permission, not the key that can exercise it.
