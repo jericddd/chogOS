@@ -142,7 +142,16 @@ export function createLiveStore(initial: WorldLoad, options: Options = {}): Live
     const recent = live.gap ? live.events : mergeEvents(state.recent, live.events, RECENT_CAP);
     const latest = Math.max(live.latestSeq, recent[0]?.seq ?? 0, current?.latestSeq ?? 0);
     set({
-      snapshot: { status: "ok", clock: live.clock, buildings: live.buildings, citizens: live.citizens, events: recent, latestSeq: latest },
+      snapshot: {
+        status: "ok",
+        clock: live.clock,
+        buildings: live.buildings,
+        citizens: live.citizens,
+        events: recent,
+        latestSeq: latest,
+        townNeeds: live.townNeeds ?? current?.townNeeds ?? [],
+        townNeedsReady: live.townNeedsReady ?? current?.townNeedsReady ?? false,
+      },
       unavailable: null,
       skewMs: Date.parse(live.clock.serverNow) - now(),
       receivedAt: now(),

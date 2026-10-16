@@ -1,4 +1,4 @@
-import type { BuildingKind, WorkRole } from "@/lib/world/layout";
+import { CONSTRUCT_KINDS, type BuildingKind, type ConstructKind, type WorkRole } from "@/lib/world/layout";
 import {
   EVENT_CATEGORIES,
   EVENT_SOURCES,
@@ -7,6 +7,11 @@ import {
   type ClockView,
   type EventCategory,
   type EventSource,
+  type TownNeedEvidence,
+  type TownNeedStatus,
+  type TownNeedType,
+  type TownNeedView,
+  type TownRecommendedAction,
   type WorldActivity,
   type WorldEventView,
   type WorldPurpose,
@@ -249,5 +254,90 @@ export function toEvent(row: EventRow): WorldEventView {
     txHash: row.tx_hash,
     intentId: row.intent_id ?? payloadText(row.payload, "intentId"),
     decisionId: row.decision_id ?? payloadText(row.payload, "decisionId"),
+  };
+}
+
+export const TOWN_NEED_COLUMNS =
+  "need_type, status, priority, first_detected_at, last_evaluated_at, last_status_changed_at, resolved_at, evidence, blocker, recommended_action, recommended_kind, last_event_id, last_decision_id";
+
+export type TownNeedRow = {
+  need_type: string;
+  status: string;
+  priority: Num;
+  first_detected_at: string | null;
+  last_evaluated_at: string | null;
+  last_status_changed_at: string | null;
+  resolved_at: string | null;
+  evidence: unknown;
+  blocker: string | null;
+  recommended_action: string | null;
+  recommended_kind: string | null;
+  last_event_id: string | null;
+  last_decision_id: string | null;
+};
+
+function asNeedType(value: string): TownNeedType | null {
+  return value === "food_shortage" || value === "tools_shortage" || value === "materials_shortage"
+    ? value
+    : null;
+}
+
+function asNeedStatus(value: string): TownNeedStatus {
+  return value === "active" || value === "blocked" || value === "resolved" || value === "inactive"
+    ? value
+    : "inactive";
+}
+
+function asRecommendedAction(value: string | null): TownRecommendedAction {
+  return value === "work" || value === "build" ? value : "none";
+}
+
+function asRecommendedKind(value: string | null): ConstructKind | "none" {
+  return value && (CONSTRUCT_KINDS as readonly string[]).includes(value) ? (value as ConstructKind) : "none";
+}
+
+function asEvidence(value: unknown): TownNeedEvidence {
+  const body = value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
+  const underRaw = Array.isArray(body.underConstruction) ? body.underConstruction : [];
+  return {
+    food: num((body.food as Num) ?? 0),
+    wood: num((body.wood as Num) ?? 0),
+    stone: num((body.stone as Num) ?? 0),
+    tools: num((body.tools as Num) ?? 0),
+    vacantServedLots: num((body.vacantServedLots as Num) ?? 0),
+    reservedLots: num((body.reservedLots as Num) ?? 0),
+    farms: num((body.farms as Num) ?? 0),
+    workshops: num((body.workshops as Num) ?? 0),
+    houses: num((body.houses as Num) ?? 0),
+    underConstruction: underRaw
+      .filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === "object")
+      .slice(0, 8)
+      .map((item) => ({
+        id: String(item.id ?? ""),
+        kind: String(item.kind ?? ""),
+        progress: numOrNull(item.progress as Num | undefined),
+      })),
+  };
+}
+
+export function toTownNeed(row: TownNeedRow): TownNeedView | null {
+  const needType = asNeedType(row.need_type);
+  if (!needType) {
+    return null;
+  }
+  return {
+    needType,
+    status: asNeedStatus(row.status),
+    priority: num(row.priority),
+    firstDetectedAt: row.first_detected_at,
+    lastEvaluatedAt: row.last_evaluated_at,
+    lastStatusChangedAt: row.last_status_changed_at,
+    resolvedAt: row.resolved_at,
+    evidence: asEvidence(row.evidence),
+    blocker: row.blocker,
+    recommendedAction: asRecommendedAction(row.recommended_action),
+    recommendedKind: asRecommendedKind(row.recommended_kind),
+    lastEventId: row.last_event_id,
+    lastDecisionId: row.last_decision_id,
   };
 }

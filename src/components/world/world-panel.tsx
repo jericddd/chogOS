@@ -32,6 +32,7 @@ import { describeSpeed } from "@/lib/world/speed";
 import { matchesFilter, mergeEvents } from "@/lib/world/sync";
 import type { CitizenMindView } from "@/lib/ai/mind-view";
 import { TRAIT_LABELS } from "@/lib/ai/personality";
+import { describeTownNeed, describeTownNeedsBanner } from "@/lib/world/needs";
 import type { BuildingView, CitizenView, EventFilter, EventPage, WorldActivity, WorldEventView, WorldSnapshot } from "@/lib/world/types";
 
 const HEALTH_TEXT = {
@@ -91,6 +92,44 @@ export function WorldStatus({
         {realtime === "error" ? " · realtime unavailable, polling instead" : ""}
       </p>
       {health !== "live" ? <p className="mt-2 text-xs leading-5 text-warning">{info.detail}</p> : null}
+      <TownNeedsLine snapshot={snapshot} />
+    </div>
+  );
+}
+
+function TownNeedsLine({ snapshot }: { snapshot: WorldSnapshot }) {
+  const banner = describeTownNeedsBanner(snapshot.townNeeds ?? [], snapshot.townNeedsReady ?? false);
+  const tone =
+    banner.tone === "need" ? "text-warning" : banner.tone === "blocked" ? "text-warning" : "text-muted";
+  return (
+    <p className={`mt-2 text-xs leading-5 ${tone}`} title={banner.detail}>
+      {banner.title}
+    </p>
+  );
+}
+
+function TownNeedsPanel({ snapshot }: { snapshot: WorldSnapshot }) {
+  const banner = describeTownNeedsBanner(snapshot.townNeeds ?? [], snapshot.townNeedsReady ?? false);
+  const open = (snapshot.townNeeds ?? []).filter((need) => need.status === "active" || need.status === "blocked");
+  return (
+    <div className="mt-4 rounded-lg border border-line px-3 py-2">
+      <p className="text-[0.68rem] tracking-[0.14em] text-muted uppercase">Town needs</p>
+      <p className="mt-1 text-sm">{banner.title}</p>
+      <p className="mt-0.5 text-xs leading-5 text-muted">{banner.detail}</p>
+      {open.length > 0 ? (
+        <ul className="mt-2 space-y-1 text-xs leading-5">
+          {open.map((need) => {
+            const copy = describeTownNeed(need);
+            return (
+              <li key={need.needType}>
+                {copy.title}
+                {need.status === "blocked" && need.blocker ? ` · ${need.blocker}` : ""}
+                {need.lastDecisionId ? " · an AI proposal is linked, the shortage is still open" : ""}
+              </li>
+            );
+          })}
+        </ul>
+      ) : null}
     </div>
   );
 }
@@ -540,6 +579,7 @@ function WorldOverview({ snapshot, onPick }: { snapshot: WorldSnapshot; onPick: 
           </li>
         ))}
       </ul>
+      <TownNeedsPanel snapshot={snapshot} />
       {store ? (
         <button
           type="button"

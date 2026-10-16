@@ -6,20 +6,24 @@ import {
   BUILDING_COLUMNS,
   CITIZEN_COLUMNS,
   EVENT_COLUMNS,
+  TOWN_NEED_COLUMNS,
   WORLD_STATE_COLUMNS,
   toBuilding,
   toCitizen,
   toClock,
   toEvent,
+  toTownNeed,
   type BuildingRow,
   type CitizenRow,
   type EventRow,
+  type TownNeedRow,
   type WorldStateRow,
 } from "@/lib/world/rows";
 import type {
   CitizenView,
   EventFilter,
   EventPage,
+  TownNeedView,
   WorldEventView,
   WorldLive,
   WorldLoad,
@@ -154,12 +158,27 @@ async function readEvents(
   return ((data ?? []) as EventRow[]).map(toEvent);
 }
 
+async function readTownNeeds(client: SupabaseClient): Promise<{ ready: boolean; needs: TownNeedView[] }> {
+  const { data, error } = await client.from("town_needs").select(TOWN_NEED_COLUMNS).order("priority", { ascending: false });
+  if (error) {
+    if (missingTable(error)) {
+      return { ready: false, needs: [] };
+    }
+    fail(error, "town needs");
+  }
+  return {
+    ready: true,
+    needs: ((data ?? []) as TownNeedRow[]).map(toTownNeed).filter((need): need is TownNeedView => need !== null),
+  };
+}
+
 async function readSnapshot(client: SupabaseClient, events: Promise<WorldEventView[]>): Promise<WorldSnapshot> {
-  const [state, buildings, citizens, list] = await Promise.all([
+  const [state, buildings, citizens, list, townNeeds] = await Promise.all([
     readState(client),
     readBuildings(client),
     readCitizens(client),
     events,
+    readTownNeeds(client),
   ]);
   return {
     status: "ok",
@@ -168,6 +187,8 @@ async function readSnapshot(client: SupabaseClient, events: Promise<WorldEventVi
     citizens,
     events: list,
     latestSeq: list[0]?.seq ?? 0,
+    townNeeds: townNeeds.needs,
+    townNeedsReady: townNeeds.ready,
   };
 }
 

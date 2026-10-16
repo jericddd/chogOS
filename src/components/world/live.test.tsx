@@ -2,8 +2,9 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ActivityFeed } from "@/components/world/activity-feed";
+import { WorldStatus } from "@/components/world/world-panel";
 import { createLiveStore, type RealtimeConnector, type RealtimeHandlers } from "@/components/world/live-store";
-import type { ClockView, WorldEventView, WorldLive, WorldSnapshot } from "@/lib/world/types";
+import type { ClockView, TownNeedView, WorldEventView, WorldLive, WorldSnapshot } from "@/lib/world/types";
 
 vi.mock("next/link", () => ({
   default: (props: { href: string; children: React.ReactNode; className?: string }) => (
@@ -53,7 +54,16 @@ function event(seq: number, patch: Partial<WorldEventView> = {}): WorldEventView
 }
 
 function snapshot(events: WorldEventView[]): WorldSnapshot {
-  return { status: "ok", clock, buildings: [], citizens: [], events, latestSeq: events[0]?.seq ?? 0 };
+  return {
+    status: "ok",
+    clock,
+    buildings: [],
+    citizens: [],
+    events,
+    latestSeq: events[0]?.seq ?? 0,
+    townNeeds: [],
+    townNeedsReady: false,
+  };
 }
 
 function live(events: WorldEventView[], patch: Partial<WorldLive> = {}): WorldLive {
@@ -235,5 +245,66 @@ describe("activity feed", () => {
     fireEvent.change(screen.getAllByRole("combobox")[1]!, { target: { value: "ai" } });
     await screen.findByText(/Only genuine model-backed decisions are labeled AI/);
     expect(String(fetcher.mock.calls[0]![0])).toContain("source=ai");
+  });
+});
+
+describe("town needs inspector", () => {
+  const foodNeed: TownNeedView = {
+    needType: "food_shortage",
+    status: "active",
+    priority: 100,
+    firstDetectedAt: "2026-10-15T20:00:00Z",
+    lastEvaluatedAt: "2026-10-15T20:00:00Z",
+    lastStatusChangedAt: "2026-10-15T20:00:00Z",
+    resolvedAt: null,
+    evidence: {
+      food: 12,
+      wood: 60,
+      stone: 40,
+      tools: 20,
+      vacantServedLots: 20,
+      reservedLots: 6,
+      farms: 2,
+      workshops: 2,
+      houses: 15,
+      underConstruction: [],
+    },
+    blocker: null,
+    recommendedAction: "work",
+    recommendedKind: "none",
+    lastEventId: null,
+    lastDecisionId: null,
+  };
+
+  it("shows a persisted food shortage and does not invent one when needs are unavailable", () => {
+    render(
+      <WorldStatus
+        snapshot={{ ...snapshot([]), townNeeds: [foodNeed], townNeedsReady: true }}
+        skewMs={0}
+        link="live"
+        realtime="subscribed"
+      />,
+    );
+    expect(screen.getByText(/Food supply is running low/)).toBeTruthy();
+    cleanup();
+    render(
+      <WorldStatus snapshot={snapshot([])} skewMs={0} link="live" realtime="subscribed" />,
+    );
+    expect(screen.getByText(/Town needs are not in this database yet/)).toBeTruthy();
+    expect(screen.queryByText(/Food supply is running low/)).toBeNull();
+  });
+
+  it("shows no critical shortage when persisted needs are healthy", () => {
+    render(
+      <WorldStatus
+        snapshot={{ ...snapshot([]), townNeedsReady: true }}
+        skewMs={0}
+        link="live"
+        realtime="subscribed"
+      />,
+    );
+    expect(screen.getByText(/No critical shortage is currently detected/)).toBeTruthy();
+    expect(screen.queryByText(/Food supply is running low/)).toBeNull();
+    expect(screen.queryByText(/Town needs are not in this database yet/)).toBeNull();
   });
 });
