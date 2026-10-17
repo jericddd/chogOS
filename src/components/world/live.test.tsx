@@ -14,6 +14,12 @@ vi.mock("next/link", () => ({
   ),
 }));
 
+const nav = vi.hoisted(() => ({ replace: vi.fn(), pathname: "/activity" }));
+vi.mock("next/navigation", () => ({
+  useRouter: () => ({ replace: nav.replace }),
+  usePathname: () => nav.pathname,
+}));
+
 const clock: ClockView = {
   status: "running",
   speed: 60,
@@ -79,6 +85,8 @@ let observers: Observed[] = [];
 
 beforeEach(() => {
   observers = [];
+  nav.replace.mockReset();
+  nav.pathname = "/activity";
   vi.stubGlobal(
     "IntersectionObserver",
     class {
@@ -246,9 +254,47 @@ describe("activity feed", () => {
     vi.stubGlobal("fetch", fetcher);
     const store = createLiveStore(snapshot([event(3)]), { fetcher: vi.fn() as unknown as typeof fetch });
     render(<ActivityFeed store={store} />);
+    expect(screen.getByRole("link", { name: "AI decisions" }).getAttribute("href")).toBe("/activity?source=ai");
     fireEvent.change(screen.getAllByRole("combobox")[1]!, { target: { value: "ai" } });
     await screen.findByText(/Only genuine model-backed decisions are labeled AI/);
     expect(String(fetcher.mock.calls[0]![0])).toContain("source=ai");
+  });
+
+  it("maps the Category AI filter to genuine source=ai events", async () => {
+    const fetcher = vi.fn(async (url: string) => url && new Response(JSON.stringify({ status: "ok", events: [], nextBefore: null })));
+    vi.stubGlobal("fetch", fetcher);
+    const store = createLiveStore(snapshot([event(3)]), { fetcher: vi.fn() as unknown as typeof fetch });
+    render(<ActivityFeed store={store} />);
+    fireEvent.change(screen.getAllByRole("combobox")[0]!, { target: { value: "ai" } });
+    await screen.findByText(/Only genuine model-backed decisions are labeled AI/);
+    expect(String(fetcher.mock.calls[0]![0])).toContain("source=ai");
+    expect(String(fetcher.mock.calls[0]![0])).not.toContain("category=ai");
+    fireEvent.change(screen.getAllByRole("combobox")[0]!, { target: { value: "construction" } });
+    await waitFor(() => expect(String(fetcher.mock.calls[1]![0])).toContain("category=construction"));
+    expect(String(fetcher.mock.calls[1]![0])).not.toContain("source=ai");
+  });
+
+  it("opens History from source=ai and writes later filter changes to the URL", async () => {
+    const fetcher = vi.fn(
+      async (url: string) =>
+        url &&
+        new Response(
+          JSON.stringify({
+            status: "ok",
+            events: [event(9, { source: "ai", category: "construction", kind: "road.placed", summary: "An AI road was placed." })],
+            nextBefore: null,
+          }),
+        ),
+    );
+    vi.stubGlobal("fetch", fetcher);
+    const store = createLiveStore(snapshot([]), { fetcher: vi.fn() as unknown as typeof fetch });
+    render(<ActivityFeed store={store} initialFilter={{ source: "ai" }} mode="page" />);
+    expect((screen.getAllByRole("combobox")[1] as HTMLSelectElement).value).toBe("ai");
+    await screen.findByText("An AI road was placed.");
+    expect(String(fetcher.mock.calls[0]![0])).toContain("source=ai");
+    fireEvent.change(screen.getAllByRole("combobox")[0]!, { target: { value: "construction" } });
+    await waitFor(() => expect(nav.replace).toHaveBeenCalled());
+    expect(String(nav.replace.mock.calls.at(-1)?.[0])).toBe("/activity?category=construction&source=ai");
   });
 });
 

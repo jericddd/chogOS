@@ -22,7 +22,15 @@ import {
   placeCitizens,
   zoomAt,
 } from "@/lib/world/scene";
-import { matchesFilter, mergeEvents, receiveLive, revealPending } from "@/lib/world/sync";
+import {
+  eventFilterFromSearch,
+  matchesFilter,
+  mergeEvents,
+  pickAiConstructionEvent,
+  receiveLive,
+  resolveEventFilter,
+  revealPending,
+} from "@/lib/world/sync";
 import type { BuildingView, CitizenView, ClockView, WorldEventView } from "@/lib/world/types";
 
 const T0 = Date.parse("2026-10-13T00:00:00Z");
@@ -247,6 +255,47 @@ describe("live merge", () => {
     expect(matchesFilter(social, { source: "ai" })).toBe(false);
     expect(matchesFilter(event(6, { relatedTokenId: "9" }), { tokenId: "9" })).toBe(true);
     expect(receiveLive({ shown: [], pending: [] }, [social], { category: "work" }, true).shown).toHaveLength(0);
+  });
+
+  it("treats category AI as an alias for source=ai without inventing rows", () => {
+    const road = event(8, { kind: "road.placed", category: "construction", source: "ai" });
+    const social = event(5, { category: "social", source: "simulation" });
+    expect(resolveEventFilter({ category: "ai" })).toEqual({ source: "ai" });
+    expect(resolveEventFilter({ category: "ai", source: "ai", tokenId: "7" })).toEqual({ source: "ai", tokenId: "7" });
+    expect(resolveEventFilter({ category: "construction", source: "ai" })).toEqual({
+      category: "construction",
+      source: "ai",
+    });
+    expect(matchesFilter(road, { category: "ai" })).toBe(true);
+    expect(matchesFilter(road, { source: "ai" })).toBe(true);
+    expect(matchesFilter(road, { category: "construction" })).toBe(true);
+    expect(matchesFilter(social, { category: "ai" })).toBe(false);
+    expect(matchesFilter(social, { category: "social" })).toBe(true);
+    expect(receiveLive({ shown: [], pending: [] }, [road, social], { category: "ai" }, true).shown.map((e) => e.id)).toEqual([
+      "e8",
+    ]);
+  });
+
+  it("picks only a real AI construction event for Verify discovery", () => {
+    const road = event(8, { kind: "road.placed", category: "construction", source: "ai" });
+    const system = event(9, { kind: "world.tick", category: "world", source: "system" });
+    expect(pickAiConstructionEvent([system, road])).toMatchObject({ id: "e8", source: "ai", category: "construction" });
+    expect(pickAiConstructionEvent([system])).toBeNull();
+    expect(pickAiConstructionEvent([])).toBeNull();
+  });
+
+  it("reads History query params including source=ai", () => {
+    expect(eventFilterFromSearch({ source: "ai" })).toEqual({ source: "ai" });
+    expect(eventFilterFromSearch({ category: "ai" })).toEqual({ category: "ai" });
+    expect(eventFilterFromSearch({ source: "simulation", category: "construction" })).toEqual({
+      source: "simulation",
+      category: "construction",
+    });
+    expect(eventFilterFromSearch({ citizen: "7", building: "market" })).toEqual({
+      tokenId: "7",
+      buildingId: "market",
+    });
+    expect(eventFilterFromSearch({ source: "admin", category: "secret", citizen: "nope" })).toEqual({});
   });
 });
 

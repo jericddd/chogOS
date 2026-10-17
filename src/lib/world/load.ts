@@ -25,6 +25,7 @@ import {
   type TownProjectRow,
   type WorldStateRow,
 } from "@/lib/world/rows";
+import { resolveEventFilter } from "@/lib/world/sync";
 import type {
   CitizenView,
   EventFilter,
@@ -129,18 +130,19 @@ function applyFilter<Q extends { eq: (column: string, value: string) => Q; or: (
   query: Q,
   filter: EventFilter,
 ): Q {
+  const resolved = resolveEventFilter(filter);
   let next = query;
-  if (filter.category) {
-    next = next.eq("category", filter.category);
+  if (resolved.category) {
+    next = next.eq("category", resolved.category);
   }
-  if (filter.source) {
-    next = next.eq("source", filter.source);
+  if (resolved.source) {
+    next = next.eq("source", resolved.source);
   }
-  if (filter.buildingId) {
-    next = next.eq("building_id", filter.buildingId);
+  if (resolved.buildingId) {
+    next = next.eq("building_id", resolved.buildingId);
   }
-  if (filter.tokenId) {
-    next = next.or(`payload->>tokenId.eq.${filter.tokenId},payload->>relatedTokenId.eq.${filter.tokenId}`);
+  if (resolved.tokenId) {
+    next = next.or(`payload->>tokenId.eq.${resolved.tokenId},payload->>relatedTokenId.eq.${resolved.tokenId}`);
   }
   return next;
 }

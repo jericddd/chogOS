@@ -1,12 +1,23 @@
 "use client";
 
 import Link from "next/link";
+import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { AiDecisionsLink } from "@/components/world/ai-decisions-link";
 import { EventItem } from "@/components/world/event-item";
 import { useLive, type LiveStore } from "@/components/world/live-store";
 import { useNow } from "@/components/world/use-now";
 import { CATEGORY_LABEL, SOURCE_LABEL } from "@/lib/world/present";
-import { filterKey, matchesFilter, oldestSeq, receiveLive, revealPending, type FeedState } from "@/lib/world/sync";
+import {
+  eventFilterSearchParams,
+  filterKey,
+  matchesFilter,
+  oldestSeq,
+  receiveLive,
+  resolveEventFilter,
+  revealPending,
+  type FeedState,
+} from "@/lib/world/sync";
 import {
   EVENT_CATEGORIES,
   EVENT_SOURCES,
@@ -19,13 +30,15 @@ import {
 const PAGE_SIZE = 25;
 
 function pageUrl(filter: EventFilter, before: number | null): string {
-  const params = new URLSearchParams({ limit: String(PAGE_SIZE) });
-  if (filter.category) params.set("category", filter.category);
-  if (filter.source) params.set("source", filter.source);
-  if (filter.tokenId) params.set("citizen", filter.tokenId);
-  if (filter.buildingId) params.set("building", filter.buildingId);
+  const params = eventFilterSearchParams(resolveEventFilter(filter));
+  params.set("limit", String(PAGE_SIZE));
   if (before !== null) params.set("before", String(before));
   return `/api/world/events?${params.toString()}`;
+}
+
+function historyHref(pathname: string, filter: EventFilter): string {
+  const query = eventFilterSearchParams(filter).toString();
+  return query ? `${pathname}?${query}` : pathname;
 }
 
 async function fetchPage(filter: EventFilter, before: number | null): Promise<EventPage> {
@@ -61,7 +74,11 @@ export function ActivityFeed({
 }) {
   const live = useLive(store);
   const now = useNow(15_000);
+  const router = useRouter();
+  const pathname = usePathname();
   const [filter, setFilter] = useState<EventFilter>(initialFilter);
+  const initialKey = filterKey(initialFilter);
+  const initialFilterRef = useRef(initialFilter);
   const startsWithRecent = isEmptyFilter(initialFilter) && live.recent.length > 0;
   const [feed, setFeed] = useState<FeedState>(() => ({
     shown: startsWithRecent ? live.recent.filter((event) => matchesFilter(event, initialFilter)) : [],
@@ -109,6 +126,7 @@ export function ActivityFeed({
   const reloadRef = useRef(reload);
   useEffect(() => {
     reloadRef.current = reload;
+    initialFilterRef.current = initialFilter;
   });
 
   useEffect(() => {
@@ -118,6 +136,17 @@ export function ActivityFeed({
     // Initial load only.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  useEffect(() => {
+    if (initialKey === filterKey(filterRef.current)) {
+      return;
+    }
+    const next = initialFilterRef.current;
+    filterRef.current = next;
+    setFilter(next);
+    setOlder("idle");
+    reloadRef.current(next);
+  }, [initialKey]);
 
   useEffect(() => {
     let reset = store.getState().resetToken;
@@ -202,6 +231,9 @@ export function ActivityFeed({
     setFilter(next);
     setOlder("idle");
     reload(next);
+    if (mode === "page") {
+      router.replace(historyHref(pathname, next), { scroll: false });
+    }
   };
 
   const showPending = () => {
@@ -226,7 +258,8 @@ export function ActivityFeed({
             Newest first. Every row is a recorded world event, labeled by where it came from.
           </p>
         </div>
-        <div className="flex flex-wrap gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <AiDecisionsLink />
           <label className="text-xs text-muted">
             <span className="sr-only">Category</span>
             <select
