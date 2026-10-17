@@ -15,7 +15,8 @@ import {CitizenAccountFactory} from "../src/CitizenAccountFactory.sol";
 /// Never logs a wallet key. Do not read one from the environment in this script.
 contract DeployCitizenAccountFactory is Script {
     uint256 public constant MONAD_MAINNET = 143;
-    bytes32 public constant FACTORY_SALT = keccak256("chogOS.CitizenAccountFactory.v1");
+    /// v1.1: executor sessions. V1 salt/address 0x2d8c32B8Df4E57a18A96fa2830DE036A781B472c must not be deployed.
+    bytes32 public constant FACTORY_SALT = keccak256("chogOS.CitizenAccountFactory.v1.1");
     address public constant DETERMINISTIC_CREATE2 = 0x4e59b44847b379578588920cA78FbF26c0B4956C;
 
     error NotMonadMainnet(uint256 chainId);

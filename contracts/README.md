@@ -48,11 +48,13 @@ Source: https://docs.monad.xyz/developer-essentials/testnet
 
 Mainnet deployment is out of scope.
 
-## CitizenAccount (Phase 6a, Mainnet-first V1)
+## CitizenAccount (Phase 6a / 6b, Mainnet-first)
 
-NFT-bound account plus CREATE2 factory. Root authority is `ownerOf` at execution time. Delegated grant/execute entrypoints revert `DelegationDisabled` because an `ownerAtGrant` snapshot revives after A→B→A. The AI model never holds a key.
+NFT-bound account plus CREATE2 factory. Root authority is `ownerOf` at execution time. Delegated grant/execute entrypoints revert `DelegationDisabled` because an `ownerAtGrant` snapshot revives after A→B→A. V1.1 adds one owner-opened executor session; `syncOwner` latches it dead when a different owner is observed. The AI model never holds a key.
 
-Predicted factory: `0x2d8c32B8Df4E57a18A96fa2830DE036A781B472c` on chain 143 via Arachnid `0x4e59…` and salt `keccak256("chogOS.CitizenAccountFactory.v1")`. That address is empty until an authorized broadcast. Do not deploy `MockGenesisNFT` on Mainnet. See `docs/phase-6a-wallet-architecture.md`.
+V1 predicted factory `0x2d8c32B8Df4E57a18A96fa2830DE036A781B472c` (salt `chogOS.CitizenAccountFactory.v1`) is empty and **must not be deployed** after the session bytecode change.
+
+V1.1 predicted factory: `0xA2edAC990B30A488D61fc4607D4365b22e41e39c` on chain 143 via Arachnid `0x4e59…` and salt `keccak256("chogOS.CitizenAccountFactory.v1.1")`. That address is also empty until an authorized broadcast. Do not deploy `MockGenesisNFT` on Mainnet. See `docs/phase-6a-wallet-architecture.md` and `docs/phase-6b-chogbank.md`.
 
 ```bash
 # local EVM (fork tests skip)

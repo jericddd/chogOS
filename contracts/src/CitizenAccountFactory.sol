@@ -11,6 +11,8 @@ import {CitizenAccount} from "./CitizenAccount.sol";
 /// A predicted address is not a deployed account. create() is idempotent.
 /// create() refuses chainId != block.chainid, so Mainnet accounts cannot be
 /// created from a Testnet factory and the reverse.
+/// Bytecode includes CitizenAccount, so a session-capable account is a new
+/// factory address. The V1 prediction 0x2d8c32… is empty and must stay unused.
 contract CitizenAccountFactory {
     error ZeroAddress();
     error ZeroChain();

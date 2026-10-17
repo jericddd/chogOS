@@ -1,8 +1,9 @@
+import { ACTIVATION_MOTIVES, type ActivationMotive } from "@/lib/chogbank/types";
 import { CONSTRUCT_KINDS, type ConstructKind } from "@/lib/world/layout";
 import { ROAD_STUB_IDS } from "@/lib/world/roads";
 import { WORLD_ACTIONS, type WorldAction } from "@/lib/world/actions";
 
-export const DECISION_ACTIONS = [...WORLD_ACTIONS, "build"] as const;
+export const DECISION_ACTIONS = [...WORLD_ACTIONS, "build", "request_wallet_activation"] as const;
 export type DecisionAction = (typeof DECISION_ACTIONS)[number];
 export type DecisionBuildKind = ConstructKind | "road" | "none";
 
@@ -15,6 +16,11 @@ export type ParsedDecision = {
   projectId: string | null;
   summary: string;
   rationale: string;
+  activationMotive: ActivationMotive | null;
+  proposedOnchainActions: string | null;
+  revenueHypothesis: string | null;
+  claimedDeploymentWei: bigint | null;
+  claimedGasWei: bigint | null;
 };
 
 export const DECISION_RESPONSE_SCHEMA: Record<string, unknown> = {
@@ -28,6 +34,11 @@ export const DECISION_RESPONSE_SCHEMA: Record<string, unknown> = {
     projectId: { type: "string" },
     summary: { type: "string" },
     rationale: { type: "string" },
+    activationMotive: { type: "string", enum: [...ACTIVATION_MOTIVES] },
+    proposedOnchainActions: { type: "string" },
+    revenueHypothesis: { type: "string" },
+    estimatedDeploymentWei: { type: "string" },
+    estimatedGasWei: { type: "string" },
   },
   required: ["action", "buildingId", "summary", "rationale"],
 };
@@ -80,7 +91,11 @@ export function parseDecisionOutput(text: string): { ok: true; decision: ParsedD
   }
 
   const buildingId = typeof body.buildingId === "string" ? body.buildingId.trim() : "";
-  if (action !== "build") {
+  if (action === "request_wallet_activation") {
+    if (buildingId && buildingId !== "none" && !BUILDING_RE.test(buildingId)) {
+      return { ok: false, reason: "invalid building id" };
+    }
+  } else if (action !== "build") {
     if (!BUILDING_RE.test(buildingId)) {
       return { ok: false, reason: "invalid building id" };
     }
@@ -119,21 +134,77 @@ export function parseDecisionOutput(text: string): { ok: true; decision: ParsedD
   const projectRaw = typeof body.projectId === "string" ? body.projectId.trim() : "";
   const projectId = projectRaw && UUID_RE.test(projectRaw) ? projectRaw : null;
 
+  let activationMotive: ActivationMotive | null = null;
+  let proposedOnchainActions: string | null = null;
+  let revenueHypothesis: string | null = null;
+  let claimedDeploymentWei: bigint | null = null;
+  let claimedGasWei: bigint | null = null;
+  if (action === "request_wallet_activation") {
+    const motive = typeof body.activationMotive === "string" ? body.activationMotive : "";
+    if (!(ACTIVATION_MOTIVES as readonly string[]).includes(motive)) {
+      return { ok: false, reason: "activation motive is required" };
+    }
+    const proposed = typeof body.proposedOnchainActions === "string" ? clip(body.proposedOnchainActions, 320) : "";
+    if (!proposed) {
+      return { ok: false, reason: "proposed onchain actions are required" };
+    }
+    const deployWei = parseWei(body.estimatedDeploymentWei);
+    const gasWei = parseWei(body.estimatedGasWei);
+    if (deployWei === null || gasWei === null) {
+      return { ok: false, reason: "activation cost estimates must be non-negative integer wei" };
+    }
+    activationMotive = motive as ActivationMotive;
+    proposedOnchainActions = proposed;
+    revenueHypothesis = typeof body.revenueHypothesis === "string" ? clip(body.revenueHypothesis, 240) : "";
+    claimedDeploymentWei = deployWei;
+    claimedGasWei = gasWei;
+  }
+
   return {
     ok: true,
     decision: {
       action: action as DecisionAction,
-      buildingId: action === "build" ? "" : buildingId,
+      buildingId: action === "build" || action === "request_wallet_activation" ? "" : buildingId,
       buildKind,
       roadStubId,
       goalId,
       projectId,
       summary,
       rationale,
+      activationMotive,
+      proposedOnchainActions,
+      revenueHypothesis,
+      claimedDeploymentWei,
+      claimedGasWei,
     },
   };
 }
 
+function parseWei(value: unknown): bigint | null {
+  if (typeof value === "number") {
+    if (!Number.isInteger(value) || value < 0 || !Number.isSafeInteger(value)) {
+      return null;
+    }
+    return BigInt(value);
+  }
+  if (typeof value === "string" && /^\d+$/.test(value.trim())) {
+    return BigInt(value.trim());
+  }
+  return null;
+}
+
 export function isWorldAction(action: DecisionAction): action is WorldAction {
   return (WORLD_ACTIONS as readonly string[]).includes(action);
+}
+
+export function isActivationAction(action: DecisionAction): boolean {
+  return action === "request_wallet_activation";
+}
+
+export function jsonSafeDecision(decision: ParsedDecision): Record<string, unknown> {
+  return {
+    ...decision,
+    claimedDeploymentWei: decision.claimedDeploymentWei?.toString() ?? null,
+    claimedGasWei: decision.claimedGasWei?.toString() ?? null,
+  };
 }
