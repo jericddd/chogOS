@@ -1,5 +1,6 @@
 import { connection } from "next/server";
 import { Suspense } from "react";
+import { AiDecisionsLink } from "@/components/world/ai-decisions-link";
 import { LivingWorld } from "@/components/world/living-world";
 import { loadWorld, realtimeConfig } from "@/lib/world/load";
 
@@ -7,12 +8,15 @@ export default function WorldPage() {
   return (
     <div className="space-y-6">
       <header className="max-w-3xl">
-        <p className="text-xs tracking-[0.18em] text-accent uppercase">The living civilization</p>
-        <h1 className="mt-2 font-serif text-4xl tracking-tight sm:text-5xl">One world, always running.</h1>
+        <p className="text-xs tracking-[0.18em] text-accent uppercase">Chog Genesis · one civilization</p>
+        <h1 className="mt-2 font-serif text-4xl tracking-tight sm:text-5xl">One shared world. Always running.</h1>
         <p className="mt-3 text-base leading-7 text-muted">
-          Every Chog Genesis citizen lives here: at home, at work, at the market, on the roads between. One shared
-          simulation on the server moves them whether or not anyone is watching. You can observe and inspect, but
-          not steer. Resources are simulated goods, not balances, and no citizen holds or spends tokens.
+          A persistent town for Chog Genesis NFT participants on Monad. The server keeps it running whether anyone
+          is watching. An AI mind can choose real actions here. Inspect those outcomes and verify the stored event
+          bytes — map goods are simulated, not tokens.
+        </p>
+        <p className="mt-4">
+          <AiDecisionsLink />
         </p>
       </header>
       <Suspense fallback={<WorldLoading />}>

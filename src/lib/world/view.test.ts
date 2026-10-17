@@ -10,9 +10,10 @@ import { BUILDINGS, TILE, pathBetween } from "@/lib/world/layout";
 import { citizenHref, describeCitizenNow, eventSegments } from "@/lib/world/present";
 import { toCitizen, toEvent, type CitizenRow, type EventRow } from "@/lib/world/rows";
 import {
+  DEFAULT_VIEW_PX_H,
+  DEFAULT_VIEW_PX_W,
+  DEFAULT_VIEW_TILE_W,
   MAX_SCALE,
-  SETTLEMENT_PX_H,
-  SETTLEMENT_PX_W,
   WORLD_PX_H,
   WORLD_PX_W,
   clampCamera,
@@ -336,12 +337,21 @@ describe("scene placement", () => {
     }
   });
 
-  it("keeps the camera on the map, zooms around the pointer, and resets to the founding town", () => {
+  it("keeps the camera on the map, zooms around the pointer, and resets to the inhabited town", () => {
     const view = { width: 900, height: 600 };
     const fit = fitCamera(view);
-    expect(fit.scale).toBeCloseTo(Math.min(900 / SETTLEMENT_PX_W, 600 / SETTLEMENT_PX_H));
+    expect(fit.scale).toBeCloseTo(Math.min(900 / DEFAULT_VIEW_PX_W, 600 / DEFAULT_VIEW_PX_H));
+    expect(DEFAULT_VIEW_TILE_W).toBeGreaterThan(60);
+    expect(DEFAULT_VIEW_TILE_W).toBeLessThan(120);
     expect(minScale(view)).toBeCloseTo(Math.min(900 / WORLD_PX_W, 600 / WORLD_PX_H));
     expect(minScale(view)).toBeLessThan(fit.scale);
+    const onScreen = (tileX: number, tileY: number) => {
+      const sx = fit.x + tileX * TILE * fit.scale;
+      const sy = fit.y + tileY * TILE * fit.scale;
+      return sx >= 0 && sx <= view.width && sy >= 0 && sy <= view.height;
+    };
+    expect(onScreen(8, 8)).toBe(true);
+    expect(onScreen(85, 6)).toBe(true);
     const zoomed = zoomAt(fit, view, 3, 450, 300);
     const before = { x: (450 - fit.x) / fit.scale, y: (300 - fit.y) / fit.scale };
     const after = { x: (450 - zoomed.x) / zoomed.scale, y: (300 - zoomed.y) / zoomed.scale };
