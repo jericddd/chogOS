@@ -578,6 +578,7 @@ describe("database access", () => {
       "town_needs",
       "world_roads",
       "world_road_catalog",
+      "town_projects",
     ]) {
       for (const role of ["anon", "authenticated"]) {
         expect(await privilege(`has_table_privilege('${role}', '${table}', 'select')`)).toBe(false);
@@ -597,6 +598,10 @@ describe("database access", () => {
     expect(await privilege("has_function_privilege('anon', 'world_link_town_need(text,uuid)', 'execute')")).toBe(false);
     expect(await privilege("has_function_privilege('anon', 'world_evaluate_town_needs(timestamptz,bigint,bigint)', 'execute')")).toBe(false);
     expect(await privilege("has_function_privilege('service_role', 'world_evaluate_town_needs(timestamptz,bigint,bigint)', 'execute')")).toBe(false);
+    expect(await privilege("has_function_privilege('service_role', 'world_link_town_project(uuid,uuid,uuid)', 'execute')")).toBe(true);
+    expect(await privilege("has_function_privilege('anon', 'world_link_town_project(uuid,uuid,uuid)', 'execute')")).toBe(false);
+    expect(await privilege("has_function_privilege('anon', 'world_advance_town_projects(timestamptz,bigint,bigint)', 'execute')")).toBe(false);
+    expect(await privilege("has_function_privilege('service_role', 'world_advance_town_projects(timestamptz,bigint,bigint)', 'execute')")).toBe(false);
     expect(await privilege("has_function_privilege('service_role', 'world_tick()', 'execute')")).toBe(true);
     expect(await privilege("has_function_privilege('service_role', 'world_cron_status()', 'execute')")).toBe(true);
     expect(await privilege("has_function_privilege('service_role', 'world_expand_layout(jsonb)', 'execute')")).toBe(true);

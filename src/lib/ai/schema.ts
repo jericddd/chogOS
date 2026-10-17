@@ -12,6 +12,7 @@ export type ParsedDecision = {
   buildKind: DecisionBuildKind;
   roadStubId: string | "none";
   goalId: string | null;
+  projectId: string | null;
   summary: string;
   rationale: string;
 };
@@ -24,6 +25,7 @@ export const DECISION_RESPONSE_SCHEMA: Record<string, unknown> = {
     buildKind: { type: "string", enum: [...CONSTRUCT_KINDS, "road", "none"] },
     roadStubId: { type: "string" },
     goalId: { type: "string" },
+    projectId: { type: "string" },
     summary: { type: "string" },
     rationale: { type: "string" },
   },
@@ -114,6 +116,8 @@ export function parseDecisionOutput(text: string): { ok: true; decision: ParsedD
 
   const goalRaw = typeof body.goalId === "string" ? body.goalId.trim() : "";
   const goalId = goalRaw && UUID_RE.test(goalRaw) ? goalRaw : null;
+  const projectRaw = typeof body.projectId === "string" ? body.projectId.trim() : "";
+  const projectId = projectRaw && UUID_RE.test(projectRaw) ? projectRaw : null;
 
   return {
     ok: true,
@@ -123,6 +127,7 @@ export function parseDecisionOutput(text: string): { ok: true; decision: ParsedD
       buildKind,
       roadStubId,
       goalId,
+      projectId,
       summary,
       rationale,
     },

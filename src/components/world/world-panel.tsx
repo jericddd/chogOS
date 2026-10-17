@@ -34,8 +34,9 @@ import { matchesFilter, mergeEvents } from "@/lib/world/sync";
 import type { CitizenMindView } from "@/lib/ai/mind-view";
 import { TRAIT_LABELS } from "@/lib/ai/personality";
 import { describeTownNeed, describeTownNeedsBanner } from "@/lib/world/needs";
+import { describeTownProject, describeTownProjectsBanner, openTownProjects } from "@/lib/world/projects";
 import { describeRoadsBanner } from "@/lib/world/roads";
-import type { BuildingView, CitizenView, EventFilter, EventPage, RoadOverlayView, WorldActivity, WorldEventView, WorldSnapshot } from "@/lib/world/types";
+import type { BuildingView, CitizenView, EventFilter, EventPage, RoadOverlayView, TownProjectView, WorldActivity, WorldEventView, WorldSnapshot } from "@/lib/world/types";
 
 const HEALTH_TEXT = {
   live: { label: "Live", tone: "bg-accent", detail: "The shared simulation is running." },
@@ -96,6 +97,7 @@ export function WorldStatus({
       {health !== "live" ? <p className="mt-2 text-xs leading-5 text-warning">{info.detail}</p> : null}
       <TownNeedsLine snapshot={snapshot} />
       <RoadsLine snapshot={snapshot} />
+      <TownProjectsLine snapshot={snapshot} />
     </div>
   );
 }
@@ -120,6 +122,16 @@ function RoadsLine({ snapshot }: { snapshot: WorldSnapshot }) {
   );
 }
 
+function TownProjectsLine({ snapshot }: { snapshot: WorldSnapshot }) {
+  const banner = describeTownProjectsBanner(snapshot.townProjects ?? [], snapshot.townProjectsReady ?? false);
+  const tone = banner.tone === "need" || banner.tone === "blocked" ? "text-warning" : "text-muted";
+  return (
+    <p className={`mt-1 text-xs leading-5 ${tone}`} title={banner.detail}>
+      {banner.title}
+    </p>
+  );
+}
+
 function TownNeedsPanel({ snapshot }: { snapshot: WorldSnapshot }) {
   const banner = describeTownNeedsBanner(snapshot.townNeeds ?? [], snapshot.townNeedsReady ?? false);
   const open = (snapshot.townNeeds ?? []).filter((need) => need.status === "active" || need.status === "blocked");
@@ -137,6 +149,40 @@ function TownNeedsPanel({ snapshot }: { snapshot: WorldSnapshot }) {
                 {copy.title}
                 {need.status === "blocked" && need.blocker ? ` · ${need.blocker}` : ""}
                 {need.lastDecisionId ? " · an AI proposal is linked, the shortage is still open" : ""}
+              </li>
+            );
+          })}
+        </ul>
+      ) : null}
+    </div>
+  );
+}
+
+function TownProjectsPanel({
+  snapshot,
+  onPick,
+}: {
+  snapshot: WorldSnapshot;
+  onPick: (selection: Selection) => void;
+}) {
+  const banner = describeTownProjectsBanner(snapshot.townProjects ?? [], snapshot.townProjectsReady ?? false);
+  const open = openTownProjects(snapshot.townProjects ?? []);
+  return (
+    <div className="mt-4 rounded-lg border border-line px-3 py-2">
+      <p className="text-[0.68rem] tracking-[0.14em] text-muted uppercase">Town projects</p>
+      <p className="mt-1 text-sm">{banner.title}</p>
+      <p className="mt-0.5 text-xs leading-5 text-muted">{banner.detail}</p>
+      {open.length > 0 ? (
+        <ul className="mt-2 space-y-1 text-xs leading-5">
+          {open.map((project) => {
+            const copy = describeTownProject(project);
+            const step = project.steps.find((item) => item.id === project.currentStepId);
+            return (
+              <li key={project.id}>
+                <button type="button" onClick={() => onPick({ type: "project", id: project.id })} className="text-left hover:text-accent">
+                  {copy.title}
+                  {step ? ` · ${step.status} ${step.title}` : ""}
+                </button>
               </li>
             );
           })}
@@ -597,6 +643,117 @@ function RoadsPanel({
   );
 }
 
+function stepTone(status: TownProjectView["steps"][number]["status"]): string {
+  if (status === "completed") {
+    return "text-muted";
+  }
+  if (status === "eligible") {
+    return "text-accent";
+  }
+  if (status === "blocked" || status === "failed") {
+    return "text-warning";
+  }
+  return "text-muted";
+}
+
+function ProjectInspector({
+  project,
+  snapshot,
+  recent,
+  citizenName,
+  onPick,
+  onClose,
+}: {
+  project: TownProjectView;
+  snapshot: WorldSnapshot;
+  recent: readonly WorldEventView[];
+  citizenName: (tokenId: string) => string | null;
+  onPick: (selection: Selection) => void;
+  onClose: () => void;
+}) {
+  const now = useNow(15_000);
+  const relatedRoad = (snapshot.roads ?? []).find((road) => road.id === project.relatedRoadId);
+  const relatedBuilding = snapshot.buildings.find((building) => building.id === project.relatedBuildingId);
+  const history = recent.filter(
+    (event) =>
+      event.kind.startsWith("town.project_") &&
+      (event.summary.includes(project.name) || event.id === project.lastEventId),
+  );
+  return (
+    <article aria-label={`Project ${project.name}`}>
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <p className="text-[0.68rem] tracking-[0.16em] text-accent uppercase">Town project</p>
+          <h2 className="font-serif text-2xl tracking-tight">{project.name}</h2>
+          <p className="text-xs text-muted">
+            {project.projectType.replace(/_/g, " ")} · {project.status}
+          </p>
+        </div>
+        <button type="button" onClick={onClose} className="rounded-md px-2 py-1 text-sm text-muted hover:bg-background hover:text-foreground" aria-label="Close inspector">
+          ✕
+        </button>
+      </div>
+      <p className="mt-3 text-sm leading-6">{project.description}</p>
+      <p className="mt-2 text-xs leading-5 text-muted">{project.justification}</p>
+      <dl className="mt-3 space-y-1 text-sm">
+        <div className="flex justify-between gap-3">
+          <dt className="text-muted">Current step</dt>
+          <dd>{project.steps.find((item) => item.id === project.currentStepId)?.title ?? "complete"}</dd>
+        </div>
+        <div className="flex justify-between gap-3">
+          <dt className="text-muted">Blocker</dt>
+          <dd>{project.blocker ?? "none"}</dd>
+        </div>
+        <div className="flex justify-between gap-3">
+          <dt className="text-muted">Verification</dt>
+          <dd>{project.lastEventId ? "Hashed offchain" : "No project event yet"}</dd>
+        </div>
+      </dl>
+      {project.lastDecisionId ? (
+        <p className="mt-2 text-xs leading-5 text-muted">An AI proposal is linked. That does not complete this project.</p>
+      ) : null}
+      <section className="mt-4">
+        <h3 className="text-xs tracking-[0.14em] text-muted uppercase">Milestones</h3>
+        <ol className="mt-1 space-y-1 text-xs leading-5">
+          {project.steps.map((step) => (
+            <li key={step.id} className={stepTone(step.status)}>
+              {step.status === "completed" || step.status === "skipped" ? "✓" : step.status === "eligible" ? "→" : "·"}{" "}
+              {step.title}
+              {step.status === "pending" ? " (not started)" : ` (${step.status})`}
+              {step.blocker ? ` · ${step.blocker}` : ""}
+            </li>
+          ))}
+        </ol>
+      </section>
+      <div className="mt-3 flex flex-wrap gap-2 text-xs">
+        {relatedRoad ? (
+          <button type="button" onClick={() => onPick({ type: "road", id: relatedRoad.id })} className="rounded-md border border-line px-2 py-1 hover:text-accent">
+            Road {relatedRoad.name}
+          </button>
+        ) : null}
+        {relatedBuilding ? (
+          <button type="button" onClick={() => onPick({ type: "building", id: relatedBuilding.id })} className="text-accent">
+            {relatedBuilding.name}
+          </button>
+        ) : null}
+        {project.relatedPlotId ? <span className="rounded-md border border-line px-2 py-1">{project.relatedPlotId}</span> : null}
+      </div>
+      <p className="mt-3 text-xs leading-5 text-muted">
+        Visitors cannot create or edit projects. A planned farm is not a working farm. A queued intent is not a placed road.
+      </p>
+      <section className="mt-4">
+        <h3 className="text-xs tracking-[0.14em] text-muted uppercase">Recent history</h3>
+        {history.length === 0 ? <p className="mt-2 text-xs text-muted">No project events in this tab yet.</p> : null}
+        <ul className="mt-1 divide-y divide-line">
+          {history.slice(0, 8).map((event) => (
+            <EventItem key={event.id} event={event} now={now} citizenName={citizenName} compact />
+          ))}
+        </ul>
+      </section>
+    </article>
+  );
+}
+
 function RoadInspector({
   road,
   recent,
@@ -685,6 +842,7 @@ function WorldOverview({ snapshot, onPick }: { snapshot: WorldSnapshot; onPick: 
         ))}
       </ul>
       <TownNeedsPanel snapshot={snapshot} />
+      <TownProjectsPanel snapshot={snapshot} onPick={onPick} />
       <RoadsPanel snapshot={snapshot} onPick={onPick} />
       {store ? (
         <button
@@ -816,6 +974,22 @@ export function WorldPanel({
     const road = (snapshot.roads ?? []).find((item) => item.id === selection.id);
     if (road) {
       return <RoadInspector key={road.id} road={road} recent={recent} citizenName={citizenName} onClose={close} />;
+    }
+  }
+  if (selection?.type === "project") {
+    const project = (snapshot.townProjects ?? []).find((item) => item.id === selection.id);
+    if (project) {
+      return (
+        <ProjectInspector
+          key={project.id}
+          project={project}
+          snapshot={snapshot}
+          recent={recent}
+          citizenName={citizenName}
+          onPick={onPick}
+          onClose={close}
+        />
+      );
     }
   }
   return <WorldOverview snapshot={snapshot} onPick={onPick} />;

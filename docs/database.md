@@ -165,6 +165,18 @@ Paste it on the hosted project after review. See [phase-5.md](phase-5.md).
 
 `anon` and `authenticated` have no grants. `service_role` may select the overlay tables and execute `world_place_road`. The file in git is not applied to hosted Supabase until an operator pastes it.
 
+## Phase 5d town projects
+
+`20261016220000_phase5d_town_projects.sql` is additive. It does not reset the clock, rewrite events, move buildings, or rerun verify cutover.
+
+- `town_projects` stores one open row per `objective_key` (`proposed`, `active`, `blocked`, `completed`, `abandoned`, `cancelled`).
+- Steps live in jsonb. They advance only from persisted roads, plots, buildings, stock, and assignments.
+- `world_advance_town_projects()` runs from a trigger after `world_tick()` updates the clock, after town-needs evaluation. It does not call a model and does not place buildings or roads.
+- `world_link_town_project` records that an AI decision responded to an open project. It does not complete a step.
+- Events `town.project_created`, `town.project_step_eligible`, `town.project_step_completed`, `town.project_blocked`, `town.project_completed`, and `town.project_abandoned` are `source=system` and reuse `world_record_event` hashing. They are planner transitions, not AI decisions.
+
+`anon` and `authenticated` have no grants. `service_role` may select `town_projects` and execute `world_link_town_project`. Paste this file after Phase 5b. See [phase-5.md](phase-5.md).
+
 ## Not stored
 
 Browser sessions, private keys, session-key material, and live prices are outside this migration. Session keys, when they exist, belong to the wallet contract. The database may store a public description of a permission, not the key that can exercise it.

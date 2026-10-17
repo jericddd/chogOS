@@ -12,7 +12,12 @@ import {
   preferredBuildKind as preferredBuildKindFromNeeds,
   prioritizeTownActions,
 } from "@/lib/world/needs";
-import type { BuildingView, CitizenView, TownNeedView } from "@/lib/world/types";
+import {
+  eligibleProjectCandidates,
+  openTownProjects,
+  prioritizeProjectActions,
+} from "@/lib/world/projects";
+import type { BuildingView, CitizenView, TownNeedView, TownProjectView } from "@/lib/world/types";
 
 export const FOOD_SHORTAGE = FOOD_SHORTAGE_ACTIVATE;
 export const TOOLS_SHORTAGE = TOOLS_SHORTAGE_ACTIVATE;
@@ -84,6 +89,7 @@ export type DecisionContext = {
   ranked: RankedAction[];
   construction: ConstructionContext;
   townNeeds: TownNeedView[];
+  townProjects: TownProjectView[];
 };
 
 export function preferredBuildKind(
@@ -186,6 +192,7 @@ export function buildDecisionContext(input: {
   vacantServedLots?: number;
   reservedLots?: number;
   townNeeds?: TownNeedView[];
+  townProjects?: TownProjectView[];
   canBuildKinds?: ConstructKind[];
   eligibleRoadStubs?: ConstructionContext["roads"]["eligibleStubs"];
   completedRoadIds?: string[];
@@ -212,13 +219,22 @@ export function buildDecisionContext(input: {
     ...new Set(feasible.map((option) => option.action)),
     ...(canBuild ? (["build"] as const) : []),
   ];
-  const prioritized = prioritizeTownActions({
+  const townProjects = input.townProjects ?? [];
+  const needRanked = prioritizeTownActions({
     personality: input.personality,
     rankedSeed,
     citizen: input.citizen,
     feasible,
     needs: townNeeds,
     canBuildKinds,
+  });
+  const prioritized = prioritizeProjectActions({
+    personality: input.personality,
+    ranked: needRanked.ranked,
+    suggested: needRanked.suggested,
+    citizen: input.citizen,
+    projects: townProjects,
+    needs: townNeeds,
   });
   const construction = constructionFromBuildings(
     input.buildings,
@@ -254,6 +270,7 @@ export function buildDecisionContext(input: {
     ranked: prioritized.ranked,
     construction,
     townNeeds: activeTownNeeds(townNeeds),
+    townProjects: openTownProjects(townProjects).slice(0, 4),
   };
 }
 
@@ -294,6 +311,16 @@ export function contextCommitment(context: DecisionContext): string {
         vacantServedLots: need.evidence.vacantServedLots,
       },
     })),
+    townProjects: context.townProjects.map((project) => ({
+      id: project.id,
+      type: project.projectType,
+      status: project.status,
+      step: project.currentStepId,
+      recommendedAction: project.recommendedAction,
+      recommendedKind: project.recommendedKind,
+      recommendedStubId: project.recommendedStubId,
+      blocker: project.blocker,
+    })),
   };
   return `0x${createHash("sha256").update(JSON.stringify(body)).digest("hex")}`;
 }
@@ -309,6 +336,7 @@ export function decisionMessages(context: DecisionContext, maxChars: number): { 
     "When a listed need is active and a relevant feasible action exists, choose that action instead of an ordinary social visit.",
     "Prefer a farm when food is short and a workshop when tools are short, but only if construction is listed as available. Do not propose a building when materials or lots are missing.",
     "A completed farm is not food. A completed workshop is not tools. Do not mark a need resolved.",
+    "Town projects are engine facts. Choose a listed eligible project step when it matches a feasible action. Set projectId to that id. You cannot complete a project, skip a road, or unlock land by saying it is done.",
     "A rejected workplace should not be repeated unless conditions changed.",
     "source=ai is applied only if this JSON is later validated. You cannot complete a goal or a building by saying it is complete.",
     "The free Gemini tier may use this prompt to improve Google products. Do not include secrets. None are provided.",
@@ -351,6 +379,20 @@ export function decisionMessages(context: DecisionContext, maxChars: number): { 
     ranked: context.ranked,
     construction: context.construction,
     roads: context.construction.roads,
+    townProjects: context.townProjects.map((project) => ({
+      id: project.id,
+      type: project.projectType,
+      name: project.name,
+      status: project.status,
+      why: project.justification,
+      currentStep: project.currentStepId,
+      currentStepTitle: project.steps.find((step) => step.id === project.currentStepId)?.title ?? null,
+      blocker: project.blocker,
+      recommendedAction: project.recommendedAction,
+      recommendedKind: project.recommendedKind,
+      recommendedStubId: project.recommendedStubId,
+    })),
+    projectCandidates: eligibleProjectCandidates(context.townProjects),
   });
 
   if (system.length + user.length <= maxChars) {

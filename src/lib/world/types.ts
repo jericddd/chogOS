@@ -181,6 +181,67 @@ export type RoadOverlayView = {
   source: EventSource;
 };
 
+export type TownProjectType = "food_production" | "tool_production" | "residential" | "territorial";
+export type TownProjectStatus = "proposed" | "active" | "blocked" | "completed" | "abandoned" | "cancelled";
+export type TownProjectStepStatus = "pending" | "eligible" | "blocked" | "completed" | "failed" | "skipped";
+export type TownProjectBuildKind = ConstructKind | "road" | "none";
+
+export type TownProjectStepView = {
+  id: string;
+  title: string;
+  status: TownProjectStepStatus;
+  action: TownRecommendedAction;
+  buildKind: TownProjectBuildKind;
+  roadStubId: string | null;
+  plotId: string | null;
+  buildingId: string | null;
+  blocker: string | null;
+  skipped: boolean;
+  completedAt: string | null;
+  eventId: string | null;
+};
+
+export type TownProjectEvidence = TownNeedEvidence & {
+  houseBeds: number;
+  pendingHouseBeds: number;
+  assignedResidents: number;
+  unassignedCitizens: number;
+  farmBatches: number;
+  workshopBatches: number;
+  placedStubIds: string[];
+};
+
+/** Persisted town development project. Status follows world facts, not a model claim. */
+export type TownProjectView = {
+  id: string;
+  projectType: TownProjectType;
+  objectiveKey: string;
+  name: string;
+  description: string;
+  status: TownProjectStatus;
+  priority: number;
+  needType: TownNeedType | null;
+  justification: string;
+  steps: TownProjectStepView[];
+  currentStepId: string | null;
+  currentStepIndex: number;
+  blocker: string | null;
+  recommendedAction: TownRecommendedAction;
+  recommendedKind: TownProjectBuildKind;
+  recommendedStubId: string | null;
+  relatedBuildingId: string | null;
+  relatedPlotId: string | null;
+  relatedRoadId: string | null;
+  relatedCitizenId: string | null;
+  evidence: TownProjectEvidence;
+  createdAt: string | null;
+  updatedAt: string | null;
+  completedAt: string | null;
+  lastEvaluatedAt: string | null;
+  lastEventId: string | null;
+  lastDecisionId: string | null;
+};
+
 export type WorldSnapshot = {
   status: "ok";
   clock: ClockView;
@@ -195,6 +256,9 @@ export type WorldSnapshot = {
   roads: RoadOverlayView[];
   /** False when the Phase 5b table is not in this database. */
   roadsReady: boolean;
+  townProjects: TownProjectView[];
+  /** False when the Phase 5d table is not in this database. */
+  townProjectsReady: boolean;
 };
 
 export type WorldLoad = WorldSnapshot | WorldUnavailable;

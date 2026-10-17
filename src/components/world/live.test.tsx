@@ -2,9 +2,9 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ActivityFeed } from "@/components/world/activity-feed";
-import { WorldStatus } from "@/components/world/world-panel";
+import { WorldPanel, WorldStatus } from "@/components/world/world-panel";
 import { createLiveStore, type RealtimeConnector, type RealtimeHandlers } from "@/components/world/live-store";
-import type { ClockView, TownNeedView, WorldEventView, WorldLive, WorldSnapshot } from "@/lib/world/types";
+import type { ClockView, TownNeedView, TownProjectView, WorldEventView, WorldLive, WorldSnapshot } from "@/lib/world/types";
 
 vi.mock("next/link", () => ({
   default: (props: { href: string; children: React.ReactNode; className?: string }) => (
@@ -65,6 +65,8 @@ function snapshot(events: WorldEventView[]): WorldSnapshot {
     townNeedsReady: false,
     roads: [],
     roadsReady: false,
+    townProjects: [],
+    townProjectsReady: false,
   };
 }
 
@@ -304,6 +306,190 @@ describe("town needs inspector", () => {
       <WorldStatus snapshot={{ ...snapshot([]), roadsReady: true }} skewMs={0} link="live" realtime="subscribed" />,
     );
     expect(screen.getByText(/No constructed road spurs yet/)).toBeTruthy();
+  });
+
+  it("shows whether town projects have been applied", () => {
+    render(<WorldStatus snapshot={snapshot([])} skewMs={0} link="live" realtime="subscribed" />);
+    expect(screen.getByText(/Town projects are not in this database yet/)).toBeTruthy();
+    cleanup();
+    render(
+      <WorldStatus snapshot={{ ...snapshot([]), townProjectsReady: true }} skewMs={0} link="live" realtime="subscribed" />,
+    );
+    expect(screen.getByText(/No active development project/)).toBeTruthy();
+    expect(screen.queryByText(/Town projects are not in this database yet/)).toBeNull();
+  });
+
+  it("shows a persisted territorial project as planned, not complete", () => {
+    const project: TownProjectView = {
+      id: "11111111-1111-4111-8111-111111111111",
+      projectType: "territorial",
+      objectiveKey: "territorial:east-y2-64",
+      name: "Open plot-64-2",
+      description: "Place a catalog road stub so a reserved surveyed lot can be served.",
+      status: "active",
+      priority: 30,
+      needType: null,
+      justification: "6 reserved lots remain. Catalog stub east-y2-64 is the next unused spur.",
+      steps: [
+        {
+          id: "place_road",
+          title: "Place catalog road east-y2-64",
+          status: "eligible",
+          action: "build",
+          buildKind: "road",
+          roadStubId: "east-y2-64",
+          plotId: "plot-64-2",
+          buildingId: null,
+          blocker: null,
+          skipped: false,
+          completedAt: null,
+          eventId: null,
+        },
+      ],
+      currentStepId: "place_road",
+      currentStepIndex: 0,
+      blocker: null,
+      recommendedAction: "build",
+      recommendedKind: "road",
+      recommendedStubId: "east-y2-64",
+      relatedBuildingId: null,
+      relatedPlotId: "plot-64-2",
+      relatedRoadId: "east-y2-64",
+      relatedCitizenId: null,
+      evidence: {
+        food: 400,
+        wood: 400,
+        stone: 400,
+        tools: 400,
+        vacantServedLots: 20,
+        reservedLots: 6,
+        farms: 2,
+        workshops: 2,
+        houses: 15,
+        underConstruction: [],
+        houseBeds: 48,
+        pendingHouseBeds: 12,
+        assignedResidents: 48,
+        unassignedCitizens: 11,
+        farmBatches: 0,
+        workshopBatches: 0,
+        placedStubIds: [],
+      },
+      createdAt: "2026-10-16T20:00:00Z",
+      updatedAt: "2026-10-16T20:00:00Z",
+      completedAt: null,
+      lastEvaluatedAt: "2026-10-16T20:00:00Z",
+      lastEventId: null,
+      lastDecisionId: null,
+    };
+    render(
+      <WorldStatus
+        snapshot={{ ...snapshot([]), townProjects: [project], townProjectsReady: true }}
+        skewMs={0}
+        link="live"
+        realtime="subscribed"
+      />,
+    );
+    expect(screen.getByText(/Open plot-64-2 · active/)).toBeTruthy();
+    expect(screen.queryByText(/reached its completion condition/)).toBeNull();
+  });
+
+  it("shows the project inspector as planned work, not a completed road", () => {
+    const project: TownProjectView = {
+      id: "11111111-1111-4111-8111-111111111111",
+      projectType: "territorial",
+      objectiveKey: "territorial:east-y2-64",
+      name: "Open plot-64-2",
+      description: "Place a catalog road stub so a reserved surveyed lot can be served.",
+      status: "active",
+      priority: 30,
+      needType: null,
+      justification: "6 reserved lots remain. Catalog stub east-y2-64 is the next unused spur.",
+      steps: [
+        {
+          id: "place_road",
+          title: "Place catalog road east-y2-64",
+          status: "eligible",
+          action: "build",
+          buildKind: "road",
+          roadStubId: "east-y2-64",
+          plotId: "plot-64-2",
+          buildingId: null,
+          blocker: null,
+          skipped: false,
+          completedAt: null,
+          eventId: null,
+        },
+        {
+          id: "unlock_plot",
+          title: "Wait until plot-64-2 is road-served",
+          status: "pending",
+          action: "none",
+          buildKind: "none",
+          roadStubId: "east-y2-64",
+          plotId: "plot-64-2",
+          buildingId: null,
+          blocker: null,
+          skipped: false,
+          completedAt: null,
+          eventId: null,
+        },
+      ],
+      currentStepId: "place_road",
+      currentStepIndex: 0,
+      blocker: null,
+      recommendedAction: "build",
+      recommendedKind: "road",
+      recommendedStubId: "east-y2-64",
+      relatedBuildingId: null,
+      relatedPlotId: "plot-64-2",
+      relatedRoadId: "east-y2-64",
+      relatedCitizenId: null,
+      evidence: {
+        food: 400,
+        wood: 400,
+        stone: 400,
+        tools: 400,
+        vacantServedLots: 20,
+        reservedLots: 6,
+        farms: 2,
+        workshops: 2,
+        houses: 15,
+        underConstruction: [],
+        houseBeds: 48,
+        pendingHouseBeds: 12,
+        assignedResidents: 48,
+        unassignedCitizens: 11,
+        farmBatches: 0,
+        workshopBatches: 0,
+        placedStubIds: [],
+      },
+      createdAt: "2026-10-16T20:00:00Z",
+      updatedAt: "2026-10-16T20:00:00Z",
+      completedAt: null,
+      lastEvaluatedAt: "2026-10-16T20:00:00Z",
+      lastEventId: null,
+      lastDecisionId: null,
+    };
+    render(
+      <WorldPanel
+        snapshot={{ ...snapshot([]), townProjects: [project], townProjectsReady: true }}
+        skewMs={0}
+        selection={{ type: "project", id: project.id }}
+        recent={[]}
+        follow={false}
+        onToggleFollow={() => undefined}
+        onPick={() => undefined}
+      />,
+    );
+    expect(screen.getByLabelText("Project Open plot-64-2")).toBeTruthy();
+    expect(screen.getByText("territorial · active")).toBeTruthy();
+    expect(screen.getByText(/Place catalog road east-y2-64 \(eligible\)/)).toBeTruthy();
+    expect(screen.getByText(/Wait until plot-64-2 is road-served \(not started\)/)).toBeTruthy();
+    expect(screen.getByText(/Visitors cannot create or edit projects/)).toBeTruthy();
+    expect(screen.getByText("No project event yet")).toBeTruthy();
+    expect(screen.queryByText(/functioning farm/)).toBeNull();
+    expect(screen.queryByText(/reached its completion condition/)).toBeNull();
   });
 
   it("shows no critical shortage when persisted needs are healthy", () => {

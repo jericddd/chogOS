@@ -153,6 +153,8 @@ export function createLiveStore(initial: WorldLoad, options: Options = {}): Live
         townNeedsReady: live.townNeedsReady ?? current?.townNeedsReady ?? false,
         roads: live.roads ?? current?.roads ?? [],
         roadsReady: live.roadsReady ?? current?.roadsReady ?? false,
+        townProjects: live.townProjects ?? current?.townProjects ?? [],
+        townProjectsReady: live.townProjectsReady ?? current?.townProjectsReady ?? false,
       },
       unavailable: null,
       skewMs: Date.parse(live.clock.serverNow) - now(),

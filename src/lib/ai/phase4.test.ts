@@ -173,8 +173,26 @@ describe("structured decisions", () => {
     if (road.ok) {
       expect(road.decision.buildKind).toBe("road");
       expect(road.decision.roadStubId).toBe("east-y2-64");
+      expect(road.decision.projectId).toBeNull();
       expect(road.decision).not.toHaveProperty("x");
       expect(road.decision).not.toHaveProperty("tiles");
+    }
+    const withProject = parseDecisionOutput(
+      JSON.stringify({
+        action: "build",
+        buildingId: "",
+        buildKind: "road",
+        roadStubId: "east-y2-64",
+        projectId: "11111111-1111-4111-8111-111111111111",
+        coordinates: { x: 1, y: 2 },
+        summary: "Advance the town project.",
+        rationale: "The engine listed this stub as eligible.",
+      }),
+    );
+    expect(withProject.ok).toBe(true);
+    if (withProject.ok) {
+      expect(withProject.decision.projectId).toBe("11111111-1111-4111-8111-111111111111");
+      expect(withProject.decision).not.toHaveProperty("coordinates");
     }
     expect(
       parseDecisionOutput(
@@ -534,8 +552,10 @@ describe("decision context", () => {
     });
     expect(withRoad.canBuild).toBe(true);
     expect(withRoad.construction.roads.canBuildRoad).toBe(true);
+    expect(withRoad.townProjects).toEqual([]);
     const messages = decisionMessages(withRoad, 8000);
     expect(messages.system).toContain("roadStubId");
+    expect(messages.system).toContain("projectId");
     expect(messages.user).toContain("east-y2-64");
   });
 });
