@@ -73,6 +73,13 @@ describe("public world routes", () => {
       expect(response.status).toBe(400);
     }
     expect(loadEventPage).toHaveBeenCalledTimes(1);
+    const ai = await GET(new Request("http://x/api/world/events?category=ai", { headers: { "x-forwarded-for": "2.2.2.3" } }));
+    expect(ai.status).toBe(200);
+    expect(loadEventPage).toHaveBeenCalledWith(
+      { category: "ai", source: undefined, tokenId: undefined, buildingId: undefined },
+      null,
+      20,
+    );
   });
 });
 

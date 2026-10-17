@@ -1,10 +1,17 @@
+import Link from "next/link";
 import { connection } from "next/server";
 import { Suspense } from "react";
 import type { Metadata } from "next";
 import { PageHeader } from "@/components/ui/page-header";
+import { SourceBadge } from "@/components/world/event-item";
+import { formatUtc } from "@/lib/civilization/labels";
 import { readAppConfig } from "@/lib/config/env";
 import { EVENT_HASH_ALG, EVENT_INTEGRITY_SCHEMA } from "@/lib/verify/canonical";
 import { TREE_FORMAT } from "@/lib/verify/merkle";
+import { loadEventPage } from "@/lib/world/load";
+import { CATEGORY_LABEL } from "@/lib/world/present";
+import { pickAiConstructionEvent } from "@/lib/world/sync";
+import type { EventPage, WorldEventView } from "@/lib/world/types";
 
 export const metadata: Metadata = {
   title: "Verify",
@@ -18,10 +25,19 @@ export default function VerifyPage() {
   );
 }
 
+function featuredAiConstruction(page: EventPage): WorldEventView | null {
+  if (page.status !== "ok") {
+    return null;
+  }
+  return pickAiConstructionEvent(page.events);
+}
+
 async function VerifyLive() {
   await connection();
   const config = readAppConfig();
   const anchored = Boolean(config.eventAnchorAddress);
+  const history = await loadEventPage({ source: "ai", category: "construction" }, null, 1);
+  const featured = featuredAiConstruction(history);
 
   return (
     <div>
@@ -29,7 +45,8 @@ async function VerifyLive() {
         title="Verifiable history"
         lede="Every sealed event has a canonical encoding and a SHA-256 hash. Batches of those hashes can be committed with an OpenZeppelin standard Merkle tree. A matching hash is evidence about the stored bytes, not about whether the simulation told the truth."
       />
-      <div className="max-w-3xl space-y-6 text-sm leading-6 text-muted">
+      <LatestAiConstruction page={history} event={featured} />
+      <div className="mt-8 max-w-3xl space-y-6 text-sm leading-6 text-muted">
         <p>
           Status labels are not interchangeable. An event whose hash matches is{" "}
           <span className="text-foreground">event_hash_verified</span>. A matching live prev-hash link is{" "}
@@ -64,5 +81,51 @@ async function VerifyLive() {
         </p>
       </div>
     </div>
+  );
+}
+
+function LatestAiConstruction({
+  page,
+  event,
+}: {
+  page: EventPage;
+  event: WorldEventView | null;
+}) {
+  return (
+    <section className="max-w-3xl rounded-2xl border border-line bg-card px-4 py-5 sm:px-5">
+      <h2 className="font-serif text-2xl tracking-tight">Latest AI construction</h2>
+      <p className="mt-1 text-sm leading-6 text-muted">
+        The newest recorded construction event with source AI, when one exists. Verification below is offchain
+        event-chain checking of stored bytes, not an on-chain proof.
+      </p>
+      {page.status !== "ok" ? (
+        <p className="mt-4 text-sm leading-6 text-muted">
+          {page.detail} AI construction events appear here once recorded history can be read. This page does not
+          invent examples.
+        </p>
+      ) : event ? (
+        <div className="mt-4">
+          <p className="flex flex-wrap items-center gap-2">
+            <SourceBadge source={event.source} />
+            <span>{event.summary}</span>
+          </p>
+          <p className="mt-2 text-sm text-muted">
+            <span className="font-mono text-foreground">{event.kind}</span>
+            <span> · {CATEGORY_LABEL[event.category]}</span>
+            <span> · {formatUtc(event.occurredAt)}</span>
+            <span> · source {event.source}</span>
+          </p>
+          <p className="mt-3">
+            <Link href={`/verify/events/${event.id}`} className="text-sm text-accent hover:underline">
+              Verify this event
+            </Link>
+          </p>
+        </div>
+      ) : (
+        <p className="mt-4 text-sm leading-6 text-muted">
+          No AI construction events are recorded yet. This page does not invent event ids or verification results.
+        </p>
+      )}
+    </section>
   );
 }

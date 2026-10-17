@@ -1,4 +1,67 @@
-import type { EventFilter, WorldEventView } from "@/lib/world/types";
+import {
+  EVENT_CATEGORIES,
+  EVENT_SOURCES,
+  type EventCategory,
+  type EventFilter,
+  type EventSource,
+  type WorldEventView,
+} from "@/lib/world/types";
+
+function oneParam(value: string | string[] | undefined): string | undefined {
+  return Array.isArray(value) ? value[0] : value;
+}
+
+/**
+ * Category `ai` is a discovery alias for `source=ai`. Real AI construction
+ * rows are stored with categories such as construction, not category=ai.
+ */
+export function resolveEventFilter(filter: EventFilter): EventFilter {
+  if (filter.category !== "ai") {
+    return filter;
+  }
+  const resolved: EventFilter = { ...filter, source: "ai" };
+  delete resolved.category;
+  return resolved;
+}
+
+/** Latest qualifying AI construction row, or null. Never invents a fallback event. */
+export function pickAiConstructionEvent(events: readonly WorldEventView[]): WorldEventView | null {
+  return events.find((event) => event.source === "ai" && event.category === "construction") ?? null;
+}
+
+/** History/search query → filter. Unknown values are ignored. */
+export function eventFilterFromSearch(
+  params: Record<string, string | string[] | undefined>,
+): EventFilter {
+  const filter: EventFilter = {};
+  const category = oneParam(params.category);
+  const source = oneParam(params.source);
+  const citizen = oneParam(params.citizen);
+  const building = oneParam(params.building);
+  if (category && (EVENT_CATEGORIES as readonly string[]).includes(category)) {
+    filter.category = category as EventCategory;
+  }
+  if (source && (EVENT_SOURCES as readonly string[]).includes(source)) {
+    filter.source = source as EventSource;
+  }
+  if (citizen && /^[0-9]{1,78}$/.test(citizen)) {
+    filter.tokenId = citizen;
+  }
+  if (building && /^[a-z0-9-]{2,40}$/.test(building)) {
+    filter.buildingId = building;
+  }
+  return filter;
+}
+
+/** UI filter as History URL query params. Does not apply the AI category alias. */
+export function eventFilterSearchParams(filter: EventFilter): URLSearchParams {
+  const params = new URLSearchParams();
+  if (filter.category) params.set("category", filter.category);
+  if (filter.source) params.set("source", filter.source);
+  if (filter.tokenId) params.set("citizen", filter.tokenId);
+  if (filter.buildingId) params.set("building", filter.buildingId);
+  return params;
+}
 
 /** Newest first, one row per id. A row seen twice keeps the later copy. */
 export function mergeEvents(
@@ -29,16 +92,17 @@ export function oldestSeq(events: readonly WorldEventView[]): number | null {
 }
 
 export function matchesFilter(event: WorldEventView, filter: EventFilter): boolean {
-  if (filter.category && event.category !== filter.category) {
+  const resolved = resolveEventFilter(filter);
+  if (resolved.category && event.category !== resolved.category) {
     return false;
   }
-  if (filter.source && event.source !== filter.source) {
+  if (resolved.source && event.source !== resolved.source) {
     return false;
   }
-  if (filter.tokenId && event.tokenId !== filter.tokenId && event.relatedTokenId !== filter.tokenId) {
+  if (resolved.tokenId && event.tokenId !== resolved.tokenId && event.relatedTokenId !== resolved.tokenId) {
     return false;
   }
-  if (filter.buildingId && event.buildingId !== filter.buildingId) {
+  if (resolved.buildingId && event.buildingId !== resolved.buildingId) {
     return false;
   }
   return true;

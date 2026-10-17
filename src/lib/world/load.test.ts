@@ -78,4 +78,18 @@ describe("world loader", () => {
     });
     expect(LIVE_EVENT_LIMIT).toBe(100);
   });
+
+  it("queries source=ai when the category filter is the AI alias", async () => {
+    respond = () => ({ data: [], error: null });
+    const { loadEventPage } = await import("@/lib/world/load");
+    await loadEventPage({ category: "ai" }, null, 10);
+    const history = calls.filter((c) => c.table === "civilization_events");
+    expect(history).toContainEqual({ table: "civilization_events", method: "eq", args: ["source", "ai"] });
+    expect(history).not.toContainEqual({ table: "civilization_events", method: "eq", args: ["category", "ai"] });
+    calls.length = 0;
+    await loadEventPage({ category: "construction", source: "ai" }, null, 1);
+    const construction = calls.filter((c) => c.table === "civilization_events");
+    expect(construction).toContainEqual({ table: "civilization_events", method: "eq", args: ["category", "construction"] });
+    expect(construction).toContainEqual({ table: "civilization_events", method: "eq", args: ["source", "ai"] });
+  });
 });
