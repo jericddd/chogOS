@@ -137,6 +137,7 @@ describe("structured decisions", () => {
     if (farm.ok) {
       expect(farm.decision.buildKind).toBe("farm");
       expect(farm.decision.buildingId).toBe("");
+      expect(farm.decision.activationMotive).toBeNull();
       expect(farm.decision).not.toHaveProperty("x");
     }
     expect(
@@ -488,6 +489,8 @@ describe("decision context", () => {
     expect(context.memories.length).toBeLessThanOrEqual(8);
     expect(context.feasible.some((option) => option.action === "work" && option.buildingId === "workshop-a")).toBe(true);
     expect(context.suggested).toBe("work");
+    expect(context.walletActivation.state).toBe("unassigned");
+    expect(context.walletActivation.eligibleToRequest).toBe(false);
     expect(context.construction.validKinds).toEqual(["house", "farm", "workshop"]);
     expect(context.construction.suggestedBuildKind).toBe("workshop");
     const hungry = buildDecisionContext({
@@ -556,6 +559,7 @@ describe("decision context", () => {
     const messages = decisionMessages(withRoad, 8000);
     expect(messages.system).toContain("roadStubId");
     expect(messages.system).toContain("projectId");
+    expect(messages.system).toContain("request_wallet_activation");
     expect(messages.user).toContain("east-y2-64");
   });
 });

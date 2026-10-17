@@ -161,7 +161,8 @@ describe("phase 6a safety", () => {
     expect(script).toContain("NotMonadMainnet");
     expect(script).toContain("MissingCreate2Deployer");
     expect(script).toContain("0x4e59b44847b379578588920cA78FbF26c0B4956C");
-    expect(script).toContain('keccak256("chogOS.CitizenAccountFactory.v1")');
+    expect(script).toContain('keccak256("chogOS.CitizenAccountFactory.v1.1")');
+    expect(script).toContain("0x2d8c32B8Df4E57a18A96fa2830DE036A781B472c");
     expect(script).not.toMatch(/MockGenesisNFT/);
     expect(script).not.toMatch(/vm\.envUint/);
     expect(script).not.toMatch(/vm\.envString/);

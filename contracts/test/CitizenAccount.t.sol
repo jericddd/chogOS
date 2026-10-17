@@ -58,7 +58,7 @@ contract CitizenAccountTest is Test {
     function testFactoryCreate2SaltMatchesDeployScript() public {
         DeployCitizenAccountFactory script = new DeployCitizenAccountFactory();
         bytes32 salt = script.FACTORY_SALT();
-        assertEq(salt, keccak256("chogOS.CitizenAccountFactory.v1"));
+        assertEq(salt, keccak256("chogOS.CitizenAccountFactory.v1.1"));
         assertEq(script.DETERMINISTIC_CREATE2(), 0x4e59b44847b379578588920cA78FbF26c0B4956C);
         CitizenAccountFactory created = new CitizenAccountFactory{salt: salt}();
         assertEq(
@@ -68,7 +68,8 @@ contract CitizenAccountTest is Test {
         assertEq(script.predictFactory(address(this)), vm.computeCreate2Address(salt, script.factoryInitCodeHash(), address(this)));
         assertEq(script.predictFactory(), vm.computeCreate2Address(salt, script.factoryInitCodeHash()));
         assertEq(script.predictFactory(), vm.computeCreate2Address(salt, script.factoryInitCodeHash(), script.DETERMINISTIC_CREATE2()));
-        assertEq(script.predictFactory(), 0x2d8c32B8Df4E57a18A96fa2830DE036A781B472c);
+        assertTrue(script.predictFactory() != 0x2d8c32B8Df4E57a18A96fa2830DE036A781B472c);
+        assertEq(script.predictFactory(), 0xA2edAC990B30A488D61fc4607D4365b22e41e39c);
     }
 
     function testPinnedCompilerSettings() public view {
@@ -114,6 +115,81 @@ contract CitizenAccountTest is Test {
         vm.prank(walletC);
         account.execute(address(sink), 0, abi.encodeWithSelector(pingSelector, 2));
         assertEq(sink.lastValue(), 2);
+    }
+
+    function testSessionFollowsOwnerAndLatchesOnObservedTransfer() public {
+        vm.prank(walletA);
+        account.openSession(executor, address(sink), pingSelector, 0, 0, 1 days);
+        vm.prank(executor);
+        account.executeSession(0, address(sink), 0, abi.encodeWithSelector(pingSelector, 1));
+        assertEq(sink.lastValue(), 1);
+
+        vm.prank(walletA);
+        nft.transfer(walletB, tokenId);
+        account.syncOwner();
+        vm.expectRevert(CitizenAccount.SessionDead.selector);
+        vm.prank(executor);
+        account.executeSession(1, address(sink), 0, abi.encodeWithSelector(pingSelector, 2));
+
+        vm.prank(walletB);
+        nft.transfer(walletA, tokenId);
+        vm.expectRevert(CitizenAccount.SessionDead.selector);
+        vm.prank(executor);
+        account.executeSession(1, address(sink), 0, abi.encodeWithSelector(pingSelector, 3));
+        vm.prank(walletA);
+        account.execute(address(sink), 0, abi.encodeWithSelector(pingSelector, 4));
+        assertEq(sink.lastValue(), 4);
+    }
+
+    function testRoundTripWithoutSyncStillNeedsInvalidation() public {
+        vm.prank(walletA);
+        account.openSession(executor, address(sink), pingSelector, 0, 0, 1 days);
+
+        vm.prank(walletA);
+        nft.transfer(walletB, tokenId);
+        vm.prank(walletB);
+        nft.transfer(walletA, tokenId);
+
+        vm.prank(executor);
+        account.executeSession(0, address(sink), 0, abi.encodeWithSelector(pingSelector, 8));
+        assertEq(sink.lastValue(), 8);
+
+        vm.prank(executor);
+        account.invalidateSession();
+        vm.prank(executor);
+        vm.expectRevert(CitizenAccount.SessionDead.selector);
+        account.executeSession(1, address(sink), 0, abi.encodeWithSelector(pingSelector, 9));
+    }
+
+    function testSessionLimitsRevokePauseAndReplay() public {
+        vm.deal(address(account), 1 ether);
+        vm.prank(walletA);
+        account.openSession(executor, address(sink), pingSelector, 0.05 ether, 0.05 ether, 1 days);
+        vm.expectRevert(CitizenAccount.ValueNotAllowed.selector);
+        vm.prank(executor);
+        account.executeSession(0, address(sink), 0.06 ether, abi.encodeWithSelector(pingSelector, 1));
+        vm.prank(executor);
+        account.executeSession(0, address(sink), 0.05 ether, abi.encodeWithSelector(pingSelector, 1));
+        vm.expectRevert(CitizenAccount.SpendLimit.selector);
+        vm.prank(executor);
+        account.executeSession(1, address(sink), 0.01 ether, abi.encodeWithSelector(pingSelector, 2));
+        vm.expectRevert(CitizenAccount.Replay.selector);
+        vm.prank(executor);
+        account.executeSession(0, address(sink), 0, abi.encodeWithSelector(pingSelector, 2));
+        vm.expectRevert(CitizenAccount.TargetNotAllowed.selector);
+        vm.prank(executor);
+        account.executeSession(1, address(otherSink), 0, abi.encodeWithSelector(pingSelector, 2));
+
+        vm.prank(walletA);
+        account.pauseSession(true);
+        vm.expectRevert(CitizenAccount.SessionPaused.selector);
+        vm.prank(executor);
+        account.executeSession(1, address(sink), 0, abi.encodeWithSelector(pingSelector, 2));
+        vm.prank(walletA);
+        account.revokeSession();
+        vm.expectRevert(CitizenAccount.SessionDead.selector);
+        vm.prank(executor);
+        account.executeSession(1, address(sink), 0, abi.encodeWithSelector(pingSelector, 2));
     }
 
     function testV1DelegationEntrypointsAreDisabled() public {

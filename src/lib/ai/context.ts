@@ -1,5 +1,7 @@
 import { createHash } from "node:crypto";
 import { type PersonalityTraits, type RankedAction } from "@/lib/ai/personality";
+import { considerWalletActivation } from "@/lib/chogbank/authorization";
+import type { ActivationState } from "@/lib/chogbank/types";
 import { precheckAction, WORLD_ACTIONS, type ResourceStock, type WorldAction } from "@/lib/world/actions";
 import { worldHour } from "@/lib/world/clock";
 import { CONSTRUCT_KINDS, type ConstructKind } from "@/lib/world/layout";
@@ -67,6 +69,12 @@ export type ConstructionContext = {
   };
 };
 
+export type WalletActivationContext = {
+  state: ActivationState;
+  hasActiveWallet: boolean;
+  eligibleToRequest: boolean;
+};
+
 export type DecisionContext = {
   tokenId: string;
   citizenId: string;
@@ -90,6 +98,7 @@ export type DecisionContext = {
   construction: ConstructionContext;
   townNeeds: TownNeedView[];
   townProjects: TownProjectView[];
+  walletActivation: WalletActivationContext;
 };
 
 export function preferredBuildKind(
@@ -178,6 +187,16 @@ function constructionFromBuildings(
   };
 }
 
+export function goalLooksOnchain(goals: readonly GoalSnippet[], memories: readonly MemorySnippet[] = []): boolean {
+  const text = [
+    ...goals.map((goal) => `${goal.kind} ${goal.title}`),
+    ...memories.map((memory) => memory.content),
+  ]
+    .join(" ")
+    .toLowerCase();
+  return /onchain|on-chain|start a business|trade an asset|make a payment|receive payment/.test(text);
+}
+
 export function buildDecisionContext(input: {
   citizenId: string;
   citizen: CitizenView;
@@ -196,6 +215,7 @@ export function buildDecisionContext(input: {
   canBuildKinds?: ConstructKind[];
   eligibleRoadStubs?: ConstructionContext["roads"]["eligibleStubs"];
   completedRoadIds?: string[];
+  walletActivation?: WalletActivationContext;
 }): DecisionContext {
   const feasible = listFeasibleActions(input.citizen, input.buildings, input.worldS, input.stock);
   const canBuildKinds =
@@ -246,6 +266,15 @@ export function buildDecisionContext(input: {
     eligibleStubs,
     input.completedRoadIds ?? [],
   );
+  const walletActivation = input.walletActivation ?? {
+    state: "unassigned",
+    hasActiveWallet: false,
+    eligibleToRequest: considerWalletActivation({
+      hasActiveWallet: false,
+      motive: goalLooksOnchain(input.goals, input.memories) ? "start_business" : null,
+      hasConcreteOnchainPlan: goalLooksOnchain(input.goals, input.memories),
+    }) === "eligible_to_request",
+  };
   return {
     tokenId: input.citizen.tokenId,
     citizenId: input.citizenId,
@@ -271,6 +300,7 @@ export function buildDecisionContext(input: {
     construction,
     townNeeds: activeTownNeeds(townNeeds),
     townProjects: openTownProjects(townProjects).slice(0, 4),
+    walletActivation,
   };
 }
 
@@ -321,6 +351,7 @@ export function contextCommitment(context: DecisionContext): string {
       recommendedStubId: project.recommendedStubId,
       blocker: project.blocker,
     })),
+    walletActivation: context.walletActivation,
   };
   return `0x${createHash("sha256").update(JSON.stringify(body)).digest("hex")}`;
 }
@@ -339,6 +370,7 @@ export function decisionMessages(context: DecisionContext, maxChars: number): { 
     "Town projects are engine facts. Choose a listed eligible project step when it matches a feasible action. Set projectId to that id. You cannot complete a project, skip a road, or unlock land by saying it is done.",
     "A rejected workplace should not be repeated unless conditions changed.",
     "source=ai is applied only if this JSON is later validated. You cannot complete a goal or a building by saying it is complete.",
+    "Enrollment does not create a wallet. Ordinary living, work, rest, and construction do not need one. request_wallet_activation only if a listed goal truly needs onchain access (a business, a trade, a payment). Include activationMotive, proposedOnchainActions, revenueHypothesis, and integer wei estimates. You cannot set spending limits, approve funding, or claim a transaction succeeded. ChogBank decides. If no wallet is needed, choose a feasible world action.",
     "The free Gemini tier may use this prompt to improve Google products. Do not include secrets. None are provided.",
   ].join(" ");
 
@@ -393,6 +425,7 @@ export function decisionMessages(context: DecisionContext, maxChars: number): { 
       recommendedStubId: project.recommendedStubId,
     })),
     projectCandidates: eligibleProjectCandidates(context.townProjects),
+    walletActivation: context.walletActivation,
   });
 
   if (system.length + user.length <= maxChars) {
