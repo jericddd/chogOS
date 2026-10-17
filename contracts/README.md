@@ -1,4 +1,8 @@
-# EventAnchor
+# Contracts
+
+Local Foundry package. Nothing in this directory is a confirmed Mainnet deployment. Predicted CREATE2 addresses are not live contracts.
+
+## EventAnchor
 
 Minimal Monad commitment contract for chogOS Merkle batch roots. It does not hold funds, mint tokens, or judge whether simulation events were truthful.
 
@@ -43,3 +47,25 @@ Source: https://docs.monad.xyz/developer-essentials/testnet
 `scripts/verify-anchor.ts` refuses to send a transaction even if `VERIFY_BROADCAST=yes`.
 
 Mainnet deployment is out of scope.
+
+## CitizenAccount (Phase 6a, Mainnet-first V1)
+
+NFT-bound account plus CREATE2 factory. Root authority is `ownerOf` at execution time. Delegated grant/execute entrypoints revert `DelegationDisabled` because an `ownerAtGrant` snapshot revives after A→B→A. The AI model never holds a key.
+
+Predicted factory: `0x2d8c32B8Df4E57a18A96fa2830DE036A781B472c` on chain 143 via Arachnid `0x4e59…` and salt `keccak256("chogOS.CitizenAccountFactory.v1")`. That address is empty until an authorized broadcast. Do not deploy `MockGenesisNFT` on Mainnet. See `docs/phase-6a-wallet-architecture.md`.
+
+```bash
+# local EVM (fork tests skip)
+forge test --root contracts
+
+# Mainnet fork, RPC from env, chain 143. This is not a live deployment.
+forge test --root contracts --fork-url "$MONAD_RPC_URL" --match-contract GenesisMainnetFork
+
+# simulate factory deploy; refuses any chain except 143; do not add --broadcast
+cd contracts
+forge script script/DeployCitizenAccountFactory.s.sol:DeployCitizenAccountFactory \
+  --rpc-url "$MONAD_RPC_URL" \
+  --sender <authorized-deployer-address>
+```
+
+Never store a deployer private key in this repo, in `.env` files, or in Supabase. Prefer `forge script --account <keystore>`. The script does not read `PRIVATE_KEY`.

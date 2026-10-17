@@ -18,6 +18,10 @@ export const codeHashes = {
   entryPoint06: "0xc93c806e738300b5357ecdc2e971d6438d34d8e4e17b99b758b1f9cac91c8e70",
   entryPoint07: "0x8db5ff695839d655407cc8490bb7a5d82337a86a6b39c3f0258aa6c3b582fc58",
   erc6551Registry: "0xda1d5b06e579f9e42e59b00fbc22939896ecb38dc8830d40de0a2508fecd6735",
+  tokenboundAccountV3: "0xdf5eeb80b53e48dfd667fff5264976de4004fdd27eef4f6b954d182109f0f85b",
+  tokenboundAccountProxy: "0x7f2b4bea519ba5fe0e8e3cf054654f18480c4416fc71370b31f37848688afdb0",
+  tokenboundAccountGuardian: "0x852cc93231fd7a7d35a225fb5f357e69db966935de05627095f906f7d88093f2",
+  tokenboundForwarder: "0xb074cd81f36845a40a1136f7d599dadb52c3e7486eab525722d38e6696c8895c",
 } as const;
 
 export type SafeVersion =
@@ -47,6 +51,10 @@ const infrastructureNames: Array<{ address: Address; name: string }> = [
   { address: addresses.entryPointV08, name: "entrypoint-0.8" },
   { address: addresses.entryPointV09, name: "entrypoint-0.9" },
   { address: addresses.erc6551Registry, name: "erc6551-registry" },
+  { address: addresses.tokenboundAccountV3, name: "tokenbound-account-v3" },
+  { address: addresses.tokenboundAccountProxy, name: "tokenbound-account-proxy" },
+  { address: addresses.tokenboundAccountGuardian, name: "tokenbound-account-guardian" },
+  { address: addresses.tokenboundForwarder, name: "tokenbound-forwarder" },
 ];
 
 export function safeVersionForMasterCopy(masterCopy: Address): SafeVersion | null {

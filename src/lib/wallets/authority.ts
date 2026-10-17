@@ -4,15 +4,17 @@ import { infrastructureName } from "@/lib/wallets/infrastructure";
 import { sameAddress } from "@/lib/civilization/token-id";
 
 export const CITIZEN_WALLET_SCHEME = "unassigned" as const;
+export const NFT_BOUND_SCHEME = "nft_bound_v1" as const;
+
+export type CitizenWalletScheme = typeof CITIZEN_WALLET_SCHEME | typeof NFT_BOUND_SCHEME;
 
 /**
- * No enabled wallet scheme reads ownerOf. A Safe owner set at initialization
- * stays with the previous NFT owner after a transfer. ERC-6551 would follow
- * the token, but no hash-matched account implementation is selected.
+ * Production registry rows remain `unassigned` and do not follow NFT ownership.
+ * The Phase 6a `nft_bound_v1` account reads ownerOf at execution time.
+ * V1 does not grant delegated executors; only the current NFT owner may execute.
  */
 export function walletControlFollowsNftOwner(scheme: string = CITIZEN_WALLET_SCHEME): boolean {
-  void scheme;
-  return false;
+  return scheme === NFT_BOUND_SCHEME;
 }
 
 export function treasuryAddressProblem(

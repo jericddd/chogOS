@@ -1,5 +1,17 @@
 # Wallet system
 
+Phase 6a selected an NFT-bound `CitizenAccount` whose root authority is `ownerOf` at execution time. The V1 contract **does not** grant delegated executors: an `ownerAtGrant` snapshot is only invalid while another address owns the NFT, and it becomes executable again after A→B→A. See [phase-6a-wallet-architecture.md](phase-6a-wallet-architecture.md). Production registry rows remain `unassigned` and `not_configured` until a verified Mainnet factory deployment is separately authorized. The factory has not been broadcast.
+
+V1 guarantees (once a factory is authorized and an account is later created):
+
+- The current Chog Genesis `ownerOf(tokenId)` can `execute`.
+- The previous owner cannot `execute` while someone else holds the NFT.
+- Account identity `(chainId, nftContract, tokenId)` and the CREATE2 address stay put across transfers.
+- `grantDelegation` / `executeDelegated` revert `DelegationDisabled`.
+- The AI model never holds a private key and has no unrestricted account access.
+
+V2 (not this launch): delegated execution that actually dies on transfer, AI executor wiring, founding-citizen account creation, treasury, hosted `nft_bound_v1` rows.
+
 ## Phase 2 decision
 
 Hash-checked Safe 1.3.0, 1.4.1, and 1.5.0 singletons and proxy factories are present on Monad mainnet, along with EntryPoint v0.6 and v0.7 and the ERC-6551 registry. The evidence is in [docs/contracts.md](docs/contracts.md). None of that is a chogOS deployment.
@@ -10,7 +22,7 @@ A normal Safe keeps the owners it was created with. Predicting a Safe whose owne
 
 The Civilization Treasury is a separate configuration row. No address is seeded. If an administrator later sets one, the server reads code and `masterCopy()` before storing an observed status. An observed Safe is not a wallet chogOS deployed, and the AI cannot spend from it.
 
-The notes below are the longer-term design. They are not what Phase 2 deployed.
+The notes below are the longer-term design. They are not what Phase 2 deployed, and they are **not** the V1 CitizenAccount surface. Where they mention AI session keys or grants that die on `ownerOf` change, read the Phase 6a finding: that snapshot rule revives after A→B→A, so V1 disables grants instead.
 
 ## Earlier design notes
 

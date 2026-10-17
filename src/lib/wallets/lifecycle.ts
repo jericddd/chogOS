@@ -1,5 +1,9 @@
 import type { Address } from "viem";
-import { CITIZEN_WALLET_SCHEME, walletControlFollowsNftOwner } from "@/lib/wallets/authority";
+import {
+  CITIZEN_WALLET_SCHEME,
+  walletControlFollowsNftOwner,
+  type CitizenWalletScheme,
+} from "@/lib/wallets/authority";
 import { safeVersionForMasterCopy, type SafeVersion } from "@/lib/wallets/infrastructure";
 
 export const walletStatuses = [
@@ -17,7 +21,7 @@ export type WalletStatus = (typeof walletStatuses)[number];
 export type WalletAssignment = {
   citizenId: string;
   chainId: 143 | 10143;
-  scheme: typeof CITIZEN_WALLET_SCHEME;
+  scheme: CitizenWalletScheme;
   status: WalletStatus;
   predictedAddress: string | null;
   accountAddress: string | null;
