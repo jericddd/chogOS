@@ -3,19 +3,46 @@ import {
   GENESIS_V1_GRID_W,
   GRID_H,
   GRID_W,
+  PLOTS,
   TILE,
   hash32,
   pathAcross,
   type PathBuilding,
   type Tile,
 } from "@/lib/world/layout";
-import { overlayRoadAt } from "@/lib/world/roads";
+import { ROAD_STUBS, overlayRoadAt } from "@/lib/world/roads";
 import type { BuildingView, CitizenView, RoadOverlayView } from "@/lib/world/types";
 
 export const WORLD_PX_W = GRID_W * TILE;
 export const WORLD_PX_H = GRID_H * TILE;
 export const SETTLEMENT_PX_W = GENESIS_V1_GRID_W * TILE;
 export const SETTLEMENT_PX_H = GENESIS_V1_GRID_H * TILE;
+
+/** Founding town plus the catalog east lots/roads (y=2 spurs). Origin stays 0,0. */
+function defaultViewTiles(): { w: number; h: number } {
+  let w = GENESIS_V1_GRID_W;
+  let h = GENESIS_V1_GRID_H;
+  for (const stub of ROAD_STUBS) {
+    for (const tile of stub.tiles) {
+      w = Math.max(w, tile.x + 1);
+      h = Math.max(h, tile.y + 1);
+    }
+  }
+  for (const plot of PLOTS) {
+    if (plot.y !== 2) {
+      continue;
+    }
+    w = Math.max(w, plot.x + plot.w);
+    h = Math.max(h, plot.y + plot.h);
+  }
+  return { w: Math.min(GRID_W, w + 1), h: Math.min(GRID_H, h) };
+}
+
+const DEFAULT_VIEW_TILES = defaultViewTiles();
+export const DEFAULT_VIEW_TILE_W = DEFAULT_VIEW_TILES.w;
+export const DEFAULT_VIEW_TILE_H = DEFAULT_VIEW_TILES.h;
+export const DEFAULT_VIEW_PX_W = DEFAULT_VIEW_TILE_W * TILE;
+export const DEFAULT_VIEW_PX_H = DEFAULT_VIEW_TILE_H * TILE;
 
 export type Placement = {
   tokenId: string;
@@ -174,13 +201,13 @@ export type Viewport = { width: number; height: number };
 
 export const MAX_SCALE = 6;
 
-/** Default view: the founding 60×40 settlement, framed as genesis-v1 was. */
+/** Default view: founding town plus catalog east lots, without showing the whole 120×80 map. */
 export function fitCamera(view: Viewport): Camera {
-  const scale = Math.min(view.width / SETTLEMENT_PX_W, view.height / SETTLEMENT_PX_H);
+  const scale = Math.min(view.width / DEFAULT_VIEW_PX_W, view.height / DEFAULT_VIEW_PX_H);
   return {
     scale,
-    x: (view.width - SETTLEMENT_PX_W * scale) / 2,
-    y: (view.height - SETTLEMENT_PX_H * scale) / 2,
+    x: (view.width - DEFAULT_VIEW_PX_W * scale) / 2,
+    y: (view.height - DEFAULT_VIEW_PX_H * scale) / 2,
   };
 }
 

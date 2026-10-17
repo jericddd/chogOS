@@ -25,7 +25,7 @@ export const metadata: Metadata = {
     template: "%s · chogOS",
   },
   description:
-    "One shared civilization for Chog Genesis citizens on Monad. Founding citizens begin with the ChogTreasury NFT roster.",
+    "One shared, persistent civilization for Chog Genesis NFT participants on Monad. The world runs on the server. An AI mind can act; visitors inspect and verify.",
 };
 
 export default function RootLayout({
