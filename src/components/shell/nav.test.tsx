@@ -30,6 +30,12 @@ describe("civilization nav", () => {
     expect(screen.getByRole("link", { name: "Enroll" }).getAttribute("href")).toBe("/enroll");
     expect(screen.queryByRole("link", { name: "Economy" })).toBeNull();
     expect(screen.queryByRole("link", { name: "Businesses" })).toBeNull();
-    expect(screen.getByRole("navigation").className).toContain("flex-nowrap");
+    const nav = screen.getByRole("navigation");
+    expect(nav.className).toContain("flex-nowrap");
+    expect(nav.className).toContain("overflow-x-auto");
+    const enroll = screen.getByRole("link", { name: "Enroll" });
+    expect(enroll.textContent).toBe("Enroll");
+    expect(enroll.className).toContain("text-xs");
+    expect(enroll.className).toContain("sm:text-sm");
   });
 });
