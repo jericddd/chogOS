@@ -1,6 +1,6 @@
 # Contracts
 
-Local Foundry package. Nothing in this directory is a Mainnet deployment.
+Local Foundry package. Nothing in this directory is a confirmed Mainnet deployment. Predicted CREATE2 addresses are not live contracts.
 
 ## EventAnchor
 
@@ -48,14 +48,24 @@ Source: https://docs.monad.xyz/developer-essentials/testnet
 
 Mainnet deployment is out of scope.
 
-## CitizenAccount (Phase 6a)
+## CitizenAccount (Phase 6a, Mainnet-first V1)
 
-NFT-bound account plus CREATE2 factory. Root authority is `ownerOf` at execution time. Delegated executors are limited to one target and selector and die when the NFT transfers.
+NFT-bound account plus CREATE2 factory. Root authority is `ownerOf` at execution time. Delegated grant/execute entrypoints revert `DelegationDisabled` because an `ownerAtGrant` snapshot revives after A→B→A. The AI model never holds a key.
 
-These contracts have not been deployed. Predicted factory addresses are not accounts. Do not pass `--broadcast` until Testnet is explicitly approved. See `docs/phase-6a-wallet-architecture.md`.
+Predicted factory: `0x2d8c32B8Df4E57a18A96fa2830DE036A781B472c` on chain 143 via Arachnid `0x4e59…` and salt `keccak256("chogOS.CitizenAccountFactory.v1")`. That address is empty until an authorized broadcast. Do not deploy `MockGenesisNFT` on Mainnet. See `docs/phase-6a-wallet-architecture.md`.
 
 ```bash
-forge test --root contracts --match-contract CitizenAccountTest
-# simulate only; this still starts a local broadcast context and must not be pointed at Mainnet
-forge script --root contracts script/DeployCitizenAccountFactory.s.sol:DeployCitizenAccountFactory
+# local EVM (fork tests skip)
+forge test --root contracts
+
+# Mainnet fork, RPC from env, chain 143. This is not a live deployment.
+forge test --root contracts --fork-url "$MONAD_RPC_URL" --match-contract GenesisMainnetFork
+
+# simulate factory deploy; refuses any chain except 143; do not add --broadcast
+cd contracts
+forge script script/DeployCitizenAccountFactory.s.sol:DeployCitizenAccountFactory \
+  --rpc-url "$MONAD_RPC_URL" \
+  --sender <authorized-deployer-address>
 ```
+
+Never store a deployer private key in this repo, in `.env` files, or in Supabase. Prefer `forge script --account <keystore>`. The script does not read `PRIVATE_KEY`.

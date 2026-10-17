@@ -6,6 +6,7 @@ import { NFT_BOUND_SCHEME, treasuryAddressProblem, walletControlFollowsNftOwner 
 import { codeHashes } from "@/lib/wallets/infrastructure";
 import { statusAfterEvidence } from "@/lib/wallets/lifecycle";
 import {
+  V1_DELEGATION_ENABLED,
   evaluateDelegatedCall,
   nftBoundSalt,
   nftIdentityKey,
@@ -100,6 +101,19 @@ describe("delegated policy (off-chain executor, not the model)", () => {
     expect(denied({ tokenId: 8n })).toBe("wrong token id");
     expect(selectorFromCalldata("0x")).toBeNull();
   });
+
+  it("revives the same ownerAtGrant after A→B→A, which is why V1 disables on-chain grants", () => {
+    expect(V1_DELEGATION_ENABLED).toBe(false);
+    const granted = policy();
+    expect(evaluateDelegatedCall(identity, granted, { ...request, currentOwner: ownerB })).toEqual({
+      ok: false,
+      reason: "nft owner changed",
+    });
+    expect(evaluateDelegatedCall(identity, granted, { ...request, currentOwner: ownerA })).toEqual({ ok: true });
+    const src = readFileSync("contracts/src/CitizenAccount.sol", "utf8");
+    expect(src).toContain("DelegationDisabled");
+    expect(src).toContain("revert DelegationDisabled()");
+  });
 });
 
 describe("phase 6a safety", () => {
@@ -138,5 +152,24 @@ describe("phase 6a safety", () => {
     expect(ai).not.toContain("executeDelegated");
     expect(bound).not.toContain("privateKey");
     expect(bound).not.toContain("mnemonic");
+  });
+
+  it("pins a Mainnet-only factory deploy that never reads a private key or deploys a mock NFT", () => {
+    const script = readFileSync("contracts/script/DeployCitizenAccountFactory.s.sol", "utf8");
+    const foundry = readFileSync("contracts/foundry.toml", "utf8");
+    expect(script).toContain("MONAD_MAINNET = 143");
+    expect(script).toContain("NotMonadMainnet");
+    expect(script).toContain("MissingCreate2Deployer");
+    expect(script).toContain("0x4e59b44847b379578588920cA78FbF26c0B4956C");
+    expect(script).toContain('keccak256("chogOS.CitizenAccountFactory.v1")');
+    expect(script).not.toMatch(/MockGenesisNFT/);
+    expect(script).not.toMatch(/vm\.envUint/);
+    expect(script).not.toMatch(/vm\.envString/);
+    expect(script).not.toMatch(/vm\.envBytes32/);
+    expect(script).not.toContain("privateKey");
+    expect(foundry).toContain('solc = "0.8.28"');
+    expect(foundry).toContain("optimizer_runs = 200");
+    expect(foundry).toContain('evm_version = "cancun"');
+    expect(foundry).toContain("via_ir = false");
   });
 });

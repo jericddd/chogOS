@@ -11,6 +11,7 @@ export type CitizenWalletScheme = typeof CITIZEN_WALLET_SCHEME | typeof NFT_BOUN
 /**
  * Production registry rows remain `unassigned` and do not follow NFT ownership.
  * The Phase 6a `nft_bound_v1` account reads ownerOf at execution time.
+ * V1 does not grant delegated executors; only the current NFT owner may execute.
  */
 export function walletControlFollowsNftOwner(scheme: string = CITIZEN_WALLET_SCHEME): boolean {
   return scheme === NFT_BOUND_SCHEME;

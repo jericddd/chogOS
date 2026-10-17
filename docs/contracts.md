@@ -123,7 +123,7 @@ No ERC-6551 account implementation was hash-matched, so no citizen account addre
 
 Tokenbound addresses are the ones published in [Monad's ERC-6551 guide](https://docs.monad.xyz/guides/erc-6551) and [Tokenbound deployments](https://docs.tokenbound.org/contracts/deployments). Source-verified explorer pages were not re-audited line-by-line. Bytecode equality with Ethereum is the check recorded here.
 
-Chog Genesis and $CHOG still have empty code on testnet. A Testnet proof of the citizen account therefore needs a mock ERC-721, not the mainnet NFT address.
+Chog Genesis and $CHOG still have empty code on testnet. Phase 6a targets Monad Mainnet (143) directly. Citizen-account proofs against real Genesis use a **local Foundry fork** (`forge test --fork-url "$MONAD_RPC_URL"`). That is not a deployed chogOS factory. Do not deploy `MockGenesisNFT` on Mainnet. The predicted V1 factory `0x2d8c32B8Df4E57a18A96fa2830DE036A781B472c` is empty until an authorized broadcast; see `docs/phase-6a-wallet-architecture.md`.
 
 ## What this does not establish
 

@@ -3,6 +3,9 @@ import { NFT_BOUND_SCHEME } from "@/lib/wallets/authority";
 
 export const NFT_BOUND_ACCOUNT_TYPE = "nft_bound" as const;
 
+/** V1 CitizenAccount disables grant/executeDelegated. This evaluator is V2 research only. */
+export const V1_DELEGATION_ENABLED = false;
+
 export type NftIdentity = {
   chainId: 143 | 10143 | number;
   nftContract: Address;
@@ -57,8 +60,10 @@ export function selectorFromCalldata(data: Hex): Hex | null {
 }
 
 /**
- * Off-chain check the authorized executor runs before submitting.
- * The language model never holds this key. The contract is the last check.
+ * Off-chain picture of the rejected ownerAtGrant rule.
+ * Matching currentOwner to ownerAtGrant is only "invalid while another
+ * address owns the NFT". After A→B→A the same grant would pass again.
+ * V1 does not ship this path. The language model never holds a key.
  */
 export function evaluateDelegatedCall(
   bound: NftIdentity,
