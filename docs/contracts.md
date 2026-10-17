@@ -108,6 +108,23 @@ Addresses are checksummed with viem. EntryPoint v0.8's checksum differs in lette
 
 No ERC-6551 account implementation was hash-matched, so no citizen account address is derived from the registry. A standard Safe does not read `ownerOf`, so these factories are not used to predict citizen wallets in Phase 2.
 
+### Hash check on 17 October 2026 (Phase 6a)
+
+`cast keccak` of `eth_getCode` on Monad mainnet (143), Monad testnet (10143), and Ethereum. Matching hashes across those networks are recorded in `src/lib/wallets/infrastructure.ts`. This is not a chogOS deployment.
+
+| Name | Address | Monad mainnet | Monad testnet | Ethereum |
+| --- | --- | --- | --- | --- |
+| ERC-6551 registry | `0x000000006551c19487814612e58FE06813775758` | `0xda1d5b06…d6735` | same | same |
+| Tokenbound Account V3 | `0x41C8f39463A868d3A88af00cd0fe7102F30E44eC` | `0xdf5eeb80…0f85b` | same | same |
+| Tokenbound Account Proxy | `0x55266d75D1a14E4572138116aF39863Ed6596E7F` | `0x7f2b4bea…afdb0` | same | same |
+| Tokenbound Account Guardian | `0x2fe5CCB0d7Ea195FEB87987D3573f9FccE2b5d57` | `0x852cc932…093f2` | present, same hash as mainnet | not compared |
+| Tokenbound Forwarder | `0xcA1167915584462449EE5b4Ea51c37fE81eCDCCD` | `0xb074cd81…8895c` | present, same hash as mainnet | not compared |
+| EntryPoint v0.6 | `0x5FF137D4b0FDCD49DcA30c7CF57E578a026d2789` | `0xc93c806e…c8e70` | same | same |
+
+Tokenbound addresses are the ones published in [Monad's ERC-6551 guide](https://docs.monad.xyz/guides/erc-6551) and [Tokenbound deployments](https://docs.tokenbound.org/contracts/deployments). Source-verified explorer pages were not re-audited line-by-line. Bytecode equality with Ethereum is the check recorded here.
+
+Chog Genesis and $CHOG still have empty code on testnet. A Testnet proof of the citizen account therefore needs a mock ERC-721, not the mainnet NFT address.
+
 ## What this does not establish
 
 - No DeFi protocol, router, or pool was verified.

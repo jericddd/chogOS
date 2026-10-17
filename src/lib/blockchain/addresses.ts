@@ -16,6 +16,12 @@ export const addresses = {
   chogTreasury,
   wrappedMon: getAddress("0x3bd359C1119dA7Da1D913D1C4D2B7c461115433A"),
   erc6551Registry: getAddress("0x000000006551c19487814612e58FE06813775758"),
+  /** Tokenbound Account V3 implementation. Hash-matched to Ethereum; not a chogOS deployment. */
+  tokenboundAccountV3: getAddress("0x41C8f39463A868d3A88af00cd0fe7102F30E44eC"),
+  /** Tokenbound Account V3 proxy. Hash-matched to Ethereum; not a chogOS deployment. */
+  tokenboundAccountProxy: getAddress("0x55266d75D1a14E4572138116aF39863Ed6596E7F"),
+  tokenboundAccountGuardian: getAddress("0x2fe5CCB0d7Ea195FEB87987D3573f9FccE2b5d57"),
+  tokenboundForwarder: getAddress("0xcA1167915584462449EE5b4Ea51c37fE81eCDCCD"),
   entryPointV06: getAddress("0x5FF137D4b0FDCD49DcA30c7CF57E578a026d2789"),
   entryPointV07: getAddress("0x0000000071727De22E5E9d8BAf0edAc6f37da032"),
   entryPointV08: getAddress("0x4337084d9e255fF0702461CF8895cE9E3b5Ff108"),

@@ -1,5 +1,7 @@
 # Wallet system
 
+Phase 6a selected an NFT-bound `CitizenAccount` whose root authority is `ownerOf` at execution time. That proof of concept is documented in [phase-6a-wallet-architecture.md](phase-6a-wallet-architecture.md). Production registry rows remain `unassigned` and `not_configured` until a verified deployment is separately authorized.
+
 ## Phase 2 decision
 
 Hash-checked Safe 1.3.0, 1.4.1, and 1.5.0 singletons and proxy factories are present on Monad mainnet, along with EntryPoint v0.6 and v0.7 and the ERC-6551 registry. The evidence is in [docs/contracts.md](docs/contracts.md). None of that is a chogOS deployment.

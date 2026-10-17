@@ -1,4 +1,8 @@
-# EventAnchor
+# Contracts
+
+Local Foundry package. Nothing in this directory is a Mainnet deployment.
+
+## EventAnchor
 
 Minimal Monad commitment contract for chogOS Merkle batch roots. It does not hold funds, mint tokens, or judge whether simulation events were truthful.
 
@@ -43,3 +47,15 @@ Source: https://docs.monad.xyz/developer-essentials/testnet
 `scripts/verify-anchor.ts` refuses to send a transaction even if `VERIFY_BROADCAST=yes`.
 
 Mainnet deployment is out of scope.
+
+## CitizenAccount (Phase 6a)
+
+NFT-bound account plus CREATE2 factory. Root authority is `ownerOf` at execution time. Delegated executors are limited to one target and selector and die when the NFT transfers.
+
+These contracts have not been deployed. Predicted factory addresses are not accounts. Do not pass `--broadcast` until Testnet is explicitly approved. See `docs/phase-6a-wallet-architecture.md`.
+
+```bash
+forge test --root contracts --match-contract CitizenAccountTest
+# simulate only; this still starts a local broadcast context and must not be pointed at Mainnet
+forge script --root contracts script/DeployCitizenAccountFactory.s.sol:DeployCitizenAccountFactory
+```
