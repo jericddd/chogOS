@@ -35,6 +35,12 @@ Never put a private key, mnemonic, keystore password, or KMS credential in the e
 | `SUPABASE_URL` | yes | Service database. Loopback HTTP is accepted for local PostgREST. |
 | `SUPABASE_SERVICE_ROLE_KEY` | yes | Server only. Bypasses row level security. |
 | `CHOG_WATCHER_BACKFILL_FROM` | first run | Block number where an empty cursor starts. Unset does not mean block 0. The scan records an error until this, or a saved cursor, exists. |
+| `CHOG_WATCHER_RANGE_BLOCKS` | no | Default 1000, maximum 5000. Inclusive block span of one `eth_getLogs` request. |
+| `CHOG_WATCHER_MAX_BLOCKS_PER_RUN` | no | Default 5000, maximum 50000. The process checkpoints and exits. The next run continues. |
+| `CHOG_WATCHER_MAX_LOGS_PER_RANGE` | no | Default 2000. A page this size is split. A single block at the cap does not advance the cursor. |
+| `CHOG_WATCHER_RPC_ATTEMPTS` | no | Default 4. Transient errors only. A size limit splits instead of using these attempts. |
+| `CHOG_WATCHER_RPC_PAUSE_MS` | no | Default 200. Wait between committed ranges in one run. |
+| `CHOG_WATCHER_RPC_RETRY_MS` | no | Default 400. Base backoff after a rate limit or timeout. |
 | `CHOG_WATCHER_SECONDS` | loop only | Default 60. Used when `CHOG_WATCHER_LOOP=true`. |
 | `CHOG_WATCHER_MAX_LAG_BLOCKS` | health | Default 20. Lag above this is stalled. |
 | `CHOG_WATCHER_MAX_STALE_MS` | health | Default 120000. A quiet cursor older than this is stalled even if it once matched the tip. |
@@ -54,11 +60,11 @@ Apply the migrations below before enabling the watcher. Then use cron for one sh
 CHOG_WATCHER_ENABLED=true npm run watcher:run
 ```
 
-Exit 0 means the scan committed. Exit 1 means it did not, or it committed an error cursor after a partial scan. The JSON line includes `status`, `cursorBlock`, `tipBlock`, `lagBlocks`, `lastError`, and the invalidation backlog.
+Exit 0 means the scan committed, including a run that stopped at its block budget before the tip. Exit 1 means it did not, or it committed an error cursor after a partial scan. The JSON line includes `caughtUp`, `ranges`, `fromBlock`, `toBlock`, `status`, `cursorBlock`, `tipBlock`, `lagBlocks`, `lastError`, and the invalidation backlog.
 
 `CHOG_WATCHER_LOOP=true` repeats until a scan exits 1. Prefer cron or a process supervisor so a stuck loop is visible. Do not run this inside the world tick route.
 
-The scanner still walks one block at a time. A long backfill is many RPC calls. Run it out of band and wait until `lagBlocks` is `0` and `lastError` is null before considering sponsorship.
+Each run requests `eth_getLogs` for ranges of `CHOG_WATCHER_RANGE_BLOCKS` (default 1000) and stops after `CHOG_WATCHER_MAX_BLOCKS_PER_RUN` (default 5000). The cursor is saved after every committed range. The next run resumes there. A response that is too large is split in half. A rate limit or timeout is retried. See [onchain-watcher.md](onchain-watcher.md). Leave the watcher disabled until that procedure has been reviewed. `lagBlocks` stays above zero during a backfill, and sponsorship stays off.
 
 ## Database
 

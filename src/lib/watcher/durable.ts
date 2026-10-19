@@ -2,7 +2,7 @@ import { getAddress, type Address, type Hex } from "viem";
 import { assessWatcher } from "@/lib/watcher/health";
 import { logIdentity } from "@/lib/watcher/identity";
 import { MemoryWatcherStore, type WatcherSnapshot } from "@/lib/watcher/memory-store";
-import { scanTransfers, type ScanReport } from "@/lib/watcher/scan";
+import { scanTransfers, type ScanLimits, type ScanReport } from "@/lib/watcher/scan";
 import type { InvalidationState, LogSource, WatcherHealth } from "@/lib/watcher/types";
 
 export type Sql = {
@@ -159,8 +159,8 @@ export type DurableScan = {
 };
 
 /**
- * Load, scan, and save. The scan itself stays synchronous against the memory store.
- * A crash before save retries from the last committed snapshot.
+ * Load, scan, and save. Each committed range is saved before the next range starts.
+ * A crash before that save retries the unfinished range.
  */
 export async function runDurableScan(input: {
   sql: Sql;
@@ -170,6 +170,7 @@ export async function runDurableScan(input: {
   backfillFrom: bigint | null;
   maxLagBlocks: bigint;
   maxStaleMs: number;
+  scan?: Partial<ScanLimits>;
 }): Promise<DurableScan> {
   const nft = getAddress(input.nftContract);
   let store: MemoryWatcherStore;
@@ -192,7 +193,13 @@ export async function runDurableScan(input: {
     store.setBackfill(input.backfillFrom);
   }
 
-  const report = await scanTransfers(store, input.source, input.now);
+  const report = await scanTransfers(store, input.source, input.now, {
+    ...input.scan,
+    onCheckpoint: async () => {
+      await input.scan?.onCheckpoint?.();
+      await saveWatcherStore(input.sql, store);
+    },
+  });
   try {
     await saveWatcherStore(input.sql, store);
   } catch (error) {
@@ -211,7 +218,7 @@ export async function runDurableScan(input: {
     };
   }
 
-  const tip = report.ok ? report.toBlock : null;
+  const tip = report.ok ? report.tipBlock : null;
   return {
     scanned: true,
     report,
