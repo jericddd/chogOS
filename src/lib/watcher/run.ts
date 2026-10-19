@@ -71,6 +71,14 @@ export async function executeWatcher(input: {
     backfillFrom: input.config.chogWatcherBackfillFrom,
     maxLagBlocks: BigInt(input.config.chogWatcherMaxLagBlocks),
     maxStaleMs: input.config.chogWatcherMaxStaleMs,
+    scan: {
+      rangeBlocks: BigInt(input.config.chogWatcherRangeBlocks),
+      maxBlocks: BigInt(input.config.chogWatcherMaxBlocksPerRun),
+      maxLogsPerRange: input.config.chogWatcherMaxLogsPerRange,
+      maxAttempts: input.config.chogWatcherRpcAttempts,
+      retryMs: input.config.chogWatcherRpcRetryMs,
+      pauseMs: input.config.chogWatcherRpcPauseMs,
+    },
   });
   return {
     exitCode: result.report.ok ? 0 : 1,
@@ -78,6 +86,10 @@ export async function executeWatcher(input: {
     message: JSON.stringify({
       ok: result.report.ok,
       reason: result.report.ok ? null : result.report.reason,
+      caughtUp: result.report.ok ? result.report.caughtUp : false,
+      ranges: result.report.ok ? result.report.ranges : 0,
+      fromBlock: result.report.ok ? result.report.fromBlock.toString() : null,
+      toBlock: result.report.ok ? result.report.toBlock.toString() : null,
       status: result.health.status,
       executionAllowed: result.health.executionAllowed,
       sponsorshipAllowed: result.health.sponsorshipAllowed,

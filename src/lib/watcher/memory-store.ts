@@ -109,6 +109,11 @@ export class MemoryWatcherStore {
     return this.blocks.get(number.toString())?.hash ?? null;
   }
 
+  /** Record a header without moving the cursor. Log blocks need this so a later reorg can find them. */
+  noteBlock(header: BlockHeader): void {
+    this.blocks.set(header.number.toString(), header);
+  }
+
   hasLog(id: string): boolean {
     return this.logs.some((row) => row.id === id);
   }
@@ -126,17 +131,24 @@ export class MemoryWatcherStore {
 
   forgetBlock(number: bigint): void {
     this.blocks.delete(number.toString());
-    this.logs = this.logs.filter((row) => row.blockNumber !== number);
-    if (this.cursor.lastScannedBlock === null || this.cursor.lastScannedBlock < number) {
+    if (this.cursor.lastScannedBlock !== null && this.cursor.lastScannedBlock < number) {
+      this.logs = this.logs.filter((row) => row.blockNumber !== number);
       return;
     }
     const remaining = [...this.blocks.values()]
       .map((header) => header.number)
       .filter((value) => value < number)
-      .sort((a, b) => (a < b ? -1 : 1));
+      .sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
     const last = remaining.length ? remaining[remaining.length - 1]! : null;
     this.cursor.lastScannedBlock = last;
     this.cursor.lastScannedHash = last === null ? null : this.blocks.get(last.toString())?.hash ?? null;
+    // Drop every log above the new cursor. A range checkpoint does not store the empty blocks between transfers.
+    this.logs = this.logs.filter((row) => (last === null ? false : row.blockNumber <= last));
+    for (const key of [...this.blocks.keys()]) {
+      if (last === null || BigInt(key) > last) {
+        this.blocks.delete(key);
+      }
+    }
   }
 
   commitBlock(header: BlockHeader, now: string): void {

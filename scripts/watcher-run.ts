@@ -4,7 +4,8 @@
  *   CHOG_WATCHER_ENABLED=true npm run watcher:run
  *
  * Leave CHOG_WATCHER_ENABLED unset or false and the process exits without reading
- * the chain. CHOG_WATCHER_LOOP=true repeats until a scan fails. Cron should use
+ * the chain. One run reads eth_getLogs ranges and checkpoints. It does not walk
+ * to the tip. CHOG_WATCHER_LOOP=true repeats until a scan fails. Cron should use
  * the default one-shot. Interval is CHOG_WATCHER_SECONDS (default 60).
  */
 import { createClient } from "@supabase/supabase-js";

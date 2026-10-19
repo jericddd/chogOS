@@ -64,6 +64,17 @@ export type AppConfig = {
   chogWatcherMaxStaleMs: number;
   /** First scan start when the cursor is empty. Unset does not imply block zero. */
   chogWatcherBackfillFrom: bigint | null;
+  /** Inclusive eth_getLogs span. A larger response is split. */
+  chogWatcherRangeBlocks: number;
+  /** Blocks committed per process run. The next run resumes at the saved cursor. */
+  chogWatcherMaxBlocksPerRun: number;
+  /** A page this large is treated as truncated unless it is a single block, which does not advance. */
+  chogWatcherMaxLogsPerRange: number;
+  chogWatcherRpcAttempts: number;
+  /** Pause between committed ranges inside one run. */
+  chogWatcherRpcPauseMs: number;
+  /** Base backoff after a rate limit or timeout. */
+  chogWatcherRpcRetryMs: number;
   /** Public gas-paying address. Not a private key and not the asset-control treasury. */
   chogBankGasAddress?: Address;
   /** Public asset-control address. Must differ from the gas-paying address. */
@@ -312,6 +323,24 @@ export function readAppConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     chogWatcherIntervalSeconds: readBoundedInt(env.CHOG_WATCHER_SECONDS, "CHOG_WATCHER_SECONDS", 60, 15, 86_400),
     chogWatcherMaxStaleMs: readBoundedInt(env.CHOG_WATCHER_MAX_STALE_MS, "CHOG_WATCHER_MAX_STALE_MS", 120_000, 1_000, 3_600_000),
     chogWatcherBackfillFrom: readOptionalInteger(env.CHOG_WATCHER_BACKFILL_FROM, "CHOG_WATCHER_BACKFILL_FROM"),
+    chogWatcherRangeBlocks: readBoundedInt(env.CHOG_WATCHER_RANGE_BLOCKS, "CHOG_WATCHER_RANGE_BLOCKS", 1000, 1, 5_000),
+    chogWatcherMaxBlocksPerRun: readBoundedInt(
+      env.CHOG_WATCHER_MAX_BLOCKS_PER_RUN,
+      "CHOG_WATCHER_MAX_BLOCKS_PER_RUN",
+      5_000,
+      1,
+      50_000,
+    ),
+    chogWatcherMaxLogsPerRange: readBoundedInt(
+      env.CHOG_WATCHER_MAX_LOGS_PER_RANGE,
+      "CHOG_WATCHER_MAX_LOGS_PER_RANGE",
+      2_000,
+      1,
+      10_000,
+    ),
+    chogWatcherRpcAttempts: readBoundedInt(env.CHOG_WATCHER_RPC_ATTEMPTS, "CHOG_WATCHER_RPC_ATTEMPTS", 4, 1, 8),
+    chogWatcherRpcPauseMs: readBoundedInt(env.CHOG_WATCHER_RPC_PAUSE_MS, "CHOG_WATCHER_RPC_PAUSE_MS", 200, 0, 5_000),
+    chogWatcherRpcRetryMs: readBoundedInt(env.CHOG_WATCHER_RPC_RETRY_MS, "CHOG_WATCHER_RPC_RETRY_MS", 400, 0, 10_000),
     chogBankGasAddress,
     chogBankAssetAddress,
     chogBankObservationMaxAgeMs: readBoundedInt(
