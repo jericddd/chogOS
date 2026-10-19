@@ -215,6 +215,36 @@ describe("live store", () => {
 });
 
 describe("activity feed", () => {
+  it("shows a confirmed NFT transfer under Onchain with a transaction link", () => {
+    const hash = `0x${"ab".repeat(32)}`;
+    const store = createLiveStore(
+      snapshot([
+        event(8, {
+          kind: "nft.transferred",
+          category: "onchain",
+          source: "onchain",
+          summary:
+            "Chog #7 transferred from 0x1111111111111111111111111111111111111111 to 0x2222222222222222222222222222222222222222 in block 11.",
+          tokenId: "7",
+          buildingId: null,
+          buildingName: null,
+          worldS: null,
+          chainStatus: "confirmed",
+          txHash: hash,
+          txUrl: `https://monadscan.com/tx/${hash}`,
+        }),
+      ]),
+      { fetcher: vi.fn() as unknown as typeof fetch },
+    );
+    render(<ActivityFeed store={store} />);
+    expect(screen.getAllByText("Onchain").length).toBeGreaterThan(0);
+    expect(screen.getByRole("link", { name: "Chog #7" }).getAttribute("href")).toBe("/?citizen=7");
+    const tx = screen.getByRole("link", { name: /0xabababab/ });
+    expect(tx.getAttribute("href")).toBe(`https://monadscan.com/tx/${hash}`);
+    expect(screen.getByText(/0x1111111111111111111111111111111111111111/)).toBeTruthy();
+    expect(screen.getByText(/0x2222222222222222222222222222222222222222/)).toBeTruthy();
+  });
+
   it("shows recorded events newest first with source labels and entity links", () => {
     const store = createLiveStore(snapshot([event(3, { tokenId: "7", summary: "Chog #7 came to Commons Square to socialize." }), event(2)]), {
       fetcher: vi.fn() as unknown as typeof fetch,

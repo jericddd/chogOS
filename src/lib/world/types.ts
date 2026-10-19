@@ -125,6 +125,8 @@ export type WorldEventView = {
   buildingName: string | null;
   chainStatus: "offchain" | "submitted" | "confirmed";
   txHash: string | null;
+  /** Explorer URL for a confirmed transaction. Null when the event is not a confirmed canonical transfer. */
+  txUrl?: string | null;
   intentId?: string | null;
   decisionId?: string | null;
 };

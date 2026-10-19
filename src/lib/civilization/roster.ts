@@ -9,7 +9,7 @@ export type DisplayCitizen = {
   citizenId: string | null;
   designation: string;
   owner: string | null;
-  verification: "verified" | "stale" | "unpersisted" | "departed" | "community" | "needs_recheck";
+  verification: "verified" | "stale" | "unpersisted" | "departed" | "community" | "needs_recheck" | "enrolled";
   enrollmentStatus: string;
   metadataName: string | null;
   metadataImage: string | null;
@@ -50,14 +50,16 @@ export function mergeCitizensForDisplay(input: {
     }
 
     let verification: DisplayCitizen["verification"];
-    if (live) {
+    if (citizen.enrollmentStatus !== "active") {
+      verification = "departed";
+    } else if (live) {
       verification = "verified";
     } else if (citizen.rosterVerification === "stale") {
       verification = "stale";
     } else if (input.liveTokenIds === null) {
       verification = citizen.origin === "community" && !citizen.foundingMembershipActive ? "community" : "needs_recheck";
-    } else if (citizen.origin === "founding_treasury" && !citizen.foundingMembershipActive) {
-      verification = "departed";
+    } else if (citizen.origin === "founding_treasury") {
+      verification = "enrolled";
     } else if (citizen.foundingMembershipActive) {
       verification = "needs_recheck";
     } else {

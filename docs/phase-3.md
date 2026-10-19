@@ -13,7 +13,7 @@ The home page is now a persistent 2D pixel-art world. Every eligible existing ci
 | Construction of houses 13 to 15 | Simulated. Builders consume simulated wood and stone. |
 | Membership history from Phase 1 | Real, relabeled `source = system`, `category = membership`. |
 | AI events | None on the hosted world until Phase 4 is applied, the runner is enabled, and a model-backed intent executes. Rule-based activity stays `simulation`. See [phase-4.md](phase-4.md). |
-| Onchain events | None. The world makes no transactions, so nothing is labeled `onchain`. |
+| Onchain events | Confirmed Chog Genesis transfers recorded by the watcher. The simulation itself still sends no transactions. |
 | Scheduler | Needs the migration. `pg_cron` runs `world_tick()` every 5 seconds, or every minute if sub-minute schedules are unsupported. |
 | Browser realtime | Needs `SUPABASE_ANON_KEY`. Without it the browser polls every 4 seconds. |
 

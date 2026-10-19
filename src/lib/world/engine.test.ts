@@ -52,7 +52,7 @@ describe("world initialization", () => {
   it("places only eligible existing citizens, once, and records one initialization event", async () => {
     const first = await initialize(db);
     expect(first.status).toBe("initialized");
-    expect(first.citizens).toBe(59);
+    expect(first.citizens).toBe(60);
 
     const counts = async () =>
       (
@@ -77,7 +77,7 @@ describe("world initialization", () => {
       `select c.token_id from citizens c left join citizen_world_state s on s.citizen_id = c.id
        where s.citizen_id is null order by c.token_id`,
     );
-    expect(unplaced.map((row) => String((row as { token_id: string }).token_id))).toEqual(["9001", "9002"]);
+    expect(unplaced.map((row) => String((row as { token_id: string }).token_id))).toEqual(["9001"]);
 
     const events = await rows<EventRow>(db, "select * from civilization_events where kind = 'world.initialized'");
     expect(events).toHaveLength(1);
@@ -415,26 +415,40 @@ describe("validation and the Phase 4 intent seam", () => {
 });
 
 describe("population changes", () => {
-  it("marks a citizen unavailable when it stops being eligible and adds newly enrolled citizens", async () => {
+  it("keeps an enrolled citizen when the treasury flag is cleared and adds a newly enrolled citizen", async () => {
     const db = await openWorldDb();
     await seedCitizens(db, 5);
     await initialize(db, 60);
-    await db.query("update citizens set founding_membership_active = false where token_id = 7");
+    const [before] = await rows<{ home_id: string | null }>(
+      db,
+      `select s.home_id from citizen_world_state s
+       join citizens c on c.id = s.citizen_id where c.token_id = 7`,
+    );
+    await db.query("update citizens set founding_membership_active = false, observed_owner = '0x2222222222222222222222222222222222222222' where token_id = 7");
+    await db.query("update citizens set enrollment_status = 'withdrawn' where token_id = 14");
     await db.query(
       `insert into citizens (chain_id, nft_contract, token_id, enrollment_status, origin, founding_membership_active)
        values (143, $1, 4242, 'active', 'community', false)`,
       [NFT],
     );
     await tick(db, at(10));
-    const states = await rows<{ token_id: string; activity: string; location_id: string | null }>(
+    const states = await rows<{ token_id: string; activity: string; location_id: string | null; home_id: string | null }>(
       db,
-      `select c.token_id::text, s.activity, s.location_id from citizen_world_state s join citizens c on c.id = s.citizen_id
-       where c.token_id in (7, 4242) order by c.token_id`,
+      `select c.token_id::text, s.activity, s.location_id, s.home_id
+       from citizen_world_state s join citizens c on c.id = s.citizen_id
+       where c.token_id in (7, 14, 4242) order by c.token_id`,
     );
-    expect(states).toEqual([
-      { token_id: "7", activity: "unavailable", location_id: null },
-      { token_id: "4242", activity: "idle", location_id: "commons-square" },
-    ]);
+    const byToken = new Map(states.map((row) => [row.token_id, row]));
+    expect(byToken.get("7")!.activity).not.toBe("unavailable");
+    expect(byToken.get("7")!.home_id).toBe(before!.home_id);
+    expect(byToken.get("14")!.activity).toBe("unavailable");
+    expect(byToken.get("14")!.location_id).toBeNull();
+    expect(byToken.get("4242")).toMatchObject({ activity: "idle", location_id: "commons-square" });
+    const present = await rows<{ n: number }>(
+      db,
+      "select count(*)::int as n from citizen_world_state where activity <> 'unavailable'",
+    );
+    expect(present[0]!.n).toBe(5);
     const kinds = await rows<{ kind: string; source: string }>(
       db,
       "select kind, source from civilization_events where kind like 'citizen.%' order by seq",
@@ -445,6 +459,92 @@ describe("population changes", () => {
     ]);
     const second = await tick(db, at(20));
     expect(second.joined).toBe(0);
+    await db.close();
+  }, 60_000);
+
+  it("keeps all 59 enrolled citizens after one founding NFT leaves the treasury", async () => {
+    const db = await openWorldDb();
+    await seedCitizens(db, 59);
+    await initialize(db, 60);
+    const [subject] = await rows<{ id: string; home_id: string | null; work_id: string | null; role: string | null }>(
+      db,
+      `select c.id, s.home_id, s.work_id, s.role
+       from citizens c join citizen_world_state s on s.citizen_id = c.id
+       where c.token_id = 7`,
+    );
+    await db.query(
+      `update citizens
+       set observed_owner = '0x3333333333333333333333333333333333333333',
+           founding_membership_active = false,
+           enrollment_status = 'suspended'
+       where id = $1`,
+      [subject!.id],
+    );
+    await db.query(
+      `update citizen_world_state
+       set activity = 'unavailable', location_id = null, origin_id = null, destination_id = null, purpose = null,
+           ends_at = null, world_ends_s = null, home_id = null, work_id = null, role = null
+       where citizen_id = $1`,
+      [subject!.id],
+    );
+    await db.query(
+      `insert into civilization_events (
+         dedupe_key, kind, category, source, summary, actor_citizen_id, chain_status, payload
+       ) values (
+         'test:restore:7', 'citizen.joined_world', 'citizen', 'system', 'Chog #7 was placed.', $1, 'offchain',
+         jsonb_build_object('home', $2::text, 'work', $3::text, 'role', $4::text, 'tokenId', '7')
+       )`,
+      [subject!.id, subject!.home_id, subject!.work_id, subject!.role],
+    );
+    const first = await db.query<{ r: { citizens: number; restored: number } }>(
+      "select repair_permanent_citizenship() as r",
+    );
+    const second = await db.query<{ r: { citizens: number; restored: number } }>(
+      "select repair_permanent_citizenship() as r",
+    );
+    expect(first.rows[0]!.r.citizens).toBe(1);
+    expect(first.rows[0]!.r.restored).toBe(1);
+    expect(second.rows[0]!.r.citizens).toBe(0);
+    expect(second.rows[0]!.r.restored).toBe(0);
+    const [after] = await rows<{
+      id: string;
+      enrollment_status: string;
+      founding_membership_active: boolean;
+      home_id: string | null;
+      work_id: string | null;
+      role: string | null;
+      activity: string;
+    }>(
+      db,
+      `select c.id, c.enrollment_status, c.founding_membership_active, s.home_id, s.work_id, s.role, s.activity
+       from citizens c join citizen_world_state s on s.citizen_id = c.id
+       where c.token_id = 7`,
+    );
+    expect(after).toMatchObject({
+      id: subject!.id,
+      enrollment_status: "active",
+      founding_membership_active: true,
+      home_id: subject!.home_id,
+      work_id: subject!.work_id,
+      role: subject!.role,
+    });
+    expect(after!.activity).not.toBe("unavailable");
+    const enrolled = await rows<{ n: number }>(
+      db,
+      "select count(*)::int as n from citizens where enrollment_status = 'active'",
+    );
+    expect(enrolled[0]!.n).toBe(59);
+    await tick(db, at(10));
+    const present = await rows<{ n: number }>(
+      db,
+      "select count(*)::int as n from citizen_world_state where activity <> 'unavailable'",
+    );
+    expect(present[0]!.n).toBe(59);
+    const [still] = await rows<{ id: string; home_id: string | null }>(
+      db,
+      `select c.id, s.home_id from citizens c join citizen_world_state s on s.citizen_id = c.id where c.token_id = 7`,
+    );
+    expect(still).toEqual({ id: subject!.id, home_id: subject!.home_id });
     await db.close();
   }, 60_000);
 });
