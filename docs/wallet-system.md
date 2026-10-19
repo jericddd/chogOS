@@ -4,6 +4,8 @@ Phase 6a selected an NFT-bound `CitizenAccount` whose root authority is `ownerOf
 
 Phase 6b keeps that account design and adds owner-opened executor sessions plus ChogBank activation policy. V1.1 bytecode is a **new** factory address (`0xA2edAC99…`). Do not deploy the unused V1 prediction `0x2d8c32…`. See [phase-6b-chogbank.md](phase-6b-chogbank.md). Enrollment still does not create wallets. The relayer is disabled.
 
+Phase 6c adds an offchain Chog Genesis transfer watcher and a relayer gate. A transfer after `openedBlock`, including A→B→A, queues `invalidateSession` and blocks `executeSession`. The queue is not a confirmed transaction. Production signing stays off. See [phase-6c-transfer-watcher.md](phase-6c-transfer-watcher.md).
+
 V1 guarantees (once a factory is authorized and an account is later created):
 
 - The current Chog Genesis `ownerOf(tokenId)` can `execute`.
