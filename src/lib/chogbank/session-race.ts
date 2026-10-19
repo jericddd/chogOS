@@ -20,6 +20,8 @@ export const sessionTransferRace = {
   atomicInvalidation: false as const,
   v11EnforcesTransferAtExecution: false as const,
   offchainWatcherClosesRace: false as const,
+  executionRefused:
+    "executeSession is refused; an empty transfer list cannot prove the NFT stayed with the session owner",
   v11Factory: V11_FACTORY_PREDICTED,
   unusedV1Factory: V1_FACTORY_PREDICTED,
   smallestChange:

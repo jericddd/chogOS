@@ -323,7 +323,7 @@ export function readAppConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     chogWatcherIntervalSeconds: readBoundedInt(env.CHOG_WATCHER_SECONDS, "CHOG_WATCHER_SECONDS", 60, 15, 86_400),
     chogWatcherMaxStaleMs: readBoundedInt(env.CHOG_WATCHER_MAX_STALE_MS, "CHOG_WATCHER_MAX_STALE_MS", 120_000, 1_000, 3_600_000),
     chogWatcherBackfillFrom: readOptionalInteger(env.CHOG_WATCHER_BACKFILL_FROM, "CHOG_WATCHER_BACKFILL_FROM"),
-    chogWatcherRangeBlocks: readBoundedInt(env.CHOG_WATCHER_RANGE_BLOCKS, "CHOG_WATCHER_RANGE_BLOCKS", 1000, 1, 5_000),
+    chogWatcherRangeBlocks: readBoundedInt(env.CHOG_WATCHER_RANGE_BLOCKS, "CHOG_WATCHER_RANGE_BLOCKS", 100, 1, 5_000),
     chogWatcherMaxBlocksPerRun: readBoundedInt(
       env.CHOG_WATCHER_MAX_BLOCKS_PER_RUN,
       "CHOG_WATCHER_MAX_BLOCKS_PER_RUN",

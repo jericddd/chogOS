@@ -418,7 +418,7 @@ describe("deployment, authorization, relayer, and reconciliation", () => {
     expect(sent.state).toBe("submitted");
   });
 
-  it("sponsors a restricted session call, skips duplicates, and invalidates after a transfer log", async () => {
+  it("refuses executeSession, and invalidates after an observed transfer log", async () => {
     const bank = engine({
       treasuryWei: 1_000_000_000_000_000_000n,
       relayer: createScriptedRelayer([
@@ -446,10 +446,10 @@ describe("deployment, authorization, relayer, and reconciliation", () => {
       now: 1_000,
       transfersAfterOpen: [],
     });
-    expect("skipped" in first).toBe(false);
-    if (!("skipped" in first)) {
-      expect(first.state).toBe("confirmed");
-    }
+    expect(first).toMatchObject({
+      skipped: true,
+      reason: expect.stringMatching(/empty transfer list/),
+    });
     const dup = await sponsorSessionCall(bank, {
       requestId: submitted.id,
       target: sink,
@@ -462,7 +462,7 @@ describe("deployment, authorization, relayer, and reconciliation", () => {
       now: 1_000,
       transfersAfterOpen: [],
     });
-    expect("skipped" in dup ? dup.reason : dup.state).toMatch(/duplicate|confirmed|submitted/);
+    expect(dup).toMatchObject({ skipped: true, reason: expect.stringMatching(/empty transfer list/) });
     const transferred = await sponsorSessionCall(bank, {
       requestId: submitted.id,
       target: sink,
@@ -480,7 +480,7 @@ describe("deployment, authorization, relayer, and reconciliation", () => {
       expect(transferred.op).toBe("account.invalidateSession");
     }
     const ledger = await bank.store.ledger();
-    expect(ledger.some((row) => row.bucket === "sponsored_gas_spent" && row.deltaWei > 0n)).toBe(true);
+    expect(ledger.some((row) => row.bucket === "sponsored_gas_spent" && row.deltaWei > 0n)).toBe(false);
     expect(ledger.some((row) => row.bucket === "business_capital")).toBe(false);
   });
 
@@ -509,10 +509,10 @@ describe("deployment, authorization, relayer, and reconciliation", () => {
       now: 1_000,
       transfersAfterOpen: [],
     });
-    expect("skipped" in result).toBe(false);
-    if (!("skipped" in result)) {
-      expect(result.state).toBe("reverted");
-    }
+    expect(result).toMatchObject({
+      skipped: true,
+      reason: expect.stringMatching(/empty transfer list/),
+    });
     expect(loadProductionRelayer().enabled).toBe(false);
     expect(createDisabledRelayer().enabled).toBe(false);
     const signer = loadProtectedSigner({ CHOG_BANK_RELAYER_PRIVATE_KEY: "0xabc" });
@@ -534,7 +534,11 @@ describe("session authorization", () => {
       now: 1_000,
       transfersAfterOpen: [],
     });
-    expect(live).toEqual({ ok: true });
+    expect(live).toEqual({
+      ok: false,
+      mustInvalidate: false,
+      reason: expect.stringMatching(/empty transfer list/),
+    });
     expect(
       evaluateSessionExecution({
         session: session(),

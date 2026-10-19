@@ -1,3 +1,4 @@
+import { sessionTransferRace } from "@/lib/chogbank/session-race";
 import type {
   ActivationMotive,
   ActivationRequest,
@@ -131,15 +132,7 @@ export function evaluateSponsorship(input: {
     return { action: "defer", reason: "relayer is disabled; the bank will not broadcast" };
   }
   if (input.job.op === "account.executeSession") {
-    if (!input.sessionAlive) {
-      return { action: "reject", reason: "no live executor session" };
-    }
-    if (input.job.selector.toLowerCase() !== input.sessionSelector.toLowerCase()) {
-      return { action: "reject", reason: "selector is not authorized" };
-    }
-    if (input.job.target.toLowerCase() !== input.sessionTarget.toLowerCase()) {
-      return { action: "reject", reason: "target is not authorized" };
-    }
+    return { action: "reject", reason: sessionTransferRace.executionRefused };
   }
   if (input.job.valueWei > input.limits.maxTxWei) {
     return { action: "reject", reason: "value exceeds the per-transaction limit" };

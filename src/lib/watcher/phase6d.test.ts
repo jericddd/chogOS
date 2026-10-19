@@ -691,17 +691,13 @@ describe("sponsorship gates", () => {
     );
   });
 
-  it("lets the second concurrent sponsorship see the first reservation", async () => {
+  it("refuses concurrent executeSession calls before either one reserves gas", async () => {
     const store = new MemoryChogBankStore();
     await store.saveRequest(request("req-1"));
     await store.saveRequest(request("req-2"));
     await store.saveSession("req-1", session());
     await store.saveSession("req-2", session());
     let sends = 0;
-    let release: () => void = () => undefined;
-    const gate = new Promise<void>((resolve) => {
-      release = resolve;
-    });
     const engine: BankEngine = {
       store,
       runtime: {
@@ -715,9 +711,6 @@ describe("sponsorship gates", () => {
         enabled: true,
         async send() {
           sends += 1;
-          if (sends === 1) {
-            await gate;
-          }
           return { ok: true, txHash: word(sends), gasUsedWei: 1n };
         },
       },
@@ -736,16 +729,11 @@ describe("sponsorship gates", () => {
         now: 1_000,
         transfersAfterOpen: [],
       });
-    const first = call("req-1");
-    await waitFor(() => store.reservations.some((row) => row.state === "held"));
-    const second = await call("req-2");
-    expect(second).toMatchObject({ skipped: true });
-    expect(String((second as { reason?: string }).reason)).toMatch(/insufficient available MON/);
-    expect(sends).toBe(1);
-    expect(store.reservations.filter((row) => row.state === "held")).toHaveLength(1);
-    release();
-    const done = await first;
-    expect("state" in done && done.state).toBe("confirmed");
+    const [first, second] = await Promise.all([call("req-1"), call("req-2")]);
+    expect(first).toMatchObject({ skipped: true, reason: expect.stringMatching(/empty transfer list/) });
+    expect(second).toMatchObject({ skipped: true, reason: expect.stringMatching(/empty transfer list/) });
+    expect(sends).toBe(0);
+    expect(store.reservations).toHaveLength(0);
   });
 });
 
@@ -758,6 +746,7 @@ describe("phase 6d boundaries", () => {
     expect(sessionTransferRace.atomicInvalidation).toBe(false);
     expect(sessionTransferRace.v11EnforcesTransferAtExecution).toBe(false);
     expect(sessionTransferRace.offchainWatcherClosesRace).toBe(false);
+    expect(sessionTransferRace.executionRefused).toMatch(/empty transfer list/);
     expect(sessionTransferRace.v11Factory).toBe("0xA2edAC990B30A488D61fc4607D4365b22e41e39c");
     expect(sessionTransferRace.unusedV1Factory).toBe("0x2d8c32B8Df4E57a18A96fa2830DE036A781B472c");
     const script = readFileSync("scripts/watcher-run.ts", "utf8");
@@ -795,13 +784,3 @@ describe("phase 6d boundaries", () => {
     await db.close();
   }, 60_000);
 });
-
-async function waitFor(ready: () => boolean): Promise<void> {
-  for (let attempt = 0; attempt < 50; attempt += 1) {
-    if (ready()) {
-      return;
-    }
-    await new Promise((resolve) => setTimeout(resolve, 0));
-  }
-  throw new Error("timed out waiting for the sponsorship reservation");
-}

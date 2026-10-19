@@ -1,5 +1,6 @@
 import { getAddress, type Address } from "viem";
 import { addresses } from "@/lib/blockchain/addresses";
+import { sessionTransferRace } from "@/lib/chogbank/session-race";
 import type { SessionPolicy, TransferLog } from "@/lib/chogbank/types";
 import type { WatcherHealth } from "@/lib/watcher/types";
 
@@ -52,5 +53,5 @@ export function preflightExecuteSession(input: {
   if (!input.health.sponsorshipAllowed) {
     return { ok: false, invalidate: false, reason: "unresolved invalidation blocks sponsorship" };
   }
-  return { ok: true };
+  return { ok: false, invalidate: false, reason: sessionTransferRace.executionRefused };
 }
