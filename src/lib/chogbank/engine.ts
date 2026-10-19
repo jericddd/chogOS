@@ -17,10 +17,17 @@ import type {
 } from "@/lib/chogbank/types";
 import type { NftIdentity } from "@/lib/wallets/nft-bound";
 
+export type SessionGuard = {
+  ready(): { ok: true } | { ok: false; reason: string };
+  transfersAfter(tokenId: string, openedBlock: bigint): TransferLog[];
+};
+
 export type BankEngine = {
   store: ChogBankStore;
   runtime: BankRuntime;
   relayer: Relayer;
+  /** When set, sponsored executeSession fails closed unless the watcher is caught up. */
+  guard?: SessionGuard;
   predictAccount?: (identity: NftIdentity) => Address | null;
   now?: () => string;
   id?: () => string;
@@ -296,6 +303,16 @@ export async function sponsorSessionCall(
   if (!request || request.state !== "active" || !session) {
     return { skipped: true, reason: "citizen account is not active" };
   }
+  if (engine.guard) {
+    const ready = engine.guard.ready();
+    if (!ready.ok) {
+      return { skipped: true, reason: ready.reason };
+    }
+  }
+  const transfersAfterOpen = [
+    ...input.transfersAfterOpen,
+    ...(engine.guard?.transfersAfter(request.tokenId, session.openedBlock) ?? []),
+  ];
   const check = evaluateSessionExecution({
     session,
     currentOwner: input.currentOwner,
@@ -305,7 +322,7 @@ export async function sponsorSessionCall(
     valueWei: input.valueWei,
     expectedNonce: input.expectedNonce,
     now: input.now,
-    transfersAfterOpen: input.transfersAfterOpen,
+    transfersAfterOpen,
   });
   if (!check.ok && check.mustInvalidate) {
     return queueInvalidate(engine, request, "account.invalidateSession");

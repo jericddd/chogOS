@@ -57,6 +57,9 @@ export type AppConfig = {
     maxDailyGasWei: bigint;
     maxTreasuryExposureWei: bigint;
   };
+  /** Explicit enable. Does not start a scan inside world_tick or on boot. */
+  chogWatcherEnabled: boolean;
+  chogWatcherMaxLagBlocks: number;
 };
 
 const DEFAULT_IPFS_GATEWAY = "https://gateway.pinata.cloud/ipfs";
@@ -267,6 +270,8 @@ export function readAppConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
         5_000_000_000_000_000_000n,
       ),
     },
+    chogWatcherEnabled: blankToUndefined(env.CHOG_WATCHER_ENABLED) === "true",
+    chogWatcherMaxLagBlocks: readBoundedInt(env.CHOG_WATCHER_MAX_LAG_BLOCKS, "CHOG_WATCHER_MAX_LAG_BLOCKS", 20, 0, 10_000),
   };
 }
 
