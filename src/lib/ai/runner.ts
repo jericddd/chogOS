@@ -7,6 +7,7 @@ import { buildDecisionContext, contextCommitment, decisionMessages } from "@/lib
 import {
   DECISION_RESPONSE_SCHEMA,
   isActivationAction,
+  isEconomyAction,
   isWorldAction,
   jsonSafeDecision,
   parseDecisionOutput,
@@ -17,6 +18,8 @@ import {
   isActivationDraft,
 } from "@/lib/chogbank/from-decision";
 import { productionBankRuntime } from "@/lib/chogbank/runtime";
+import { evaluateProductionEconomy } from "@/lib/economy/production";
+import { proposalFromDraft } from "@/lib/economy/proposal";
 import { AiProviderError } from "@/lib/ai/types";
 import type { PersonalityTraits } from "@/lib/ai/personality";
 import { readAppConfig, type AppConfig } from "@/lib/config/env";
@@ -800,6 +803,57 @@ export async function runAiMind(config: AppConfig = readAppConfig()): Promise<Mi
             status: "constructed",
             detail: `Started ${plan.plan.name} on ${plan.plan.plotId}`,
           });
+          continue;
+        }
+
+        if (isEconomyAction(parsed.decision.action)) {
+          const draft = parsed.decision.economy;
+          if (!draft) {
+            await client
+              .from("ai_decisions")
+              .update({ status: "rejected", validation_result: "economic proposal is required" })
+              .eq("id", decisionId);
+            report.rejected += 1;
+            report.decisions.push({ tokenId: row.token_id, status: "rejected", detail: "economic proposal is required" });
+            continue;
+          }
+          const proposal = proposalFromDraft(draft, {
+            id: decisionId,
+            idempotencyKey: `economy:${decisionId}`,
+            citizenId: row.claimed_citizen_id,
+            tokenId: String(bundle.citizen.tokenId),
+            nftContract: config.chogNftAddress,
+            nowMs: Date.now(),
+          });
+          const evaluated = await evaluateProductionEconomy({
+            config,
+            proposal,
+            nowMs: Date.now(),
+          });
+          const detail = evaluated.decision.reason;
+          await client
+            .from("ai_decisions")
+            .update({
+              status: evaluated.decision.outcome === "rejected" ? "rejected" : "queued",
+              validation_result: detail,
+              output: {
+                ...jsonSafeDecision(parsed.decision),
+                economyDecision: {
+                  outcome: evaluated.decision.outcome,
+                  reason: evaluated.decision.reason,
+                  reserved: evaluated.decision.reserved,
+                  executed: evaluated.decision.executed,
+                  observation: evaluated.observation.status,
+                },
+              },
+            })
+            .eq("id", decisionId);
+          if (evaluated.decision.outcome === "rejected") {
+            report.rejected += 1;
+          } else {
+            report.submitted += 1;
+          }
+          report.decisions.push({ tokenId: row.token_id, status: evaluated.decision.outcome, detail });
           continue;
         }
 
