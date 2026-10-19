@@ -25,6 +25,30 @@ export const V11_ACCOUNT_CREATION_KECCAK =
 export const V11_ACCOUNT_RUNTIME_KECCAK =
   "0x679fb5aa3a35d4f680012018e0ea9db9b70869d5e503be32b165b59f6b6d10ae" as Hex;
 
+/**
+ * V2 permanent wallet. Not deployed.
+ * The implementation and factory are CREATE2 from Arachnid 0x4e59….
+ * A citizen wallet is a proxy CREATE2 from the factory. The implementation
+ * is immutable. There is no upgrade. predictedFactoryAddress() stays on
+ * the unused V1.1 factory.
+ * These hashes match the immutable-proxy bytecode. Predictions from the
+ * earlier upgradeable draft are void.
+ */
+export const V2_IMPLEMENTATION_SALT_LABEL = "chogOS.CitizenAccountV2.v1";
+export const V2_IMPLEMENTATION_SALT = keccak256(new TextEncoder().encode(V2_IMPLEMENTATION_SALT_LABEL));
+export const V2_FACTORY_SALT_LABEL = "chogOS.CitizenAccountFactory.v2";
+export const V2_FACTORY_SALT = keccak256(new TextEncoder().encode(V2_FACTORY_SALT_LABEL));
+export const V2_IMPLEMENTATION_PREDICTED = getAddress("0x8035CA34410c19B1Bf0673Ad973Fe1cf91a7b632");
+export const V2_FACTORY_PREDICTED = getAddress("0x8a74Ea74EB0674EF4DC178263E4583FB502B77AD");
+export const V2_IMPLEMENTATION_CREATION_KECCAK =
+  "0x19c106f6993aad95c63cf742ec0eec9323f889a6feefd7ee8897768d216f1251" as Hex;
+export const V2_FACTORY_CREATION_KECCAK =
+  "0xf949dcca45c301030267e8a46ecc2aabab92a79ad49d147a1b327307f00e1a64" as Hex;
+/** Chain 143, Chog Genesis token 104. Predicted only. */
+export const V2_WALLET_104_PREDICTED = getAddress("0xD3c8e7fAfF0750bd202F72EBaBDD46D197B47502");
+/** Chain 143, Chog Genesis token 129. Predicted only. */
+export const V2_WALLET_129_PREDICTED = getAddress("0x492905adbc786264f0195FAE4516F5275BB3b960");
+
 export function create2Address(deployer: Address, salt: Hex, initCodeHash: Hex): Address {
   const digest = keccak256(concat(["0xff", deployer, salt, initCodeHash]));
   return getAddress(`0x${digest.slice(-40)}`);
@@ -32,6 +56,14 @@ export function create2Address(deployer: Address, salt: Hex, initCodeHash: Hex):
 
 export function predictedFactoryAddress(): Address {
   return create2Address(DETERMINISTIC_CREATE2, V11_FACTORY_SALT, V11_FACTORY_CREATION_KECCAK);
+}
+
+export function predictedV2ImplementationAddress(): Address {
+  return create2Address(DETERMINISTIC_CREATE2, V2_IMPLEMENTATION_SALT, V2_IMPLEMENTATION_CREATION_KECCAK);
+}
+
+export function predictedV2FactoryAddress(): Address {
+  return create2Address(DETERMINISTIC_CREATE2, V2_FACTORY_SALT, V2_FACTORY_CREATION_KECCAK);
 }
 
 /**

@@ -7,9 +7,11 @@ export type SessionCheck =
   | { ok: false; reason: string; mustInvalidate: boolean };
 
 /**
- * On-chain executeSession already latches when ownerOf differs.
- * A→B→A with no account call still looks valid on-chain. The relayer must
- * invalidate when any Transfer log exists after openedBlock.
+ * Off-chain model of the refused V1.1 session policy.
+ * It is not the V2 wallet lock. V2 allows executeSession only while the
+ * permanent wallet holds the NFT and the session epoch still matches.
+ * This function refuses every session, including a healthy watcher and an
+ * empty transfer list.
  */
 export function evaluateSessionExecution(input: {
   session: SessionPolicy;
