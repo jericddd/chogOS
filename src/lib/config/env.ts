@@ -45,6 +45,18 @@ export type AppConfig = {
   /** Optional. Displayed as the intended EventAnchor contract. Unset means not deployed. */
   eventAnchorAddress?: Address;
   eventAnchorChainId?: 143 | 10143;
+  /** Predicted factory address is not deployment. Unset means the factory is not configured. */
+  citizenAccountFactoryAddress?: Address;
+  /** Explicit observed-code flag. A predicted CREATE2 address does not set this. */
+  citizenAccountFactoryCodeVerified: boolean;
+  /** Operator intent only. The relayer still refuses without a signer backend. */
+  chogBankRelayerEnabled: boolean;
+  chogBankLimits: {
+    maxActivationWei: bigint;
+    maxTxWei: bigint;
+    maxDailyGasWei: bigint;
+    maxTreasuryExposureWei: bigint;
+  };
 };
 
 const DEFAULT_IPFS_GATEWAY = "https://gateway.pinata.cloud/ipfs";
@@ -114,6 +126,17 @@ function readBoundedInt(
     throw new Error(`Invalid ${label}. Use an integer from ${min} to ${max}.`);
   }
   return parsed;
+}
+
+function readWei(value: string | undefined, label: string, fallback: bigint): bigint {
+  const raw = blankToUndefined(value);
+  if (!raw) {
+    return fallback;
+  }
+  if (!/^[0-9]+$/.test(raw)) {
+    throw new Error(`Invalid ${label}. Use a non-negative integer in wei.`);
+  }
+  return BigInt(raw);
 }
 
 function readExpectedCount(value: string | undefined): number {
@@ -220,6 +243,30 @@ export function readAppConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
       }
       return raw === "143" ? 143 : 10143;
     })(),
+    citizenAccountFactoryAddress: (() => {
+      const raw = blankToUndefined(env.CITIZEN_ACCOUNT_FACTORY_ADDRESS);
+      return raw ? requireAddress(raw, "CITIZEN_ACCOUNT_FACTORY_ADDRESS") : undefined;
+    })(),
+    citizenAccountFactoryCodeVerified: blankToUndefined(env.CITIZEN_ACCOUNT_FACTORY_CODE_VERIFIED) === "true",
+    chogBankRelayerEnabled: blankToUndefined(env.CHOG_BANK_RELAYER_ENABLED) === "true",
+    chogBankLimits: {
+      maxActivationWei: readWei(
+        env.CHOG_BANK_MAX_ACTIVATION_WEI,
+        "CHOG_BANK_MAX_ACTIVATION_WEI",
+        500_000_000_000_000_000n,
+      ),
+      maxTxWei: readWei(env.CHOG_BANK_MAX_TX_WEI, "CHOG_BANK_MAX_TX_WEI", 100_000_000_000_000_000n),
+      maxDailyGasWei: readWei(
+        env.CHOG_BANK_MAX_DAILY_GAS_WEI,
+        "CHOG_BANK_MAX_DAILY_GAS_WEI",
+        1_000_000_000_000_000_000n,
+      ),
+      maxTreasuryExposureWei: readWei(
+        env.CHOG_BANK_MAX_TREASURY_EXPOSURE_WEI,
+        "CHOG_BANK_MAX_TREASURY_EXPOSURE_WEI",
+        5_000_000_000_000_000_000n,
+      ),
+    },
   };
 }
 

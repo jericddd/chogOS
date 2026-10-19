@@ -4,7 +4,19 @@ import { getAiProvider } from "@/lib/ai/provider";
 import { evaluateBudget, haltFromError, isRetriableHaltReason, usagePeriods, type UsageSnapshot } from "@/lib/ai/budget";
 import { timeoutWithinDeadline } from "@/lib/ai/invocation";
 import { buildDecisionContext, contextCommitment, decisionMessages } from "@/lib/ai/context";
-import { DECISION_RESPONSE_SCHEMA, isWorldAction, parseDecisionOutput } from "@/lib/ai/schema";
+import {
+  DECISION_RESPONSE_SCHEMA,
+  isActivationAction,
+  isWorldAction,
+  jsonSafeDecision,
+  parseDecisionOutput,
+} from "@/lib/ai/schema";
+import {
+  activationDraftFromDecision,
+  evaluateDecisionActivation,
+  isActivationDraft,
+} from "@/lib/chogbank/from-decision";
+import { productionBankRuntime } from "@/lib/chogbank/runtime";
 import { AiProviderError } from "@/lib/ai/types";
 import type { PersonalityTraits } from "@/lib/ai/personality";
 import { readAppConfig, type AppConfig } from "@/lib/config/env";
@@ -549,12 +561,68 @@ export async function runAiMind(config: AppConfig = readAppConfig()): Promise<Mi
           .update({
             status: "proposed",
             rationale: parsed.decision.rationale,
-            output: parsed.decision,
-            proposed_action: parsed.decision,
+            output: jsonSafeDecision(parsed.decision),
+            proposed_action: jsonSafeDecision(parsed.decision),
             model: completion.model,
             provider: completion.provider,
           })
           .eq("id", decisionId);
+
+        if (isActivationAction(parsed.decision.action)) {
+          const draft = activationDraftFromDecision({
+            id: decisionId,
+            citizenId: row.claimed_citizen_id,
+            tokenId: bundle.citizen.tokenId,
+            nftContract: config.chogNftAddress,
+            decisionId,
+            decision: parsed.decision,
+            createdAt: new Date().toISOString(),
+          });
+          if (!isActivationDraft(draft)) {
+            await client
+              .from("ai_decisions")
+              .update({ status: "rejected", validation_result: draft.reason })
+              .eq("id", decisionId);
+            report.rejected += 1;
+            report.decisions.push({ tokenId: row.token_id, status: "rejected", detail: draft.reason });
+            continue;
+          }
+          const evaluated = evaluateDecisionActivation({
+            request: draft,
+            existing: null,
+            runtime: productionBankRuntime(config),
+          });
+          const detail =
+            evaluated.decision.action === "approve"
+              ? "ChogBank approved the request; deployment still requires a later authorized job"
+              : evaluated.decision.reason;
+          await client
+            .from("ai_decisions")
+            .update({
+              status: evaluated.decision.action === "reject" ? "rejected" : "queued",
+              validation_result: detail,
+              output: {
+                ...jsonSafeDecision(parsed.decision),
+                bank: {
+                  action: evaluated.decision.action,
+                  reason: "reason" in evaluated.decision ? evaluated.decision.reason : null,
+                  state: evaluated.request.state,
+                },
+              },
+            })
+            .eq("id", decisionId);
+          if (evaluated.decision.action === "reject") {
+            report.rejected += 1;
+          } else {
+            report.submitted += 1;
+          }
+          report.decisions.push({
+            tokenId: row.token_id,
+            status: evaluated.request.state,
+            detail,
+          });
+          continue;
+        }
 
         if (parsed.decision.action === "build") {
           const buildKind = parsed.decision.buildKind;
