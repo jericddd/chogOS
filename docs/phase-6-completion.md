@@ -4,6 +4,18 @@ Date: 19 October 2026. Read-only checks against Monad mainnet block 114788937 an
 
 Phase 6 is not operational. Account execution stays closed. The blocker is the Chog Genesis transfer race, not a missing build.
 
+## Closeout on 19 October 2026
+
+PR #31 is merged (`b58905c`, 15:30 UTC). This closeout does not deploy, broadcast, enable the signer, change Vercel, or apply hosted SQL. The backfill process that was already running was left in place. Its cursor was not reset.
+
+The earlier “11 full passes” figure and cursor `113098027` describe the same scan. The first run covered 5,000 blocks, `112864028` through `112869027`. Each later pass covers 20,000 blocks. Eleven completed passes end at `113089027`. The cursor `113098027` was 9,000 blocks into the twelfth pass, which had not finished, so it was not one of the eleven. `5000 + 11×20000 + 9000 = 234000`, and `112864028 + 234000 - 1 = 113098027`.
+
+At 17:35 UTC the saved cursor was block `113142527`, with `last_error` null and backfill `112864028`. The tip was `114816183`, so 1,673,656 blocks remained. `nft_transfer_logs` had 47 rows. That read is a point in time. The scan was still moving.
+
+`executeSession` is now refused in authorization, preflight, sponsorship, and the relayer gate, including when the supplied transfer list is empty. An observed transfer still queues `invalidateSession`. The V1.1 contract is unchanged, so the on-chain race remains. `/api/transactions` still calls `assertExecutionDisabled`.
+
+`https://rpc.monad.xyz` rejects an `eth_getLogs` span above 101 blocks. The default range is 100. The message “limited to a 100 range” is classified as a splittable limit. `supabase/migrations/20261019160000_watcher_save_timeout.sql` records the 120-second function timeout and the dedupe index. Those statements were already pasted by hand. This file was not applied by the agent.
+
 ## What each layer is allowed to do
 
 | Layer | Safe today | Not safe to turn on |
@@ -40,7 +52,7 @@ Owner `execute` is not this bug. It checks the current owner at call time. The u
 
 ### Merged into `cursor/phase-1-genesis-world-155c`
 
-PRs #26, #27, #28, #29, and #30. PR #31 is a draft and is not merged.
+PRs #26, #27, #28, #29, #30, and #31. The closeout that refuses `executeSession` and records the public RPC limit is a separate pull request. It is not merged by this change.
 
 ### Deployed to https://chogos.vercel.app
 
@@ -50,7 +62,7 @@ The merged application is deployed. On 19 October 2026, `POST /api/transactions`
 
 Applied: `repair_permanent_citizenship`, `project_nft_transfer_activities`, `nft_transfer_dedupe`, and `save_nft_watcher_snapshot`.
 
-Not applied: `nft_transfer_logs`, `nft_transfer_cursors`, `chogbank_activation_requests`, `nft_watched_sessions`, and `load_nft_watcher_snapshot`. Calling `project_nft_transfer_activities` fails because `nft_transfer_logs` does not exist. `save_nft_watcher_snapshot` is present from the citizenship file, but it cannot persist a scan until the watcher tables exist and that file is applied again last.
+Applied by hand after the audit above: Phase 6b, Phase 6c, Phase 6d, the citizenship file again, then the 120-second timeouts and `civilization_events_nft_transfer_dedupe`. The watcher is saving checkpoints. The migration file for that timeout was added to git afterwards and was not pasted again.
 
 Citizens: 60 rows. Tokens 104 and 129 are `founding_treasury`, `active`, founding membership true. Token 104 is gathering at Violet Quarry with home House 13 and role stonecutter. Token 129 is resting with home House 09, work Workshop B, and role crafter.
 
@@ -75,13 +87,13 @@ These need an explicit decision. This audit did not do them.
 
 1. Do not deploy either factory, and do not open executor sessions, while `executeSession` accepts an unseen A→B→A.
 2. Do not add a private key, KMS client, or `CHOG_BANK_RELAYER_ENABLED` path that can sign. `canSign` stays false.
-3. Do not enable `CHOG_WATCHER_ENABLED` on Vercel. A scan belongs on a trusted machine after PR #31 is reviewed.
-4. Before any scan, paste the missing SQL in order: Phase 6b, Phase 6c, Phase 6d, then `20261019140000_permanent_citizenship.sql` again so `save_nft_watcher_snapshot` still projects activities. Stop on a red error. Do not rerun world initialization.
+3. Do not enable `CHOG_WATCHER_ENABLED` on Vercel. The scan that is already running stays on a trusted machine. Do not start a second writer against the same cursor.
+4. A fresh database needs Phase 6b, Phase 6c, Phase 6d, `20261019140000_permanent_citizenship.sql`, then `20261019160000_watcher_save_timeout.sql`. Hosted Supabase already has those statements. Do not rerun world initialization.
 5. A multi-machine reservation lock does not exist. The in-process lock is not a spending control while the relayer is off, and it is not sufficient if a later change broadcasts from more than one process.
 6. Business capital, reserved gas, and deployment reserves stay separate in code. No mainnet balance has been designated as the gas payer.
 
 ## Safest next action
 
-Review PR #31. If the only goal is the Onchain activity tab, apply the watcher SQL in the order above and run `npm run watcher:run` from a trusted machine with `CHOG_WATCHER_BACKFILL_FROM=112864028`. That indexes real logs. It does not sponsor transactions.
+Leave the running scan alone. It resumes from the saved cursor and does not need another SQL paste.
 
-Leave factory deployment, account creation, session opening, and gas sponsorship unapproved until there is a session design that dies when the NFT leaves and returns without an intervening account call. The current contract cannot express that, because Chog Genesis does not tell the account that the round trip happened.
+Leave factory deployment, account creation, session opening, and gas sponsorship unapproved. The server now refuses `executeSession` even when no transfer is in the supplied list. The current contract still cannot see an unseen A→B→A, because Chog Genesis does not tell the account that the round trip happened. Opening `/api/transactions` would not repair that.

@@ -1,4 +1,5 @@
 import { getAddress, type Address, type Hex } from "viem";
+import { sessionTransferRace } from "@/lib/chogbank/session-race";
 import type { SessionPolicy, TransferLog } from "@/lib/chogbank/types";
 
 export type SessionCheck =
@@ -51,7 +52,7 @@ export function evaluateSessionExecution(input: {
   if (input.session.spent + input.valueWei > input.session.maxCumulativeValue) {
     return { ok: false, reason: "spend limit", mustInvalidate: false };
   }
-  return { ok: true };
+  return { ok: false, reason: sessionTransferRace.executionRefused, mustInvalidate: false };
 }
 
 export function considerWalletActivation(input: {

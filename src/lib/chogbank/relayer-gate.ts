@@ -1,3 +1,4 @@
+import { sessionTransferRace } from "@/lib/chogbank/session-race";
 import { RELAYER_OPS, type RelayerOp } from "@/lib/chogbank/types";
 import type { ProtectedSigner } from "@/lib/chogbank/signer";
 
@@ -26,6 +27,9 @@ export function gateRelayerOp(input: {
   }
   if (!(RELAYER_OPS as readonly string[]).includes(input.op)) {
     return { accepted: false, stage: "monitoring", reason: "relayer op is not allowed" };
+  }
+  if (input.op === "account.executeSession") {
+    return { accepted: false, stage: "monitoring", reason: sessionTransferRace.executionRefused };
   }
   if (!input.preflightOk) {
     return { accepted: false, stage: "monitoring", reason: input.preflightReason ?? "preflight failed" };

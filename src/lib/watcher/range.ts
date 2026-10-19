@@ -16,7 +16,7 @@ export function rpcErrorClass(message: string): "limit" | "transient" | "fatal" 
   }
   if (
     text.includes("-32005") ||
-    /exceed|response size|block range|query returned more|log response size|payload too large|more than \d+|result limit|returned more than|history has been pruned|too many logs|too many results|range is too wide/.test(
+    /exceed|response size|block range|-32614|limited to(?: a)? \d+|query returned more|log response size|payload too large|more than \d+|result limit|returned more than|history has been pruned|too many logs|too many results|range is too wide/.test(
       text,
     )
   ) {

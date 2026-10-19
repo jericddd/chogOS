@@ -409,8 +409,22 @@ describe("sponsored execution guard", () => {
         reservationHeld: true,
         treasuryConfigured: true,
         preflightOk: true,
+      }),
+    ).toMatchObject({ accepted: false, reason: expect.stringMatching(/empty transfer list/) });
+    expect(
+      gateRelayerOp({
+        op: "account.executeSession",
+        chainId: 143,
+        signer,
+        mode: "simulated",
+        reservationHeld: true,
+        treasuryConfigured: true,
+        preflightOk: true,
       }).accepted,
     ).toBe(false);
+    expect(
+      preflightExecuteSession(base),
+    ).toMatchObject({ ok: false, invalidate: false, reason: expect.stringMatching(/empty transfer list/) });
     expect(readAppConfig({} as NodeJS.ProcessEnv).chogWatcherEnabled).toBe(false);
     expect(readAppConfig({} as NodeJS.ProcessEnv).chogBankRelayerEnabled).toBe(false);
   });

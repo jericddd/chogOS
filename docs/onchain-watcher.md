@@ -8,7 +8,7 @@ Leave `CHOG_WATCHER_ENABLED` unset until this procedure has been reviewed. The p
 
 - The contract is `0xc96d31F8626c6D03Fae5dCD3d61e3FB9F4a73763` on chain 143. Any other contract or chain exits before a read.
 - An empty cursor starts at `CHOG_WATCHER_BACKFILL_FROM`. Unset does not mean block 0.
-- Each `eth_getLogs` call covers `CHOG_WATCHER_RANGE_BLOCKS` blocks (default 1000), capped by the remaining budget.
+- Each `eth_getLogs` call covers `CHOG_WATCHER_RANGE_BLOCKS` blocks (default 100). `https://rpc.monad.xyz` rejects a span above 101 blocks with “eth_getLogs is limited to a 100 range”. That message is a range limit, so a larger setting is split and reread instead of moving the cursor. Keep 100 on that endpoint so the first request succeeds.
 - The cursor, block hash, and logs are saved after every range that commits. A timeout or a failed later range resumes from that block.
 - One process stops after `CHOG_WATCHER_MAX_BLOCKS_PER_RUN` blocks (default 5000) and exits 0 with `caughtUp: false`. Run it again to continue.
 - A response that reports a size or block-range limit is split in half and reread. A page that reaches `CHOG_WATCHER_MAX_LOGS_PER_RANGE` is treated the same way. A single block that still meets the cap does not advance the cursor.
@@ -27,7 +27,8 @@ Hosted Supabase does not apply files from git. Paste each file's contents into t
 1. `supabase/migrations/20261017220000_phase6b_chogbank.sql` creates `chogbank_activation_requests`. The Phase 6c file references that table.
 2. `supabase/migrations/20261019120000_phase6c_transfer_watcher.sql`
 3. `supabase/migrations/20261019130000_phase6d_watcher_durable.sql`
-4. `supabase/migrations/20261019140000_permanent_citizenship.sql` last. It replaces `save_nft_watcher_snapshot` so a saved range also projects Onchain activities. Running it again restores nothing new.
+4. `supabase/migrations/20261019140000_permanent_citizenship.sql`. It replaces `save_nft_watcher_snapshot` so a saved range also projects Onchain activities. Running it again restores nothing new.
+5. `supabase/migrations/20261019160000_watcher_save_timeout.sql` last. It raises the two watcher function timeouts to 120 seconds and adds the transfer dedupe index. Hosted Supabase already received these statements by hand on 19 October 2026. Pasting the file again is safe. It does not move the watcher cursor.
 
 Check:
 

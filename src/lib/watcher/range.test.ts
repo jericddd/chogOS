@@ -231,10 +231,12 @@ describe("range watcher", () => {
   it("classifies provider failures and stays disabled by default", () => {
     expect(rpcErrorClass("429 Too Many Requests")).toBe("transient");
     expect(rpcErrorClass("query returned more than 10000 results")).toBe("limit");
+    expect(rpcErrorClass("eth_getLogs is limited to a 100 range")).toBe("limit");
+    expect(rpcErrorClass('{"code":-32614,"message":"eth_getLogs is limited to a 100 range"}')).toBe("limit");
     expect(rpcErrorClass("rpc logs failed")).toBe("fatal");
     const config = readAppConfig({} as NodeJS.ProcessEnv);
     expect(config.chogWatcherEnabled).toBe(false);
-    expect(config.chogWatcherRangeBlocks).toBe(1000);
+    expect(config.chogWatcherRangeBlocks).toBe(100);
     expect(config.chogWatcherMaxBlocksPerRun).toBe(5000);
     expect(config.chogWatcherMaxLogsPerRange).toBe(2000);
     expect(config.chogWatcherRpcAttempts).toBe(4);
