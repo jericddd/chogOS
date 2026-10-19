@@ -49,5 +49,8 @@ export function preflightExecuteSession(input: {
   if (input.tokenId !== input.expectedTokenId) {
     return { ok: false, invalidate: false, reason: "wrong token" };
   }
+  if (!input.health.sponsorshipAllowed) {
+    return { ok: false, invalidate: false, reason: "unresolved invalidation blocks sponsorship" };
+  }
   return { ok: true };
 }

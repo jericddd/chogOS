@@ -6,6 +6,8 @@ Phase 6b keeps that account design and adds owner-opened executor sessions plus 
 
 Phase 6c adds an offchain Chog Genesis transfer watcher and a relayer gate. A transfer after `openedBlock`, including A→B→A, queues `invalidateSession` and blocks `executeSession`. The queue is not a confirmed transaction. Production signing stays off. See [phase-6c-transfer-watcher.md](phase-6c-transfer-watcher.md).
 
+Phase 6d persists that watcher outside `world_tick()`, reads the gas-paying MON balance without trusting the model, and keeps signing disabled because no KMS is installed. A caught-up watcher does not make a transfer and `executeSession` atomic. See [phase-6d-operations.md](phase-6d-operations.md).
+
 V1 guarantees (once a factory is authorized and an account is later created):
 
 - The current Chog Genesis `ownerOf(tokenId)` can `execute`.

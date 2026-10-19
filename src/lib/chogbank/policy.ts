@@ -147,8 +147,12 @@ export function evaluateSponsorship(input: {
   if (input.job.estimatedGasWei > input.limits.maxTxWei) {
     return { action: "reject", reason: "estimated gas exceeds the per-transaction limit" };
   }
-  if (!input.treasury.configured || availableWei(input.treasury) === 0n) {
+  const free = availableWei(input.treasury);
+  if (!input.treasury.configured || free === 0n) {
     return { action: "defer", reason: "treasury available MON is zero; external funding is required" };
+  }
+  if (free < input.job.estimatedGasWei) {
+    return { action: "defer", reason: "insufficient available MON for deployment and gas" };
   }
   if (input.dailyGasSpentWei + input.job.estimatedGasWei > input.limits.maxDailyGasWei) {
     return { action: "defer", reason: "daily gas budget is exhausted" };
