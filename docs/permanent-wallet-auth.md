@@ -119,9 +119,9 @@ No other confirmed high-severity theft path remained in the reviewed functions: 
 
 The profitable action for a malicious operator is to transfer the NFT to themselves, not into this wallet. After that transfer they are the live owner and can call `execute`. That is ordinary NFT ownership, not a revived session. Do not transfer the NFT to the wallet address. Call `deposit()` while you hold it.
 
-**Approval denylist.** Human `execute` and session calls reject `approve` (`0x095ea7b3`), `increaseAllowance` (`0x39509351`), `increaseApproval` (`0xd73dd623`), `setApprovalForAll` (`0xa22cb465`), EIP-2612 `permit` (`0xd505accf`), and DAI-style `permit` (`0x8fcbaf0c`). The session also has one target and one selector. This stops the standard ways to leave an allowance behind for a future deposit. It is not an exhaustive list. A human who explicitly calls an unknown approval-like or multicall selector authorizes that call, and its effect can outlive the NFT transfer. Do not call those selectors.
+**Approval denylist.** Human `execute` and session calls reject `approve` (`0x095ea7b3`), `increaseAllowance` (`0x39509351`), `increaseApproval` (`0xd73dd623`), `setApprovalForAll` (`0xa22cb465`), EIP-2612 `permit` (`0xd505accf`), and DAI-style `permit` (`0x8fcbaf0c`). The session also has one target and one selector. User calls use `CALL`. The wallet does not `delegatecall` calldata supplied by the owner or the executor. A multicall or forwarder therefore runs its inner calls as itself, and that does not create a standard ERC-20 allowance on the wallet. A direct call to some other function can still do whatever that function does. If that function grants a non-standard allowance or operator, the grant remains after the NFT moves and can reach tokens deposited later.
 
-**Spend-token accounting.** The session budget reads `balanceOf` on the one declared token and counts `max(balance decrease, declared transfer amount)` for `transfer` and `transferFrom`. A dishonest token can report a false balance. A call the controller explicitly allowed can still do whatever that one call does.
+**Spend-token accounting.** The session budget reads `balanceOf` on the one declared token and counts `max(balance decrease, declared transfer amount)` for `transfer` and `transferFrom`. For any other selector, only the balance decrease is counted. A token whose `balanceOf` hides the decrease can move tokens beyond the cap. An honest balance decrease is capped, including a hidden pull of that same token.
 
 **The bound NFT is trusted for `ownerOf`.** Chog Genesis is an ordinary ERC-721. A malicious token contract could lie. The pinned wallets are the CREATE2 addresses for the Genesis contract and token ids 104 and 129. The factory will create a wallet for another NFT contract, at a different address.
 
@@ -150,6 +150,19 @@ Automated tests are not a full audit. Before any deployment is considered, an in
 - Storage layout, the reentrancy lock, and the order of `authEpoch` updates against external calls.
 
 No such review has been commissioned by this change.
+
+## Pre-merge disposition
+
+Reviewed against commit `5319d4f` and the documentation update that records this disposition. The proxy ABI is `implementation()` and `logic()` only. `CitizenAccountV2` has no upgrade function. `logic()` (`0xd7dfa0dd`) does not share a selector with any wallet function, so the proxy getter does not shadow `deposit`, `release`, `execute`, or `executeSession`.
+
+| Residual | Code change before merge | This merge | Mainnet deployment |
+| --- | --- | --- | --- |
+| Non-standard approval call | No. An allowlist would be a different human-execution design. Standard approval selectors already revert, and multicall cannot grant a standard allowance because the wallet does not delegatecall user calldata. | Accepted limitation. | Blocked until the project owner accepts that an explicit non-standard grant can outlive a transfer, or the human path is restricted before any broadcast. |
+| `balanceOf` budget | No. The wallet cannot prove an arbitrary token's balance. | Accepted limitation. | Autonomous spending is blocked until each spend token is a reviewed contract. A lying `balanceOf` can hide a transfer. |
+| Unsafe NFT transfer freeze | No. A recovery path for a previous controller is a theft path after a transfer the wallet did not see. | Accepted limitation. | Blocked until the project owner accepts permanent loss of that NFT and of every asset in its wallet. Immutability means this cannot be patched later. |
+| Initialization, factory, immutable logic | No. The canonical proxy initializes inside its constructor. The pinned factory address contains the implementation address. `codeVersion()` does not authenticate bytecode. | Accepted. This is the fix for the upgrade backdoor. | Blocked until an independent reviewer accepts this exact bytecode, the deployed codehash is checked against this build before any citizen wallet is created, and the project owner accepts that there is no upgrade. One logic bug would affect every wallet. V2 has not been run against a fork of Chog Genesis. |
+
+Merging this source does not deploy it. `predictedFactoryAddress()` remains the unused V1.1 factory. The server still refuses `executeSession`.
 
 ## What this change does not do
 
