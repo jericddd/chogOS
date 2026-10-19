@@ -137,9 +137,6 @@ export async function scanTransfers(
     ranges += window.ranges;
     scanned += window.toBlock - cursorStart + 1n;
     cursorStart = window.toBlock + 1n;
-    if (cursorStart <= latest.value.number && scanned < limits.maxBlocks && limits.pauseMs > 0) {
-      await pause(limits, limits.pauseMs);
-    }
   }
 
   const toBlock = store.getCursor().lastScannedBlock;
@@ -249,6 +246,19 @@ async function commitWindow(
     headers.set(log.blockNumber.toString(), header.value);
   }
 
+  for (const log of ordered) {
+    if (log.removed) {
+      continue;
+    }
+    const header = headers.get(log.blockNumber.toString());
+    if (!header || log.blockHash.toLowerCase() !== header.hash.toLowerCase()) {
+      return {
+        ok: false,
+        reason: `transfer log at block ${log.blockNumber} does not match the canonical block hash; the cursor was not advanced`,
+      };
+    }
+  }
+
   let savedLogs = 0;
   let invalidations = 0;
   for (const log of ordered) {
@@ -268,6 +278,7 @@ async function commitWindow(
   if (!saved.ok) {
     return saved;
   }
+  await pause(limits, limits.pauseMs);
   return { ok: true, logs: savedLogs, invalidations, ranges: 1, toBlock: end };
 }
 

@@ -164,10 +164,17 @@ describe("range watcher", () => {
     chain.logs = [transfer({ block: 1, logIndex: 0, tx: 1 }), transfer({ block: 4, logIndex: 1, tx: 4, from: ownerB, to: ownerA })];
     chain.logError = (from, to) => (to !== from ? "query returned more than 10000 results" : null);
     const store = new MemoryWatcherStore(genesis, 1n);
-    const split = await scanTransfers(store, chain, now, { rangeBlocks: 4n, maxBlocks: 10n, maxLogsPerRange: 50 });
+    const split = await scanTransfers(store, chain, now, {
+      rangeBlocks: 4n,
+      maxBlocks: 10n,
+      maxLogsPerRange: 50,
+      pauseMs: 5,
+      sleep: (ms) => chain.sleep(ms),
+    });
     expect(split).toMatchObject({ ok: true, caughtUp: true, toBlock: 4n, logs: 2 });
     expect(chain.logCalls.some((call) => call.to - call.from > 1n)).toBe(true);
     expect(chain.logCalls.filter((call) => call.from === call.to)).toHaveLength(4);
+    expect(chain.sleeps).toEqual([5, 5, 5, 5]);
     expect(store.logs).toHaveLength(2);
 
     const saturated = new FakeChain();
@@ -196,6 +203,29 @@ describe("range watcher", () => {
     expect(replay).toMatchObject({ ok: true, logs: 1 });
     expect(store.logs.map((log) => log.transactionHash)).toEqual([word(1_004), word(1_070)]);
     expect(store.getCursor().lastScannedHash).toBe(word(99));
+  });
+
+  it("does not advance the cursor when an unremoved log disagrees with the block hash", async () => {
+    const chain = new FakeChain();
+    fill(chain, 1, 3);
+    chain.logs = [{ ...transfer({ block: 2, tx: 2 }), blockHash: word(999) }];
+    const store = new MemoryWatcherStore(genesis, 1n);
+    const report = await scanTransfers(store, chain, now, { rangeBlocks: 10n, maxBlocks: 10n });
+    expect(report.ok).toBe(false);
+    if (!report.ok) {
+      expect(report.reason).toMatch(/does not match the canonical block hash/);
+    }
+    expect(store.getCursor().lastScannedBlock).toBeNull();
+    expect(store.logs).toHaveLength(0);
+
+    const removed = new FakeChain();
+    fill(removed, 1, 3);
+    removed.logs = [{ ...transfer({ block: 2, tx: 2 }), removed: true }];
+    const empty = new MemoryWatcherStore(genesis, 1n);
+    const skipped = await scanTransfers(empty, removed, now, { rangeBlocks: 10n, maxBlocks: 10n, pauseMs: 25, sleep: (ms) => removed.sleep(ms) });
+    expect(skipped).toMatchObject({ ok: true, caughtUp: true, logs: 0, toBlock: 3n });
+    expect(empty.logs).toHaveLength(0);
+    expect(removed.sleeps).toEqual([25]);
   });
 
   it("classifies provider failures and stays disabled by default", () => {

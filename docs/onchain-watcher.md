@@ -15,6 +15,7 @@ Leave `CHOG_WATCHER_ENABLED` unset until this procedure has been reviewed. The p
 - A rate limit, timeout, or temporary connection error is retried `CHOG_WATCHER_RPC_ATTEMPTS` times, waiting `CHOG_WATCHER_RPC_RETRY_MS` and then doubling. A pause of `CHOG_WATCHER_RPC_PAUSE_MS` sits between committed ranges.
 - The same chain, transaction hash, and log index cannot create a second activity. Log identity also includes the block hash, so a replay of the same log is ignored.
 - The next run checks the checkpoint block hash. A mismatch drops that block and every log above the previous checkpoint, then reads the canonical range again. An orphaned activity is hidden. It is not shown as confirmed.
+- An unremoved log whose block hash disagrees with the header just read does not advance the cursor. The range is retried instead of skipping that transfer. A log marked removed is ignored.
 - No private key is read. `/api/transactions` stays closed.
 
 Exit 0 with `caughtUp: false` means the checkpoint advanced and more blocks remain. Exit 1 means the cursor stayed at the last successful range and `lastError` says why. `lagBlocks` is large during a backfill. That keeps sponsorship off. It does not remove citizens.
