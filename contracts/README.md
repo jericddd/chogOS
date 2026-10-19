@@ -54,7 +54,9 @@ NFT-bound account plus CREATE2 factory. Root authority is `ownerOf` at execution
 
 V1 predicted factory `0x2d8c32B8Df4E57a18A96fa2830DE036A781B472c` (salt `chogOS.CitizenAccountFactory.v1`) is empty and **must not be deployed** after the session bytecode change.
 
-V1.1 predicted factory: `0xA2edAC990B30A488D61fc4607D4365b22e41e39c` on chain 143 via Arachnid `0x4e59…` and salt `keccak256("chogOS.CitizenAccountFactory.v1.1")`. That address is also empty until an authorized broadcast. Do not deploy `MockGenesisNFT` on Mainnet. See `docs/phase-6a-wallet-architecture.md` and `docs/phase-6b-chogbank.md`.
+V1.1 predicted factory: `0xA2edAC990B30A488D61fc4607D4365b22e41e39c` on chain 143 via Arachnid `0x4e59…` and salt `keccak256("chogOS.CitizenAccountFactory.v1.1")`. That address is empty and must stay unused. Its session cannot see an ownership round trip. Do not deploy `MockGenesisNFT` on Mainnet.
+
+V2 is a separate implementation, ERC-1967 proxy, and factory. The proxy is the permanent wallet. `executeSession` is allowed only while the wallet holds the NFT and the session epoch matches. Predicted factory: `0xC620021d28eA1bC7d2F9f6FF9fC45245c3dB2F53`. Predicted implementation: `0xAFA1eD6eeC7acB070C1e771B21E568fe10Ee24Fe`. Token 104 predicts `0x120615D3Acb1A417ADC4701426FEdA531A853786`. Token 129 predicts `0x79FFBbC52935322fA5c20063F6131341c4bF6d41`. None of these are deployed. `script/DeployCitizenAccountFactoryV2.s.sol` reverts and cannot broadcast. See `docs/permanent-wallet-auth.md`.
 
 ```bash
 # local EVM (fork tests skip)
@@ -63,7 +65,8 @@ forge test --root contracts
 # Mainnet fork, RPC from env, chain 143. This is not a live deployment.
 forge test --root contracts --fork-url "$MONAD_RPC_URL" --match-contract GenesisMainnetFork
 
-# simulate factory deploy; refuses any chain except 143; do not add --broadcast
+# V1.1 factory script refuses every chain except 143. Do not add --broadcast.
+# V2 script cannot broadcast on any chain.
 cd contracts
 forge script script/DeployCitizenAccountFactory.s.sol:DeployCitizenAccountFactory \
   --rpc-url "$MONAD_RPC_URL" \
