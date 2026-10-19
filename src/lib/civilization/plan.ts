@@ -142,8 +142,9 @@ export function planGenesisSync(input: {
     }
 
     const ownerChanged = !existing.observedOwner || !sameAddress(existing.observedOwner, input.treasury);
-    const rejoined = !existing.foundingMembershipActive;
-    if (!ownerChanged && !rejoined && existing.rosterVerification === "verified") {
+    const canHeal = existing.origin === "founding_treasury" && existing.enrollmentStatus !== "withdrawn";
+    const needsHeal = canHeal && (!existing.foundingMembershipActive || existing.enrollmentStatus !== "active");
+    if (!ownerChanged && !needsHeal && existing.rosterVerification === "verified") {
       continue;
     }
 
@@ -151,96 +152,57 @@ export function planGenesisSync(input: {
       id: existing.id,
       patch: {
         observedOwner: input.treasury,
-        foundingMembershipActive: true,
-        enrollmentStatus: "active",
+        foundingMembershipActive: canHeal ? true : existing.foundingMembershipActive,
+        enrollmentStatus: canHeal && existing.enrollmentStatus === "suspended" ? "active" : existing.enrollmentStatus,
         ownershipObservedBlock: input.blockNumber,
         ownershipObservedAt: input.now,
         rosterVerification: "verified",
       },
     });
-    if (ownerChanged) {
-      plan.events.push(
-        event({
-          kind: "ownership_changed",
-          summary: `Chog Genesis #${holding.tokenId} ownership verified as the ChogTreasury wallet.`,
-          tokenId: holding.tokenId,
-          chainId: input.chainId,
-          blockNumber: input.blockNumber,
-          nftContract: input.nftContract,
-          owner: input.treasury,
-          citizenId: existing.id,
-        }),
-      );
-    }
-    if (rejoined) {
-      plan.events.push(
-        event({
-          kind: "genesis_joined",
-          summary: `Chog Genesis #${holding.tokenId} is in the ChogTreasury founding roster.`,
-          tokenId: holding.tokenId,
-          chainId: input.chainId,
-          blockNumber: input.blockNumber,
-          nftContract: input.nftContract,
-          owner: input.treasury,
-          citizenId: existing.id,
-        }),
-      );
-    }
   }
 
   for (const citizen of relevant) {
-    if (!citizen.foundingMembershipActive || held.has(citizen.tokenId)) {
+    if (held.has(citizen.tokenId) || citizen.enrollmentStatus === "withdrawn") {
+      continue;
+    }
+    if (citizen.enrollmentStatus !== "active" && citizen.origin !== "founding_treasury") {
       continue;
     }
     const check = input.rechecked.find((item) => item.tokenId === citizen.tokenId);
+    const healFounding =
+      citizen.origin === "founding_treasury" &&
+      (citizen.enrollmentStatus !== "active" || !citizen.foundingMembershipActive);
     if (!check || check.status === "failed") {
       plan.warnings.push(
-        `Token ${citizen.tokenId} could not be rechecked. Its founding record was left unchanged.`,
+        `Token ${citizen.tokenId} could not be rechecked. Its citizen record was left in place.`,
       );
+      if (citizen.rosterVerification === "stale" && !healFounding) {
+        continue;
+      }
       plan.updates.push({
         id: citizen.id,
-        patch: { rosterVerification: "stale" },
+        patch: {
+          rosterVerification: "stale",
+          ...(healFounding ? { foundingMembershipActive: true, enrollmentStatus: "active" as const } : {}),
+        },
       });
       continue;
     }
-    if (sameAddress(check.owner, input.treasury)) {
+    const sameOwner = citizen.observedOwner ? sameAddress(citizen.observedOwner, check.owner) : false;
+    if (sameOwner && !healFounding && citizen.rosterVerification === "verified") {
       continue;
     }
     plan.updates.push({
       id: citizen.id,
       patch: {
         observedOwner: check.owner,
-        foundingMembershipActive: false,
-        enrollmentStatus: "suspended",
+        foundingMembershipActive: citizen.origin === "founding_treasury" ? true : citizen.foundingMembershipActive,
+        enrollmentStatus: citizen.origin === "founding_treasury" ? "active" : citizen.enrollmentStatus,
         ownershipObservedBlock: input.blockNumber,
         ownershipObservedAt: input.now,
         rosterVerification: "verified",
       },
     });
-    plan.events.push(
-      event({
-        kind: "genesis_left",
-        summary: `Chog Genesis #${citizen.tokenId} left the ChogTreasury wallet. Founding membership is inactive until the current owner claims it.`,
-        tokenId: citizen.tokenId,
-        chainId: input.chainId,
-        blockNumber: input.blockNumber,
-        nftContract: input.nftContract,
-        owner: check.owner,
-        citizenId: citizen.id,
-      }),
-    );
-    plan.events.push(
-      event({
-        kind: "ownership_changed",
-        summary: `Chog Genesis #${citizen.tokenId} owner changed on Monad.`,
-        tokenId: citizen.tokenId,
-        chainId: input.chainId,
-        blockNumber: input.blockNumber,
-        nftContract: input.nftContract,
-        owner: check.owner,
-        citizenId: citizen.id,
-      }),
-    );
   }
 
   return plan;
@@ -279,6 +241,11 @@ export type EnrollmentDecision =
       citizenId: string;
       patch: Partial<CitizenRecord>;
       event: NewEvent;
+    }
+  | {
+      action: "refresh";
+      citizenId: string;
+      patch: Partial<CitizenRecord>;
     };
 
 export function planCommunityEnrollment(input: {
@@ -332,34 +299,25 @@ export function planCommunityEnrollment(input: {
     };
   }
 
+  const permanentFounding = input.existing.origin === "founding_treasury";
   const sameOwner = input.existing.observedOwner
     ? sameAddress(input.existing.observedOwner, input.onChainOwner)
     : false;
-  if (sameOwner && input.existing.enrollmentStatus === "active" && !input.existing.foundingMembershipActive) {
+  if (sameOwner && input.existing.enrollmentStatus === "active" && (permanentFounding || !input.existing.foundingMembershipActive)) {
     return { action: "unchanged", citizenId: input.existing.id };
   }
 
   return {
-    action: "claim",
+    action: "refresh",
     citizenId: input.existing.id,
     patch: {
       observedOwner: input.onChainOwner,
-      foundingMembershipActive: false,
+      foundingMembershipActive: permanentFounding ? true : input.existing.foundingMembershipActive,
       enrollmentStatus: "active",
       ownershipObservedBlock: input.blockNumber,
       ownershipObservedAt: input.now,
       rosterVerification: "verified",
     },
-    event: event({
-      kind: "ownership_claimed",
-      summary: `Chog Genesis #${input.tokenId} claimed by the current verified owner.`,
-      tokenId: input.tokenId,
-      chainId: input.chainId,
-      blockNumber: input.blockNumber,
-      nftContract: input.nftContract,
-      owner: input.onChainOwner,
-      citizenId: input.existing.id,
-    }),
   };
 }
 

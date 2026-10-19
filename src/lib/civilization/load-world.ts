@@ -190,7 +190,7 @@ async function readPersisted(config: AppConfig): Promise<{
       (citizen) => citizen.chainId === config.chainId && citizen.nftContract.toLowerCase() === config.chogNftAddress.toLowerCase(),
     );
     const foundingRecords = relevant.filter(
-      (citizen) => citizen.origin === "founding_treasury" && citizen.foundingMembershipActive,
+      (citizen) => citizen.origin === "founding_treasury" && citizen.enrollmentStatus === "active",
     ).length;
     const communityRecords = relevant.filter(
       (citizen) => citizen.origin === "community" && citizen.enrollmentStatus === "active",

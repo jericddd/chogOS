@@ -195,6 +195,9 @@ export async function submitEnrollment(input: {
     if (decision.action === "create" || decision.action === "claim") {
       enrolled.push(tokenId);
     }
+    if (decision.action === "refresh") {
+      unchanged.push(tokenId);
+    }
     absorbDecision(plan, decision, unchanged);
   }
 
@@ -222,6 +225,10 @@ function absorbDecision(plan: SyncPlan, decision: EnrollmentDecision, unchanged:
   if (decision.action === "claim") {
     plan.updates.push({ id: decision.citizenId, patch: decision.patch });
     plan.events.push(decision.event);
+    return;
+  }
+  if (decision.action === "refresh") {
+    plan.updates.push({ id: decision.citizenId, patch: decision.patch });
   }
 }
 

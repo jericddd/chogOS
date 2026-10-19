@@ -16,11 +16,8 @@ export function foundingCountLabel(
 }
 
 export function citizenDesignation(citizen: Pick<CitizenRecord, "origin" | "foundingMembershipActive">): string {
-  if (citizen.origin === "founding_treasury" && citizen.foundingMembershipActive) {
-    return "Founding citizen";
-  }
   if (citizen.origin === "founding_treasury") {
-    return "Founding citizen · treasury membership inactive";
+    return "Founding citizen";
   }
   if (citizen.foundingMembershipActive) {
     return "Community citizen · currently held by ChogTreasury";
@@ -37,7 +34,9 @@ export function verificationLabel(status: string): string {
     case "unpersisted":
       return "Verified holding. The citizen record is not in the database yet.";
     case "departed":
-      return "Founding membership inactive. The current owner can claim this citizen.";
+      return "Enrollment is not active. The stored citizen record was not removed.";
+    case "enrolled":
+      return "Permanent citizen. This NFT is not in the latest ChogTreasury holdings. The stored address is the last observed owner.";
     case "community":
       return "Community citizen. Stored owner is a snapshot until the next protected action.";
     case "needs_recheck":

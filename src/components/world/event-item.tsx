@@ -63,7 +63,14 @@ export function EventItem({
             </time>
             {compact ? null : <span> · {CATEGORY_LABEL[event.category]}</span>}
             {event.chainStatus === "confirmed" && event.txHash ? (
-              <span className="font-mono"> · {event.txHash.slice(0, 10)}…</span>
+              event.txUrl ? (
+                <a href={event.txUrl} target="_blank" rel="noreferrer" className="font-mono text-accent hover:underline">
+                  {" · "}
+                  {event.txHash.slice(0, 10)}…
+                </a>
+              ) : (
+                <span className="font-mono"> · {event.txHash.slice(0, 10)}…</span>
+              )
             ) : null}
             {" "}
             ·{" "}

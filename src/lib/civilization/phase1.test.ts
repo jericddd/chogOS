@@ -8,6 +8,7 @@ import { selectVerifiedHoldings, type InventoryRead, type OwnerObservation } fro
 import { resolveDiscoveryCandidates } from "@/lib/civilization/candidates";
 import { createEnrollmentChallenge, submitEnrollment } from "@/lib/civilization/enrollment-flow";
 import { canActAsCurrentOwner, planCommunityEnrollment } from "@/lib/civilization/plan";
+import { mergeCitizensForDisplay } from "@/lib/civilization/roster";
 import { foundingCountLabel } from "@/lib/civilization/labels";
 import { MemoryCivilizationStore } from "@/lib/civilization/memory-store";
 import { resolveTokenMetadata } from "@/lib/civilization/metadata-load";
@@ -20,6 +21,8 @@ import { verifyIndexerCandidates } from "@/lib/civilization/indexer";
 const treasury = getAddress("0x84113421A8a564b594ee9Ae78c875310332d7023");
 const nft = getAddress("0xc96d31F8626c6D03Fae5dCD3d61e3FB9F4a73763");
 const other = getAddress("0x00000000000000000000000000000000000000aa");
+const walletC = getAddress("0x00000000000000000000000000000000000000cc");
+const zero = getAddress("0x0000000000000000000000000000000000000000");
 const now = "2026-10-10T00:00:00.000Z";
 
 function inventory(tokenIds: string[] | null, balanceOf: number | null = tokenIds?.length ?? null): InventoryRead {
@@ -195,7 +198,7 @@ describe("genesis synchronization", () => {
     expect(store.citizens[0]?.rosterVerification).toBe("stale");
   });
 
-  it("moves a founding citizen out of the treasury without deleting history", async () => {
+  it("updates the owner when a founding NFT leaves the treasury and keeps the citizen", async () => {
     const store = new MemoryCivilizationStore();
     await synchronizeGenesis({
       reader: reader({ inventory: inventory(["7"]), owners: { "7": treasury } }),
@@ -207,6 +210,8 @@ describe("genesis synchronization", () => {
       now,
       minIntervalMs: 0,
     });
+    const citizenId = store.citizens[0]?.id;
+    store.citizens[0]!.metadataName = "Mossy";
     const joined = store.events.length;
     await synchronizeGenesis({
       reader: reader({ inventory: inventory([]), owners: { "7": other } }),
@@ -219,11 +224,164 @@ describe("genesis synchronization", () => {
       minIntervalMs: 0,
     });
     expect(store.citizens).toHaveLength(1);
+    expect(store.citizens[0]?.id).toBe(citizenId);
+    expect(store.citizens[0]?.metadataName).toBe("Mossy");
     expect(store.citizens[0]?.origin).toBe("founding_treasury");
-    expect(store.citizens[0]?.foundingMembershipActive).toBe(false);
-    expect(store.citizens[0]?.enrollmentStatus).toBe("suspended");
+    expect(store.citizens[0]?.foundingMembershipActive).toBe(true);
+    expect(store.citizens[0]?.enrollmentStatus).toBe("active");
     expect(store.citizens[0]?.observedOwner).toBe(other);
-    expect(store.events.length).toBeGreaterThan(joined);
+    expect(store.events.length).toBe(joined);
+    expect(store.events.some((event) => event.kind === "genesis_left")).toBe(false);
+
+    await synchronizeGenesis({
+      reader: reader({ inventory: inventory([]), owners: { "7": other } }),
+      store,
+      treasury,
+      nftContract: nft,
+      chainId: 143,
+      expectedCount: 59,
+      now: "2026-10-10T00:03:00.000Z",
+      minIntervalMs: 0,
+    });
+    expect(store.citizens).toHaveLength(1);
+    expect(store.citizens[0]?.id).toBe(citizenId);
+    expect(store.citizens[0]?.metadataName).toBe("Mossy");
+    expect(store.events.length).toBe(joined);
+  });
+
+  it("keeps every enrolled citizen when one of 59 founding NFTs leaves the treasury", async () => {
+    const ids = Array.from({ length: 59 }, (_, index) => String(index + 1));
+    const store = new MemoryCivilizationStore();
+    await synchronizeGenesis({
+      reader: reader({
+        inventory: inventory(ids),
+        owners: Object.fromEntries(ids.map((id) => [id, treasury])),
+      }),
+      store,
+      treasury,
+      nftContract: nft,
+      chainId: 143,
+      expectedCount: 59,
+      now,
+      minIntervalMs: 0,
+    });
+    const moved = store.citizens.find((citizen) => citizen.tokenId === "1");
+    expect(moved).toBeTruthy();
+    moved!.metadataName = "Kept";
+    await synchronizeGenesis({
+      reader: reader({
+        inventory: inventory(ids.filter((id) => id !== "1")),
+        owners: { "1": other },
+      }),
+      store,
+      treasury,
+      nftContract: nft,
+      chainId: 143,
+      expectedCount: 59,
+      now: "2026-10-10T00:04:00.000Z",
+      minIntervalMs: 0,
+    });
+    expect(store.citizens).toHaveLength(59);
+    expect(store.citizens.filter((citizen) => citizen.enrollmentStatus === "active")).toHaveLength(59);
+    const after = store.citizens.find((citizen) => citizen.tokenId === "1");
+    expect(after?.id).toBe(moved!.id);
+    expect(after?.metadataName).toBe("Kept");
+    expect(after?.foundingMembershipActive).toBe(true);
+    expect(after?.observedOwner).toBe(other);
+    const display = mergeCitizensForDisplay({
+      liveTokenIds: ids.filter((id) => id !== "1"),
+      treasury,
+      citizens: store.citizens,
+      chainId: 143,
+      nftContract: nft,
+    });
+    expect(display.find((citizen) => citizen.tokenId === "1")).toMatchObject({
+      verification: "enrolled",
+      designation: "Founding citizen",
+      owner: other,
+      citizenId: moved!.id,
+    });
+  });
+
+  it("follows A to B to C and A to B to A without duplicating the citizen", async () => {
+    const store = new MemoryCivilizationStore();
+    const syncAt = async (owner: Address, at: string) => {
+      await synchronizeGenesis({
+        reader: reader({
+          inventory: owner === treasury ? inventory(["7"]) : inventory([]),
+          owners: { "7": owner },
+        }),
+        store,
+        treasury,
+        nftContract: nft,
+        chainId: 143,
+        expectedCount: 59,
+        now: at,
+        minIntervalMs: 0,
+      });
+    };
+    await syncAt(treasury, now);
+    const citizenId = store.citizens[0]?.id;
+    store.citizens[0]!.metadataDescription = "same citizen";
+    await syncAt(other, "2026-10-10T00:05:00.000Z");
+    await syncAt(walletC, "2026-10-10T00:06:00.000Z");
+    expect(store.citizens).toHaveLength(1);
+    expect(store.citizens[0]?.id).toBe(citizenId);
+    expect(store.citizens[0]?.observedOwner).toBe(walletC);
+    expect(store.citizens[0]?.metadataDescription).toBe("same citizen");
+    await syncAt(other, "2026-10-10T00:07:00.000Z");
+    await syncAt(treasury, "2026-10-10T00:08:00.000Z");
+    expect(store.citizens).toHaveLength(1);
+    expect(store.citizens[0]?.id).toBe(citizenId);
+    expect(store.citizens[0]?.observedOwner).toBe(treasury);
+    expect(store.citizens[0]?.enrollmentStatus).toBe("active");
+    expect(store.citizens[0]?.foundingMembershipActive).toBe(true);
+    expect(canActAsCurrentOwner(other, treasury)).toBe(false);
+    expect(canActAsCurrentOwner(treasury, treasury)).toBe(true);
+  });
+
+  it("keeps the citizen when ownerOf fails or the token is burned", async () => {
+    const store = new MemoryCivilizationStore();
+    await synchronizeGenesis({
+      reader: reader({ inventory: inventory(["7"]), owners: { "7": treasury } }),
+      store,
+      treasury,
+      nftContract: nft,
+      chainId: 143,
+      expectedCount: 59,
+      now,
+      minIntervalMs: 0,
+    });
+    const failed = await synchronizeGenesis({
+      reader: reader({ inventory: inventory(null), owners: { "7": "fail" } }),
+      store,
+      treasury,
+      nftContract: nft,
+      chainId: 143,
+      expectedCount: 59,
+      now: "2026-10-10T00:09:00.000Z",
+      minIntervalMs: 0,
+    });
+    expect(failed.status).toBe("failed");
+    expect(store.citizens).toHaveLength(1);
+    expect(store.citizens[0]?.enrollmentStatus).toBe("active");
+    expect(store.citizens[0]?.observedOwner).toBe(treasury);
+
+    await synchronizeGenesis({
+      reader: reader({ inventory: inventory([]), owners: { "7": zero } }),
+      store,
+      treasury,
+      nftContract: nft,
+      chainId: 143,
+      expectedCount: 59,
+      now: "2026-10-10T00:10:00.000Z",
+      minIntervalMs: 0,
+    });
+    expect(store.citizens).toHaveLength(1);
+    expect(store.citizens[0]?.enrollmentStatus).toBe("active");
+    expect(store.citizens[0]?.foundingMembershipActive).toBe(true);
+    expect(store.citizens[0]?.observedOwner).toBe(zero);
+    expect(canActAsCurrentOwner(zero, zero)).toBe(false);
   });
 
   it("reports a database failure and does not claim the roster was saved", async () => {
@@ -404,9 +562,10 @@ describe("community enrollment", () => {
     expect(claimed.ok).toBe(true);
     expect(store.citizens).toHaveLength(1);
     expect(store.citizens[0]?.origin).toBe("founding_treasury");
-    expect(store.citizens[0]?.foundingMembershipActive).toBe(false);
+    expect(store.citizens[0]?.foundingMembershipActive).toBe(true);
     expect(store.citizens[0]?.enrollmentStatus).toBe("active");
     expect(store.citizens[0]?.observedOwner).toBe(account.address);
+    expect(canActAsCurrentOwner(account.address, account.address)).toBe(true);
     expect(canActAsCurrentOwner(former.address, account.address)).toBe(false);
 
     const stolen = await createEnrollmentChallenge({
@@ -420,6 +579,70 @@ describe("community enrollment", () => {
       now: new Date("2026-10-10T00:06:00.000Z"),
     });
     expect(stolen.ok).toBe(false);
+  });
+
+  it("enrolls a new NFT once and keeps that citizen after a later transfer", async () => {
+    const account = privateKeyToAccount(generatePrivateKey());
+    const buyer = privateKeyToAccount(generatePrivateKey());
+    const store = new MemoryCivilizationStore();
+    const chain = reader({
+      inventory: inventory(["21"], 1),
+      owners: { "21": account.address },
+    });
+    const challenge = await createEnrollmentChallenge({
+      store,
+      reader: chain,
+      chainId: 143,
+      nftContract: nft,
+      treasury,
+      wallet: account.address,
+      tokenIds: ["21"],
+      now: new Date(now),
+    });
+    if (!challenge.ok) {
+      throw new Error(challenge.error);
+    }
+    const enrolled = await submitEnrollment({
+      store,
+      reader: chain,
+      chainId: 143,
+      nftContract: nft,
+      treasury,
+      wallet: account.address,
+      nonce: challenge.nonce,
+      signature: await account.signMessage({ message: challenge.message }),
+      now: new Date(now),
+    });
+    expect(enrolled.ok).toBe(true);
+    const citizenId = store.citizens[0]?.id;
+    expect(store.citizens[0]?.origin).toBe("community");
+    await synchronizeGenesis({
+      reader: reader({ inventory: inventory([]), owners: { "21": buyer.address } }),
+      store,
+      treasury,
+      nftContract: nft,
+      chainId: 143,
+      expectedCount: 59,
+      now: "2026-10-10T00:11:00.000Z",
+      minIntervalMs: 0,
+    });
+    await synchronizeGenesis({
+      reader: reader({ inventory: inventory([]), owners: { "21": buyer.address } }),
+      store,
+      treasury,
+      nftContract: nft,
+      chainId: 143,
+      expectedCount: 59,
+      now: "2026-10-10T00:12:00.000Z",
+      minIntervalMs: 0,
+    });
+    expect(store.citizens).toHaveLength(1);
+    expect(store.citizens[0]?.id).toBe(citizenId);
+    expect(store.citizens[0]?.origin).toBe("community");
+    expect(store.citizens[0]?.enrollmentStatus).toBe("active");
+    expect(store.citizens[0]?.observedOwner).toBe(buyer.address);
+    expect(canActAsCurrentOwner(account.address, buyer.address)).toBe(false);
+    expect(canActAsCurrentOwner(buyer.address, buyer.address)).toBe(true);
   });
 
   it("does not enroll an invalid token id", async () => {

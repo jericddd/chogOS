@@ -70,7 +70,10 @@ export async function synchronizeGenesis(input: {
       (citizen) => citizen.chainId === input.chainId && sameAddress(citizen.nftContract, input.nftContract),
     );
     const missing = relevant.filter(
-      (citizen) => citizen.foundingMembershipActive && !resolution.tokenIds.includes(citizen.tokenId),
+      (citizen) =>
+        !resolution.tokenIds.includes(citizen.tokenId) &&
+        citizen.enrollmentStatus !== "withdrawn" &&
+        (citizen.enrollmentStatus === "active" || citizen.origin === "founding_treasury"),
     );
     const ids = [...resolution.tokenIds];
     for (const citizen of missing) {

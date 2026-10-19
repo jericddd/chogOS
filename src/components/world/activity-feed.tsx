@@ -55,7 +55,7 @@ function emptyText(filter: EventFilter): string {
     return "No AI events. Only genuine model-backed decisions are labeled AI. Rule-based activity stays simulation.";
   }
   if (filter.source === "onchain" || filter.category === "onchain") {
-    return "No onchain events. Only activity verified against Monad is labeled onchain, and the world makes no transactions.";
+    return "No onchain events. Confirmed Chog Genesis transfers observed by the watcher appear here. The simulation itself does not send transactions.";
   }
   if (!isEmptyFilter(filter)) {
     return "Nothing matches this filter yet.";

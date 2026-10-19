@@ -147,11 +147,12 @@ function applyFilter<Q extends { eq: (column: string, value: string) => Q; or: (
   return next;
 }
 
-async function readEvents(
+function eventQuery(
   client: SupabaseClient,
+  columns: string,
   options: { after?: number; before?: number; limit: number; filter?: EventFilter },
-): Promise<WorldEventView[]> {
-  let query = client.from("civilization_events").select(EVENT_COLUMNS);
+) {
+  let query = client.from("civilization_events").select(columns);
   if (options.after !== undefined) {
     query = query.gt("seq", options.after);
   }
@@ -161,11 +162,25 @@ async function readEvents(
   if (options.filter) {
     query = applyFilter(query, options.filter);
   }
-  const { data, error } = await query.order("seq", { ascending: false }).limit(options.limit);
-  if (error) {
-    fail(error, "history");
+  return query.order("seq", { ascending: false }).limit(options.limit);
+}
+
+function missingCanonical(error: DbError): boolean {
+  return /canonical/i.test(error.message) && /does not exist|schema cache|42703/i.test(error.message);
+}
+
+async function readEvents(
+  client: SupabaseClient,
+  options: { after?: number; before?: number; limit: number; filter?: EventFilter },
+): Promise<WorldEventView[]> {
+  let result = await eventQuery(client, `${EVENT_COLUMNS}, canonical`, options);
+  if (result.error && missingCanonical(result.error)) {
+    result = await eventQuery(client, EVENT_COLUMNS, options);
   }
-  return ((data ?? []) as EventRow[]).map(toEvent);
+  if (result.error) {
+    fail(result.error, "history");
+  }
+  return ((result.data ?? []) as unknown as EventRow[]).filter((row) => row.canonical !== false).map(toEvent);
 }
 
 async function readTownNeeds(client: SupabaseClient): Promise<{ ready: boolean; needs: TownNeedView[] }> {

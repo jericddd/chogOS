@@ -107,6 +107,26 @@ function citizen(patch: Partial<CitizenView>): CitizenView {
   };
 }
 
+function confirmedRow(hash: string): EventRow {
+  return {
+    id: "transfer",
+    seq: 4,
+    kind: "nft.transferred",
+    category: "onchain",
+    source: "onchain",
+    summary: "Chog #7 transferred.",
+    occurred_at: "2026-10-19T00:00:00Z",
+    world_s: null,
+    tick_seq: null,
+    building_id: null,
+    chain_status: "confirmed",
+    tx_hash: hash,
+    chain_id: 143,
+    canonical: true,
+    payload: { tokenId: "7" },
+  };
+}
+
 function event(seq: number, patch: Partial<WorldEventView> = {}): WorldEventView {
   return {
     id: `e${seq}`,
@@ -202,6 +222,39 @@ describe("row mapping", () => {
     };
     const mapped = toEvent(row);
     expect(mapped).toMatchObject({ seq: 3, source: "system", category: "membership", tokenId: "7", worldS: null });
+  });
+
+  it("links a confirmed transfer and hides an orphaned one", () => {
+    const hash = `0x${"ab".repeat(32)}`;
+    const confirmed = toEvent({
+      id: "transfer",
+      seq: 4,
+      kind: "nft.transferred",
+      category: "onchain",
+      source: "onchain",
+      summary: "Chog #7 transferred from 0x1111111111111111111111111111111111111111 to 0x2222222222222222222222222222222222222222 in block 11.",
+      occurred_at: "2026-10-19T00:00:00Z",
+      world_s: null,
+      tick_seq: null,
+      building_id: null,
+      chain_status: "confirmed",
+      tx_hash: hash,
+      chain_id: 143,
+      canonical: true,
+      payload: { tokenId: "7", from: "0x1111111111111111111111111111111111111111", to: "0x2222222222222222222222222222222222222222" },
+    });
+    expect(confirmed).toMatchObject({
+      category: "onchain",
+      source: "onchain",
+      chainStatus: "confirmed",
+      tokenId: "7",
+      txHash: hash,
+      txUrl: `https://monadscan.com/tx/${hash}`,
+    });
+    const orphaned = toEvent({ ...confirmedRow(hash), canonical: false });
+    expect(orphaned.chainStatus).toBe("offchain");
+    expect(orphaned.txHash).toBeNull();
+    expect(orphaned.txUrl).toBeNull();
   });
 
   it("treats founding_treasury citizens as founding and exposes no internal ids", () => {
