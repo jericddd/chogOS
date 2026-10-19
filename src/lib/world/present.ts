@@ -52,7 +52,7 @@ export const SOURCE_LABEL: Record<EventSource, string> = {
 export const SOURCE_DESCRIPTION: Record<EventSource, string> = {
   simulation: "A rule-based world transition. Not an AI decision.",
   ai: "A decision made by the integrated AI mind.",
-  onchain: "Verified against Monad blockchain data.",
+  onchain: "A Chog Genesis transfer recorded by the watcher. Explorer links appear only for a complete Monad mainnet log. Not an AI decision.",
   system: "Setup, synchronization, or operator action.",
 };
 

@@ -249,8 +249,47 @@ describe("row mapping", () => {
       chainStatus: "confirmed",
       tokenId: "7",
       txHash: hash,
-      txUrl: `https://monadscan.com/tx/${hash}`,
+      txUrl: null,
     });
+    expect(confirmed.transfer?.canonical).toBe(false);
+    expect(confirmed.transfer?.links.from).toBeNull();
+    expect(confirmed.transfer?.links.to).toBeNull();
+    expect(confirmed.transfer?.links.transaction).toBeNull();
+    expect(confirmed.transfer?.issues.join(" ")).toMatch(/contract|block hash|log index|block number/i);
+    expect(confirmed.transfer?.txIndex).toBeNull();
+    const contract = "0xc96d31f8626c6d03fae5dcd3d61e3fb9f4a73763";
+    const detailed = toEvent({
+      ...confirmedRow(hash),
+      payload: {
+        tokenId: "7",
+        from: "0x1111111111111111111111111111111111111111",
+        to: "0x2222222222222222222222222222222222222222",
+        blockNumber: "11",
+        blockHash: `0x${"cd".repeat(32)}`,
+        logIndex: 4,
+        contract,
+      },
+    });
+    expect(detailed.transfer).toMatchObject({
+      chainId: 143,
+      blockNumber: "11",
+      logIndex: "4",
+      txIndex: null,
+      canonical: true,
+    });
+    expect(detailed.transfer?.links.block).toBe("https://monadscan.com/block/11");
+    expect(detailed.transfer?.links.token).toBe(`https://monadscan.com/nft/${contract}/7`);
+    expect(detailed.transfer?.links.contract).toBe(`https://monadscan.com/address/${contract}`);
+    const mismatched = toEvent({
+      ...confirmedRow(hash),
+      payload: { tokenId: "7", txHash: `0x${"ff".repeat(32)}` },
+    });
+    expect(mismatched.txUrl).toBeNull();
+    expect(mismatched.txHash).toBeNull();
+    expect(mismatched.transfer?.consistent).toBe(false);
+    const malformed = toEvent({ ...confirmedRow("0xnot-a-hash"), canonical: true });
+    expect(malformed.txUrl).toBeNull();
+    expect(malformed.transfer?.links.transaction).toBeNull();
     const orphaned = toEvent({ ...confirmedRow(hash), canonical: false });
     expect(orphaned.chainStatus).toBe("offchain");
     expect(orphaned.txHash).toBeNull();

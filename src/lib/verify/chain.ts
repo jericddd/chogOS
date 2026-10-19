@@ -1,3 +1,4 @@
+import { assessAnchorObservation, OFFCHAIN_ROOT_SENTENCE, type AnchorObservationJson } from "@/lib/verify/anchor";
 import { hashEvent, hashesMatch, type CanonicalEventInput } from "@/lib/verify/canonical";
 import { verifyInclusion } from "@/lib/verify/merkle";
 
@@ -22,10 +23,16 @@ export type AnchorRecord = {
   chainId: number;
   contract: string;
   txHash: string;
-  blockNumber: string;
+  blockNumber: string | null;
   root: string;
   batchId: string;
 } | null;
+
+export type BatchSpan = {
+  fromSeq: number;
+  toSeq: number;
+  eventCount: number;
+};
 
 export type LocalVerifyInput = {
   event: CanonicalEventInput;
@@ -35,10 +42,17 @@ export type LocalVerifyInput = {
   next?: ChainLink | null;
   proof?: { format: string; root: string; proof: string[] } | null;
   expectedRoot?: string | null;
+  batchSpan?: BatchSpan | null;
   anchor?: AnchorRecord;
-  /** Root actually read from the contract, if a read was performed. */
-  onchainRoot?: string | null;
-  onchainChainId?: number | null;
+  /** Database anchor status. A confirmed value is not a live check. */
+  recordedAnchorStatus?: string | null;
+  /** Set when the recorded anchor identifiers are malformed. */
+  anchorIssue?: string | null;
+  /**
+   * Raw read-only RPC observation. A root string, a database status, or an
+   * explorer link cannot produce onchain_anchor_verified.
+   */
+  anchorObservation?: AnchorObservationJson | null;
 };
 
 export type LocalVerifyResult = {
@@ -48,8 +62,8 @@ export type LocalVerifyResult = {
 };
 
 /**
- * Recomputes integrity locally. API success is not a status. Onchain status
- * requires a contract read whose root matches the Merkle root, on the expected chain.
+ * Recomputes integrity locally. API success is not a status.
+ * onchain_anchor_verified requires assessAnchorObservation to accept a live read.
  */
 export function verifyEventLocally(input: LocalVerifyInput): LocalVerifyResult {
   const reasons: string[] = [];
@@ -124,26 +138,85 @@ export function verifyEventLocally(input: LocalVerifyInput): LocalVerifyResult {
   if (!merkleOk) {
     return { status: "verification_failed", computedHash, reasons: [...reasons, "Merkle inclusion proof does not match the batch root."] };
   }
-  reasons.push("Merkle inclusion proof matches the batch root.");
+  reasons.push(
+    "Merkle inclusion proof matches the supplied batch root. That shows the leaf is in that root. It does not publish the root onchain, and it does not prove the event describes a real-world occurrence.",
+  );
 
-  if (!input.anchor) {
-    return { status: "merkle_proof_verified", computedHash, reasons: [...reasons, "No onchain anchor is recorded. A Merkle root is a local commitment."] };
+  if (input.anchorIssue) {
+    return { status: "verification_failed", computedHash, reasons: [...reasons, input.anchorIssue] };
   }
-  if (!input.onchainRoot) {
+
+  if (!input.anchorObservation) {
+    if (input.recordedAnchorStatus === "failed") {
+      return {
+        status: "merkle_proof_verified",
+        computedHash,
+        reasons: [...reasons, `The recorded anchor status is failed. ${OFFCHAIN_ROOT_SENTENCE}`],
+      };
+    }
+    if (input.anchor || input.recordedAnchorStatus === "submitted" || input.recordedAnchorStatus === "confirmed") {
+      return {
+        status: "merkle_proof_verified",
+        computedHash,
+        reasons: [
+          ...reasons,
+          "An anchor is recorded, but this check did not read the contract. A database status, transaction hash, or explorer link is not an onchain root.",
+        ],
+      };
+    }
     return {
       status: "merkle_proof_verified",
       computedHash,
-      reasons: [...reasons, "An anchor is recorded, but this check did not read the contract. Export the bundle and query Monad yourself."],
+      reasons: [...reasons, OFFCHAIN_ROOT_SENTENCE],
     };
   }
-  if (input.onchainChainId !== input.anchor.chainId) {
-    return { status: "verification_failed", computedHash, reasons: [...reasons, "The contract was read on a different chain than the recorded anchor."] };
+
+  const span = input.batchSpan;
+  const root = input.expectedRoot ?? proof.root;
+  if (!input.anchor || !span || !root) {
+    return {
+      status: "verification_failed",
+      computedHash,
+      reasons: [...reasons, "An anchor observation was supplied without the batch range, chain, or root needed to check it."],
+    };
   }
-  if (input.onchainRoot.toLowerCase() !== proof.root.toLowerCase()) {
-    return { status: "verification_failed", computedHash, reasons: [...reasons, "The root stored on the contract does not match this batch root."] };
+  let blockNumber: bigint | null = null;
+  if (input.anchor.blockNumber) {
+    if (!/^[0-9]+$/.test(input.anchor.blockNumber)) {
+      return {
+        status: "verification_failed",
+        computedHash,
+        reasons: [...reasons, "The recorded anchor block is not a decimal number."],
+      };
+    }
+    blockNumber = BigInt(input.anchor.blockNumber);
   }
-  reasons.push("The batch root matches the value currently stored on the recorded contract.");
-  return { status: "onchain_anchor_verified", computedHash, reasons };
+  const assessment = assessAnchorObservation(
+    {
+      chainId: input.anchor.chainId,
+      root,
+      fromSeq: BigInt(span.fromSeq),
+      toSeq: BigInt(span.toSeq),
+      eventCount: span.eventCount,
+      blockNumber,
+    },
+    input.anchorObservation,
+  );
+  if (assessment.pending) {
+    return { status: "merkle_proof_verified", computedHash, reasons: [...reasons, ...assessment.reasons] };
+  }
+  if (!assessment.ok) {
+    return { status: "verification_failed", computedHash, reasons: [...reasons, ...assessment.reasons] };
+  }
+  return {
+    status: "onchain_anchor_verified",
+    computedHash,
+    reasons: [
+      ...reasons,
+      ...assessment.reasons,
+      "EventAnchor stores the root only. It does not verify this inclusion proof and it does not prove the event is true.",
+    ],
+  };
 }
 
 export function findSeqGaps(seqs: readonly number[]): number[] {

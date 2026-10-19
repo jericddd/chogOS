@@ -1,4 +1,5 @@
-import { getChain, type SupportedChainId } from "@/lib/blockchain/chains";
+import { explorerTxUrl } from "@/lib/blockchain/explorer";
+import { transferEvidenceFromRow } from "@/lib/world/transfer";
 import { CONSTRUCT_KINDS, type BuildingKind, type ConstructKind, type WorkRole } from "@/lib/world/layout";
 import { roadStubById } from "@/lib/world/roads";
 import {
@@ -247,16 +248,14 @@ function asCategory(value: string | null): EventCategory {
   return EVENT_CATEGORIES.includes(value as EventCategory) ? (value as EventCategory) : "membership";
 }
 
-export function explorerTxUrl(chainId: number | null | undefined, txHash: string | null | undefined): string | null {
-  if (!txHash || (chainId !== 143 && chainId !== 10143)) {
-    return null;
-  }
-  const explorer = getChain(chainId as SupportedChainId).blockExplorers?.default.url;
-  return explorer ? `${explorer}/tx/${txHash}` : null;
-}
+export { explorerTxUrl };
 
 export function toEvent(row: EventRow): WorldEventView {
-  const confirmed = row.canonical !== false && row.chain_status === "confirmed";
+  const transfer = transferEvidenceFromRow(row);
+  const reorg = row.canonical === false;
+  const inconsistent = transfer?.consistent === false;
+  const presentable = transfer?.canonical === true;
+  const confirmed = transfer ? presentable : !reorg && row.chain_status === "confirmed";
   return {
     id: row.id,
     seq: num(row.seq),
@@ -271,9 +270,10 @@ export function toEvent(row: EventRow): WorldEventView {
     relatedTokenId: payloadText(row.payload, "relatedTokenId"),
     buildingId: row.building_id,
     buildingName: payloadText(row.payload, "buildingName"),
-    chainStatus: confirmed ? "confirmed" : row.canonical === false ? "offchain" : row.chain_status,
-    txHash: confirmed ? row.tx_hash : row.canonical === false ? null : row.tx_hash,
-    txUrl: confirmed ? explorerTxUrl(row.chain_id, row.tx_hash) : null,
+    chainStatus: confirmed ? "confirmed" : reorg || inconsistent ? "offchain" : row.chain_status,
+    txHash: confirmed ? row.tx_hash : reorg || inconsistent ? null : row.tx_hash,
+    txUrl: confirmed ? (transfer ? transfer.links.transaction : explorerTxUrl(row.chain_id, row.tx_hash)) : null,
+    transfer,
     intentId: row.intent_id ?? payloadText(row.payload, "intentId"),
     decisionId: row.decision_id ?? payloadText(row.payload, "decisionId"),
   };
