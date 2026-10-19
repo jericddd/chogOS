@@ -33,6 +33,22 @@ export type BankEngine = {
   id?: () => string;
 };
 
+/** Process-local. Two sponsor calls in one process cannot both pass the balance check. */
+const sponsorshipTail = new WeakMap<BankEngine, Promise<void>>();
+
+function withSponsorshipLock<T>(engine: BankEngine, work: () => Promise<T>): Promise<T> {
+  const previous = sponsorshipTail.get(engine) ?? Promise.resolve();
+  const run = previous.catch(() => undefined).then(work);
+  sponsorshipTail.set(
+    engine,
+    run.then(
+      () => undefined,
+      () => undefined,
+    ),
+  );
+  return run;
+}
+
 function nowIso(engine: BankEngine): string {
   return engine.now ? engine.now() : new Date().toISOString();
 }
@@ -283,6 +299,12 @@ export async function confirmAuthorization(
   return engine.store.saveRequest({ ...request, state: "active", rejectReason: null });
 }
 
+type PreparedSponsorship =
+  | { kind: "skipped"; reason: string }
+  | { kind: "job"; job: SponsoredJob }
+  | { kind: "invalidate"; request: ActivationRequest }
+  | { kind: "hold"; job: SponsoredJob; reservation: Reservation };
+
 export async function sponsorSessionCall(
   engine: BankEngine,
   input: {
@@ -298,15 +320,52 @@ export async function sponsorSessionCall(
     transfersAfterOpen: TransferLog[];
   },
 ): Promise<SponsoredJob | { skipped: true; reason: string }> {
+  const prepared = await withSponsorshipLock(engine, () => prepareSessionSponsorship(engine, input));
+  if (prepared.kind === "skipped") {
+    return { skipped: true, reason: prepared.reason };
+  }
+  if (prepared.kind === "job") {
+    return prepared.job;
+  }
+  if (prepared.kind === "invalidate") {
+    return queueInvalidate(engine, prepared.request, "account.invalidateSession");
+  }
+  const executed = await executeJob(engine, prepared.job.id);
+  if (executed.state === "submitted" || executed.state === "confirmed") {
+    await settleReservation(engine, prepared.reservation, true, executed.gasUsedWei ?? 0n);
+    if (executed.state === "submitted") {
+      await engine.store.saveJob({ ...executed, state: "confirmed" });
+    }
+  } else {
+    await settleReservation(engine, prepared.reservation, false, 0n);
+  }
+  return (await engine.store.getJob(executed.id))!;
+}
+
+async function prepareSessionSponsorship(
+  engine: BankEngine,
+  input: {
+    requestId: string;
+    target: Address;
+    selector: Hex;
+    valueWei: bigint;
+    estimatedGasWei: bigint;
+    expectedNonce: bigint;
+    executor: Address;
+    currentOwner: Address;
+    now: number;
+    transfersAfterOpen: TransferLog[];
+  },
+): Promise<PreparedSponsorship> {
   const request = await engine.store.getRequest(input.requestId);
   const session = await engine.store.getSession(input.requestId);
   if (!request || request.state !== "active" || !session) {
-    return { skipped: true, reason: "citizen account is not active" };
+    return { kind: "skipped", reason: "citizen account is not active" };
   }
   if (engine.guard) {
     const ready = engine.guard.ready();
     if (!ready.ok) {
-      return { skipped: true, reason: ready.reason };
+      return { kind: "skipped", reason: ready.reason };
     }
   }
   const transfersAfterOpen = [
@@ -325,10 +384,10 @@ export async function sponsorSessionCall(
     transfersAfterOpen,
   });
   if (!check.ok && check.mustInvalidate) {
-    return queueInvalidate(engine, request, "account.invalidateSession");
+    return { kind: "invalidate", request };
   }
   if (!check.ok) {
-    return { skipped: true, reason: check.reason };
+    return { kind: "skipped", reason: check.reason };
   }
   const key = `session:${request.id}:${input.expectedNonce.toString()}:${input.selector}`;
   const duplicate = await engine.store.getJobByKey(key);
@@ -354,10 +413,10 @@ export async function sponsorSessionCall(
     relayerEnabled: engine.runtime.relayerEnabled && engine.relayer.enabled,
   });
   if (decision.action === "skip") {
-    return duplicate ?? { skipped: true, reason: decision.reason };
+    return duplicate ? { kind: "job", job: duplicate } : { kind: "skipped", reason: decision.reason };
   }
   if (decision.action !== "approve") {
-    return { skipped: true, reason: decision.reason };
+    return { kind: "skipped", reason: decision.reason };
   }
   const reservation = await engine.store.saveReservation({
     id: newId(engine),
@@ -374,16 +433,7 @@ export async function sponsorSessionCall(
     gasUsedWei: null,
     failureReason: null,
   });
-  const executed = await executeJob(engine, job.id);
-  if (executed.state === "submitted" || executed.state === "confirmed") {
-    await settleReservation(engine, reservation, true, executed.gasUsedWei ?? 0n);
-    if (executed.state === "submitted") {
-      await engine.store.saveJob({ ...executed, state: "confirmed" });
-    }
-  } else {
-    await settleReservation(engine, reservation, false, 0n);
-  }
-  return (await engine.store.getJob(executed.id))!;
+  return { kind: "hold", job, reservation };
 }
 
 async function queueInvalidate(

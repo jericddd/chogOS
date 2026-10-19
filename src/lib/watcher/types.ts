@@ -62,7 +62,13 @@ export type SessionInvalidation = {
 
 export type WatcherHealth = {
   status: WatcherStatus;
+  /** Caught up and fresh. A queued invalidation does not clear this. */
   executionAllowed: boolean;
+  /**
+   * Caught up, fresh, and no queued, submitted, or failed invalidation.
+   * Zero lag is not an onchain lock against a transfer already in flight.
+   */
+  sponsorshipAllowed: boolean;
   cursorBlock: bigint | null;
   tipBlock: bigint | null;
   lagBlocks: bigint | null;

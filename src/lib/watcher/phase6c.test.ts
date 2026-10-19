@@ -362,6 +362,7 @@ describe("sponsored execution guard", () => {
     const health = {
       status: "healthy" as const,
       executionAllowed: true,
+      sponsorshipAllowed: true,
       cursorBlock: 11n,
       tipBlock: 11n,
       lagBlocks: 0n,

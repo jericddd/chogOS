@@ -60,6 +60,15 @@ export type AppConfig = {
   /** Explicit enable. Does not start a scan inside world_tick or on boot. */
   chogWatcherEnabled: boolean;
   chogWatcherMaxLagBlocks: number;
+  chogWatcherIntervalSeconds: number;
+  chogWatcherMaxStaleMs: number;
+  /** First scan start when the cursor is empty. Unset does not imply block zero. */
+  chogWatcherBackfillFrom: bigint | null;
+  /** Public gas-paying address. Not a private key and not the asset-control treasury. */
+  chogBankGasAddress?: Address;
+  /** Public asset-control address. Must differ from the gas-paying address. */
+  chogBankAssetAddress?: Address;
+  chogBankObservationMaxAgeMs: number;
 };
 
 const DEFAULT_IPFS_GATEWAY = "https://gateway.pinata.cloud/ipfs";
@@ -142,6 +151,22 @@ function readWei(value: string | undefined, label: string, fallback: bigint): bi
   return BigInt(raw);
 }
 
+function readOptionalInteger(value: string | undefined, label: string): bigint | null {
+  const raw = blankToUndefined(value);
+  if (!raw) {
+    return null;
+  }
+  if (!/^[0-9]+$/.test(raw)) {
+    throw new Error(`Invalid ${label}. Use a non-negative integer.`);
+  }
+  return BigInt(raw);
+}
+
+function optionalAddress(value: string | undefined, label: string): Address | undefined {
+  const raw = blankToUndefined(value);
+  return raw ? requireAddress(raw, label) : undefined;
+}
+
 function readExpectedCount(value: string | undefined): number {
   const raw = blankToUndefined(value) ?? "59";
   if (!/^[0-9]+$/.test(raw)) {
@@ -180,6 +205,18 @@ export function readAppConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
   const nftIndexer = blankToUndefined(env.NFT_INDEXER) ?? "none";
   if (nftIndexer !== "none" && nftIndexer !== "alchemy" && nftIndexer !== "custom") {
     throw new Error("Invalid NFT_INDEXER. Use none, alchemy, or custom.");
+  }
+
+  const chogBankGasAddress = optionalAddress(env.CHOG_BANK_GAS_ADDRESS, "CHOG_BANK_GAS_ADDRESS");
+  const chogBankAssetAddress = optionalAddress(env.CHOG_BANK_ASSET_ADDRESS, "CHOG_BANK_ASSET_ADDRESS");
+  if (
+    chogBankGasAddress &&
+    chogBankAssetAddress &&
+    chogBankGasAddress.toLowerCase() === chogBankAssetAddress.toLowerCase()
+  ) {
+    throw new Error(
+      "CHOG_BANK_GAS_ADDRESS must differ from CHOG_BANK_ASSET_ADDRESS. Gas-paying funds stay separate from treasury assets.",
+    );
   }
 
   return {
@@ -272,6 +309,18 @@ export function readAppConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     },
     chogWatcherEnabled: blankToUndefined(env.CHOG_WATCHER_ENABLED) === "true",
     chogWatcherMaxLagBlocks: readBoundedInt(env.CHOG_WATCHER_MAX_LAG_BLOCKS, "CHOG_WATCHER_MAX_LAG_BLOCKS", 20, 0, 10_000),
+    chogWatcherIntervalSeconds: readBoundedInt(env.CHOG_WATCHER_SECONDS, "CHOG_WATCHER_SECONDS", 60, 15, 86_400),
+    chogWatcherMaxStaleMs: readBoundedInt(env.CHOG_WATCHER_MAX_STALE_MS, "CHOG_WATCHER_MAX_STALE_MS", 120_000, 1_000, 3_600_000),
+    chogWatcherBackfillFrom: readOptionalInteger(env.CHOG_WATCHER_BACKFILL_FROM, "CHOG_WATCHER_BACKFILL_FROM"),
+    chogBankGasAddress,
+    chogBankAssetAddress,
+    chogBankObservationMaxAgeMs: readBoundedInt(
+      env.CHOG_BANK_OBSERVATION_MAX_AGE_MS,
+      "CHOG_BANK_OBSERVATION_MAX_AGE_MS",
+      120_000,
+      1_000,
+      3_600_000,
+    ),
   };
 }
 

@@ -58,3 +58,5 @@ The gas signer, when one exists later, must be a separate key from any treasury 
 5. Deploy and verify the V1.1 factory only after a separate authorization. Do not deploy V1.
 6. Configure an observed treasury balance and a gas signer that is not an env var in git, the browser, or the model.
 7. Keep `/api/transactions` closed until those checks pass.
+
+Phase 6d persists the same scanner and still does not broadcast or apply hosted SQL. See [phase-6d-operations.md](phase-6d-operations.md).
