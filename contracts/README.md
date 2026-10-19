@@ -56,7 +56,7 @@ V1 predicted factory `0x2d8c32B8Df4E57a18A96fa2830DE036A781B472c` (salt `chogOS.
 
 V1.1 predicted factory: `0xA2edAC990B30A488D61fc4607D4365b22e41e39c` on chain 143 via Arachnid `0x4e59…` and salt `keccak256("chogOS.CitizenAccountFactory.v1.1")`. That address is empty and must stay unused. Its session cannot see an ownership round trip. Do not deploy `MockGenesisNFT` on Mainnet.
 
-V2 is a separate implementation, ERC-1967 proxy, and factory. The proxy is the permanent wallet. `executeSession` is allowed only while the wallet holds the NFT and the session epoch matches. Predicted factory: `0xC620021d28eA1bC7d2F9f6FF9fC45245c3dB2F53`. Predicted implementation: `0xAFA1eD6eeC7acB070C1e771B21E568fe10Ee24Fe`. Token 104 predicts `0x120615D3Acb1A417ADC4701426FEdA531A853786`. Token 129 predicts `0x79FFBbC52935322fA5c20063F6131341c4bF6d41`. None of these are deployed. `script/DeployCitizenAccountFactoryV2.s.sol` reverts and cannot broadcast. See `docs/permanent-wallet-auth.md`.
+V2 is a separate implementation, an immutable proxy, and a factory. The proxy is the permanent wallet. Nobody can upgrade it. `executeSession` is allowed only while the wallet holds the NFT and the session epoch matches. Predicted factory: `0x8a74Ea74EB0674EF4DC178263E4583FB502B77AD`. Predicted implementation: `0x8035CA34410c19B1Bf0673Ad973Fe1cf91a7b632`. Token 104 predicts `0xD3c8e7fAfF0750bd202F72EBaBDD46D197B47502`. Token 129 predicts `0x492905adbc786264f0195FAE4516F5275BB3b960`. None of these are deployed. Earlier upgradeable-draft predictions are void. `script/DeployCitizenAccountFactoryV2.s.sol` reverts and cannot broadcast. See `docs/permanent-wallet-auth.md`.
 
 ```bash
 # local EVM (fork tests skip)

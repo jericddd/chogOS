@@ -81,6 +81,8 @@ describe("permanent wallet authorization", () => {
     expect(solidity).toContain(V2_WALLET_129_PREDICTED);
     expect(solidity).toContain("testMissedObservationCannotReviveSession");
     expect(readFileSync("contracts/src/CitizenAccount.sol", "utf8")).toContain("if (owner == previous)");
+    expect(readFileSync("contracts/src/CitizenAccountV2.sol", "utf8")).not.toContain("upgradeTo");
+    expect(readFileSync("contracts/src/CitizenWalletProxy.sol", "utf8")).toContain("immutable logic");
     expect(readFileSync("contracts/script/DeployCitizenAccountFactoryV2.s.sol", "utf8")).not.toContain("startBroadcast");
   });
 

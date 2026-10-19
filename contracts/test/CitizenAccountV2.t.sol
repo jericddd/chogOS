@@ -8,7 +8,33 @@ import {CitizenWalletProxy} from "../src/CitizenWalletProxy.sol";
 import {DeployCitizenAccountFactoryV2} from "../script/DeployCitizenAccountFactoryV2.s.sol";
 import {DeployCitizenAccountFactory} from "../script/DeployCitizenAccountFactory.s.sol";
 import {MockGenesisNFT, MockSink} from "./MockGenesisNFT.sol";
-import {CitizenAccountV2Patch} from "./CitizenAccountV2Patch.sol";
+
+/// @dev Code the current owner must not be able to install. It ignores NFT ownership.
+contract HostileWallet {
+    address public immutable thief;
+
+    constructor(address thief_) {
+        thief = thief_;
+    }
+
+    function codeVersion() external pure returns (uint256) {
+        return 1;
+    }
+
+    /// @dev Present so a factory that only checks codeVersion can finish CREATE2.
+    /// That check is not proof the implementation is safe.
+    function initialize(uint256, address, uint256) external {}
+
+    function drain() external {
+        (bool ok,) = thief.call{value: address(this).balance}("");
+        require(ok, "drain");
+    }
+
+    function execute(address, uint256, bytes calldata) external {
+        (bool ok,) = thief.call{value: address(this).balance}("");
+        require(ok, "seize");
+    }
+}
 
 contract GreedyToken {
     mapping(address => uint256) public balanceOf;
@@ -194,7 +220,7 @@ contract CitizenAccountV2Test is Test {
         _release(wallet104, alice, bob);
         assertEq(nft.ownerOf(104), bob);
         assertEq(wallet104.custodyOpen(), false);
-        assertEq(wallet104.controller(), alice);
+        assertEq(wallet104.controller(), address(0));
         assertEq(wallet104.authority(), bob);
         assertEq(address(wallet104).balance, balance);
         assertEq(bob.balance, 0);
@@ -362,10 +388,8 @@ contract CitizenAccountV2Test is Test {
         vm.expectRevert(CitizenAccountV2.NotAuthorized.selector);
         vm.prank(executor);
         wallet104.release(executor);
-        CitizenAccountV2Patch rejected = new CitizenAccountV2Patch();
-        vm.expectRevert(CitizenAccountV2.NotAuthorized.selector);
-        vm.prank(executor);
-        wallet104.upgradeTo(address(rejected));
+        assertFalse(_upgrade(address(wallet104), address(new HostileWallet(executor))));
+        assertEq(wallet104.implementation(), address(implementation));
         vm.expectRevert(CitizenAccountV2.ApprovalDisabled.selector);
         vm.prank(alice);
         wallet104.execute(address(token), 0, abi.encodeWithSelector(token.approve.selector, executor, type(uint256).max));
@@ -442,10 +466,8 @@ contract CitizenAccountV2Test is Test {
         vm.expectRevert(CitizenAccountV2.NotInCustody.selector);
         vm.prank(alice);
         wallet104.release(alice);
-        CitizenAccountV2Patch rejected = new CitizenAccountV2Patch();
-        vm.expectRevert(CitizenAccountV2.UntrackedCustody.selector);
-        vm.prank(alice);
-        wallet104.upgradeTo(address(rejected));
+        assertFalse(_upgrade(address(wallet104), address(new HostileWallet(alice))));
+        assertEq(wallet104.implementation(), address(implementation));
         vm.expectRevert(CitizenAccountV2.NotInCustody.selector);
         vm.prank(executor);
         wallet104.executeSession(0, address(sink), 0, abi.encodeWithSelector(sink.ping.selector, 1));
@@ -466,34 +488,118 @@ contract CitizenAccountV2Test is Test {
         assertEq(wallet104.custodyOpen(), false);
     }
 
-    function testUpgradeKeepsAddressBalanceAndKillsSession() public {
+    function testFormerOwnerCannotInstallABackdoorOrDrainFutureDeposits() public {
+        HostileWallet door = new HostileWallet(alice);
+        address wallet = address(wallet104);
+        assertEq(wallet104.implementation(), address(implementation));
+
+        bytes32 slot = 0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc;
+        assertEq(address(uint160(uint256(vm.load(wallet, slot)))), address(implementation));
+        vm.prank(alice);
+        assertFalse(_upgrade(wallet, address(door)));
+        assertEq(address(uint160(uint256(vm.load(wallet, slot)))), address(implementation));
+        assertEq(wallet104.implementation(), address(implementation));
+        assertEq(CitizenWalletProxy(payable(wallet)).logic(), address(implementation));
+        assertEq(wallet104.codeVersion(), 1);
+
+        vm.prank(alice);
+        nft.transfer(bob, 104);
+        vm.deal(wallet, 2 ether);
+
+        assertFalse(_drain(wallet));
+        assertEq(wallet.balance, 2 ether);
+        assertEq(alice.balance, 0);
+        vm.expectRevert(CitizenAccountV2.NotAuthorized.selector);
+        vm.prank(alice);
+        wallet104.execute(address(sink), 1 ether, abi.encodeWithSelector(sink.ping.selector, 1));
+
+        vm.prank(bob);
+        wallet104.execute(address(sink), 0.25 ether, abi.encodeWithSelector(sink.ping.selector, 2));
+        vm.expectRevert(CitizenAccountV2.TargetNotAllowed.selector);
+        vm.prank(bob);
+        wallet104.execute(address(implementation), 0, abi.encodeWithSignature("codeVersion()"));
+        vm.expectRevert(CitizenAccountV2.TargetNotAllowed.selector);
+        vm.prank(bob);
+        wallet104.execute(address(nft), 0, abi.encodeWithSignature("transfer(address,uint256)", alice, 104));
+        assertEq(wallet.balance, 1.75 ether);
+        assertEq(alice.balance, 0);
+        assertEq(bob.balance, 0);
+        assertEq(wallet, address(wallet104));
+        _assertIdentity(wallet104, 104, 1.75 ether, 1);
+    }
+
+    function testCustodyUpgradeAttemptDoesNotSurviveRelease() public {
         _deposit(wallet104, alice, 104);
         _open(wallet104, alice, executor, 0, 0);
-        CitizenAccountV2Patch patch = new CitizenAccountV2Patch();
-        address wallet = address(wallet104);
-        uint256 balance = wallet.balance;
-
-        vm.expectRevert(CitizenAccountV2.NotAuthorized.selector);
-        vm.prank(bob);
-        wallet104.upgradeTo(address(patch));
+        HostileWallet door = new HostileWallet(alice);
         vm.prank(alice);
-        wallet104.upgradeTo(address(patch));
+        assertFalse(_upgrade(address(wallet104), address(door)));
+        assertEq(wallet104.implementation(), address(implementation));
+        assertEq(wallet104.sessionDead(), false);
 
-        assertEq(address(wallet104), wallet);
-        assertEq(wallet.balance, balance);
-        assertEq(CitizenAccountV2Patch(wallet).codeVersion(), 2);
-        assertEq(wallet104.implementation(), address(patch));
-        _assertIdentity(wallet104, 104, balance, 0);
-        assertTrue(wallet104.sessionDead());
-        vm.expectRevert(CitizenAccountV2.StaleEpoch.selector);
+        _release(wallet104, alice, bob);
+        vm.deal(address(wallet104), address(wallet104).balance + 0.5 ether);
+        uint256 balance = address(wallet104).balance;
+        assertFalse(_drain(address(wallet104)));
+        vm.expectRevert(CitizenAccountV2.NotInCustody.selector);
         vm.prank(executor);
         wallet104.executeSession(0, address(sink), 0, abi.encodeWithSelector(sink.ping.selector, 1));
+        vm.prank(bob);
+        wallet104.execute(address(sink), 0, abi.encodeWithSelector(sink.ping.selector, 3));
+        assertEq(address(wallet104).balance, balance);
+        assertEq(wallet104.authority(), bob);
+        assertEq(wallet104.controller(), address(0));
+    }
 
-        _open(wallet104, alice, executor, 0, 0);
-        vm.prank(executor);
-        wallet104.executeSession(0, address(sink), 0, abi.encodeWithSelector(sink.ping.selector, 8));
-        assertEq(sink.lastValue(), 8);
-        assertEq(wallet.balance, balance);
+    function testCorruptedImplementationSlotDoesNotRetargetTheWallet() public {
+        HostileWallet door = new HostileWallet(alice);
+        bytes32 slot = 0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc;
+        vm.store(address(wallet104), slot, bytes32(uint256(uint160(address(door)))));
+
+        assertEq(wallet104.implementation(), address(implementation));
+        vm.prank(alice);
+        nft.transfer(bob, 104);
+        vm.deal(address(wallet104), 2 ether);
+        assertFalse(_drain(address(wallet104)));
+        vm.expectRevert(CitizenAccountV2.NotAuthorized.selector);
+        vm.prank(alice);
+        wallet104.execute(address(sink), 2 ether, abi.encodeWithSelector(sink.ping.selector, 1));
+        vm.prank(bob);
+        wallet104.execute(address(sink), 0.1 ether, abi.encodeWithSelector(sink.ping.selector, 4));
+        assertEq(address(wallet104).balance, 1.9 ether);
+        assertEq(alice.balance, 0);
+    }
+
+    function testHostileFactoryIsNotThePermanentWallet() public {
+        nft.mint(alice, 201);
+        HostileWallet door = new HostileWallet(alice);
+        CitizenAccountFactoryV2 evil = new CitizenAccountFactoryV2(address(door));
+        address evilWallet = evil.create(block.chainid, address(nft), 201);
+        assertTrue(evilWallet != address(wallet104));
+        assertEq(CitizenWalletProxy(payable(evilWallet)).implementation(), address(door));
+        vm.deal(evilWallet, 1 ether);
+        assertTrue(_drain(evilWallet));
+        assertEq(alice.balance, 1 ether);
+        assertEq(address(wallet104).balance, 1 ether);
+        assertEq(wallet104.implementation(), address(implementation));
+    }
+
+    function testKnownApprovalSelectorsStayDisabled() public {
+        _deposit(wallet104, alice, 104);
+        bytes4[4] memory selectors = [
+            bytes4(0x8fcbaf0c),
+            bytes4(0xd73dd623),
+            bytes4(0xd505accf),
+            bytes4(0xa22cb465)
+        ];
+        for (uint256 i = 0; i < selectors.length; i++) {
+            vm.expectRevert(CitizenAccountV2.ApprovalDisabled.selector);
+            vm.prank(alice);
+            wallet104.openSession(_params(executor, address(token), selectors[i], 0, 0, address(token), 1, 1));
+            vm.expectRevert(CitizenAccountV2.ApprovalDisabled.selector);
+            vm.prank(alice);
+            wallet104.execute(address(token), 0, abi.encodePacked(selectors[i], bytes28(0)));
+        }
     }
 
     function testSiblingCitizenIsIsolated() public {
@@ -620,12 +726,20 @@ contract CitizenAccountV2Test is Test {
         assertEq(factory.predict(block.chainid, address(nft), 104), vm.computeCreate2Address(salt, initHash, address(factory)));
         assertEq(address(wallet104), factory.predict(block.chainid, address(nft), 104));
 
-        assertEq(script.predictImplementation(), 0xAFA1eD6eeC7acB070C1e771B21E568fe10Ee24Fe);
-        assertEq(script.predictFactory(), 0xC620021d28eA1bC7d2F9f6FF9fC45245c3dB2F53);
-        assertEq(script.implementationInitCodeHash(), 0x98841cb273c5a47f2f55ad413bd0048b4e2918dbb6f392f08111e757427971c5);
-        assertEq(script.factoryInitCodeHash(), 0x42c047a35145eb3a12396a71bb039c70d0edcdb76b73d18f4ee7efc55efbcb2c);
-        assertEq(script.predictAccount(143, GENESIS, 104), 0x120615D3Acb1A417ADC4701426FEdA531A853786);
-        assertEq(script.predictAccount(143, GENESIS, 129), 0x79FFBbC52935322fA5c20063F6131341c4bF6d41);
+        assertEq(script.predictImplementation(), 0x8035CA34410c19B1Bf0673Ad973Fe1cf91a7b632);
+        assertEq(script.predictFactory(), 0x8a74Ea74EB0674EF4DC178263E4583FB502B77AD);
+        assertEq(script.implementationInitCodeHash(), 0x19c106f6993aad95c63cf742ec0eec9323f889a6feefd7ee8897768d216f1251);
+        assertEq(script.factoryInitCodeHash(), 0xf949dcca45c301030267e8a46ecc2aabab92a79ad49d147a1b327307f00e1a64);
+        assertEq(script.predictAccount(143, GENESIS, 104), 0xD3c8e7fAfF0750bd202F72EBaBDD46D197B47502);
+        assertEq(script.predictAccount(143, GENESIS, 129), 0x492905adbc786264f0195FAE4516F5275BB3b960);
+    }
+
+    function _upgrade(address wallet, address nextImpl) internal returns (bool ok) {
+        (ok,) = wallet.call(abi.encodeWithSignature("upgradeTo(address)", nextImpl));
+    }
+
+    function _drain(address wallet) internal returns (bool ok) {
+        (ok,) = wallet.call(abi.encodeWithSignature("drain()"));
     }
 
     function _deposit(CitizenAccountV2 wallet, address who, uint256 id) internal {

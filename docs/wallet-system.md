@@ -16,7 +16,7 @@ V1 guarantees (once a factory is authorized and an account is later created):
 - `grantDelegation` / `executeDelegated` revert `DelegationDisabled`.
 - The AI model never holds a private key and has no unrestricted account access.
 
-The permanent-wallet design is now implemented and tested, and it is not deployed. One Chog NFT maps to one ERC-1967 proxy. An AI session exists only while that proxy holds the NFT, and an unseen ownership round trip cannot revive it. See [permanent-wallet-auth.md](permanent-wallet-auth.md). Production signing, sponsorship, and `/api/transactions` stay closed. Phase 7 is not started.
+The permanent-wallet design is now implemented and tested, and it is not deployed. One Chog NFT maps to one permanent proxy whose implementation is immutable. An AI session exists only while that proxy holds the NFT, and an unseen ownership round trip cannot revive it. A former owner cannot leave an upgrade behind. See [permanent-wallet-auth.md](permanent-wallet-auth.md). Production signing, sponsorship, and `/api/transactions` stay closed. Phase 7 is not started.
 
 ## Phase 2 decision
 

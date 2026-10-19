@@ -18,9 +18,10 @@ import {
  *
  * V2 does not consult a watcher. executeSession is valid only while the
  * permanent proxy holds the NFT and session.epoch equals authEpoch. deposit,
- * release, revoke, upgrade, and human execute increment authEpoch before their
+ * release, revoke, and human execute increment authEpoch before their
  * external call. Returning the NFT to the original owner does not restore a
- * retired epoch.
+ * retired epoch. The proxy implementation is immutable, so a former owner
+ * cannot leave an upgrade behind.
  *
  * V2 is predicted and not deployed. The server still refuses executeSession.
  * predictedFactoryAddress() remains the unused V1.1 factory.
@@ -37,5 +38,5 @@ export const sessionTransferRace = {
   v2Factory: V2_FACTORY_PREDICTED,
   v2Implementation: V2_IMPLEMENTATION_PREDICTED,
   smallestChange:
-    "V1.1 cannot see an unseen round trip, and its bytecode must stay unused. V2 is a new ERC-1967 proxy and factory. executeSession requires the wallet to hold the NFT and session.epoch == authEpoch. Leave 0xA2edAC990B30A488D61fc4607D4365b22e41e39c unused. Do not deploy V2 until the project owner authorizes it.",
+    "V1.1 cannot see an unseen round trip, and its bytecode must stay unused. V2 is a new proxy and factory. The proxy implementation is immutable: there is no upgrade. executeSession requires the wallet to hold the NFT and session.epoch == authEpoch. Leave 0xA2edAC990B30A488D61fc4607D4365b22e41e39c unused. Do not deploy V2 until the project owner authorizes it.",
 } as const;

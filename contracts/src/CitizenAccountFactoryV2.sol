@@ -7,7 +7,7 @@ import {CitizenWalletProxy} from "./CitizenWalletProxy.sol";
 /// @title CitizenAccountFactoryV2
 /// @notice CREATE2 factory for permanent citizen wallets.
 /// One proxy per (chain id, NFT contract, token id). The proxy address is
-/// the wallet and stays the same when its implementation is upgraded.
+/// the wallet. Its implementation is fixed when the proxy is created.
 /// The implementation address is part of this factory's creation code, so
 /// this factory address is not the V1 or V1.1 factory address.
 /// A predicted address is not a deployed wallet. create() is idempotent.
@@ -24,6 +24,10 @@ contract CitizenAccountFactoryV2 {
     address public immutable implementation;
     mapping(bytes32 => address) public deployed;
 
+    /// @dev code.length and codeVersion() are not a safety proof. A hostile
+    /// contract can have code and return 1. The permanent wallet is the CREATE2
+    /// address of this factory bound to one implementation address. A different
+    /// implementation produces a different factory and different wallets.
     constructor(address implementation_) {
         if (implementation_ == address(0) || implementation_.code.length == 0) revert BadImplementation();
         (bool ok, bytes memory data) = implementation_.staticcall(abi.encodeWithSignature("codeVersion()"));
@@ -58,6 +62,7 @@ contract CitizenAccountFactoryV2 {
         }
         bytes memory initData = abi.encodeCall(CitizenAccountV2.initialize, (chainId, nftContract, tokenId));
         account = address(new CitizenWalletProxy{salt: salt}(implementation, initData));
+        if (account != predicted) revert BadImplementation();
         deployed[salt] = account;
         emit AccountCreated(account, chainId, nftContract, tokenId);
     }

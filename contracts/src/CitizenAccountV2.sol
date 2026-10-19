@@ -28,6 +28,11 @@ pragma solidity ^0.8.28;
 /// authorizes nobody: it does not revive a session and it does not hand the
 /// assets to a previous owner.
 ///
+/// The implementation is immutable. The current NFT holder cannot replace it.
+/// An arbitrary upgrade would remain after the NFT is transferred and could
+/// ignore the new owner. Pause or revoke a session, then release() the NFT,
+/// before transferring it to someone else.
+///
 /// Nothing in this repository deploys this contract.
 interface ICitizenNft {
     function ownerOf(uint256 tokenId) external view returns (address);
@@ -68,7 +73,6 @@ contract CitizenAccountV2 {
     error CustodyChanged();
     error StillHeld();
     error UnexpectedNft();
-    error UpgradeRejected();
 
     event Deposited(address indexed controller, uint256 epoch);
     event Released(address indexed controller, address indexed to, uint256 epoch);
@@ -82,7 +86,6 @@ contract CitizenAccountV2 {
     );
     event SessionInvalidated(address indexed caller, uint256 epoch);
     event Executed(address indexed caller, address indexed target, uint256 value, bytes4 selector);
-    event Upgraded(address indexed implementation);
 
     struct Session {
         address executor;
@@ -127,6 +130,8 @@ contract CitizenAccountV2 {
     bytes4 internal constant INCREASE_ALLOWANCE = 0x39509351;
     bytes4 internal constant SET_APPROVAL_FOR_ALL = 0xa22cb465;
     bytes4 internal constant PERMIT = 0xd505accf;
+    bytes4 internal constant DAI_PERMIT = 0x8fcbaf0c;
+    bytes4 internal constant INCREASE_APPROVAL = 0xd73dd623;
 
     /// @dev Immutables are read from this bytecode, including during delegatecall.
     address private immutable self;
@@ -169,7 +174,7 @@ contract CitizenAccountV2 {
         lock = UNLOCKED;
     }
 
-    function codeVersion() public pure virtual returns (uint256) {
+    function codeVersion() public pure returns (uint256) {
         return 1;
     }
 
@@ -189,6 +194,8 @@ contract CitizenAccountV2 {
         return (boundChainId, nftContract, tokenId);
     }
 
+    /// @dev Explorer copy of the implementation. The proxy executes its
+    /// immutable `logic`, not this slot. Nothing in this contract writes it.
     function implementation() public view returns (address impl) {
         bytes32 slot = IMPLEMENTATION_SLOT;
         assembly {
@@ -246,6 +253,7 @@ contract CitizenAccountV2 {
         if (to == address(0) || to == address(this)) revert ZeroAddress();
         _bumpEpoch();
         address previous = controller;
+        controller = address(0);
         custodyOpen = false;
         ICitizenNft(nftContract).safeTransferFrom(address(this), to, tokenId);
         if (ICitizenNft(nftContract).ownerOf(tokenId) == address(this)) revert StillHeld();
@@ -328,18 +336,9 @@ contract CitizenAccountV2 {
         return result;
     }
 
-    function upgradeTo(address newImplementation) external ready nonReentrant {
-        _requireAuthority();
-        if (newImplementation == address(0) || newImplementation.code.length == 0) revert UpgradeRejected();
-        if (newImplementation == implementation()) revert UpgradeRejected();
-        _bumpEpoch();
-        bytes32 slot = IMPLEMENTATION_SLOT;
-        assembly {
-            sstore(slot, newImplementation)
-        }
-        emit Upgraded(newImplementation);
-    }
-
+    /// @notice Accept the NFT only while deposit() is pulling it.
+    /// To pause autonomy, call pauseSession or revokeSession. To transfer the
+    /// NFT, the controller calls release(to) first. That retires the session.
     function onERC721Received(address, address, uint256 id, bytes calldata) external view returns (bytes4) {
         if (address(this) == self) revert DirectCall();
         if (!initialized || block.chainid != boundChainId) revert WrongChain();
@@ -450,7 +449,10 @@ contract CitizenAccountV2 {
     }
 
     function _rejectApproval(bytes4 selector) internal pure {
-        if (selector == APPROVE || selector == INCREASE_ALLOWANCE || selector == SET_APPROVAL_FOR_ALL || selector == PERMIT) {
+        if (
+            selector == APPROVE || selector == INCREASE_ALLOWANCE || selector == INCREASE_APPROVAL
+                || selector == SET_APPROVAL_FOR_ALL || selector == PERMIT || selector == DAI_PERMIT
+        ) {
             revert ApprovalDisabled();
         }
     }
