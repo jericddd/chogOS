@@ -241,8 +241,59 @@ describe("activity feed", () => {
     expect(screen.getByRole("link", { name: "Chog #7" }).getAttribute("href")).toBe("/?citizen=7");
     const tx = screen.getByRole("link", { name: /0xabababab/ });
     expect(tx.getAttribute("href")).toBe(`https://monadscan.com/tx/${hash}`);
+    expect(tx.getAttribute("rel")).toContain("noopener");
     expect(screen.getByText(/0x1111111111111111111111111111111111111111/)).toBeTruthy();
     expect(screen.getByText(/0x2222222222222222222222222222222222222222/)).toBeTruthy();
+  });
+
+  it("adds block and token links for canonical transfer evidence and keeps AI events off that path", () => {
+    const hash = `0x${"ab".repeat(32)}`;
+    const contract = "0xc96d31f8626c6d03fae5dcd3d61e3fb9f4a73763";
+    const store = createLiveStore(
+      snapshot([
+        event(8, {
+          kind: "nft.transferred",
+          category: "onchain",
+          source: "onchain",
+          summary: "Chog #7 transferred.",
+          tokenId: "7",
+          chainStatus: "confirmed",
+          txHash: hash,
+          txUrl: `https://monadscan.com/tx/${hash}`,
+          transfer: {
+            kind: "nft.transferred",
+            canonical: true,
+            consistent: true,
+            chainId: 143,
+            txHash: hash,
+            payloadTxHash: null,
+            blockNumber: "11",
+            blockHash: null,
+            txIndex: null,
+            logIndex: "4",
+            contract,
+            tokenId: "7",
+            from: "0x1111111111111111111111111111111111111111",
+            to: "0x2222222222222222222222222222222222222222",
+            links: {
+              transaction: `https://monadscan.com/tx/${hash}`,
+              block: "https://monadscan.com/block/11",
+              contract: `https://monadscan.com/address/${contract}`,
+              from: "https://monadscan.com/address/0x1111111111111111111111111111111111111111",
+              to: "https://monadscan.com/address/0x2222222222222222222222222222222222222222",
+              token: `https://monadscan.com/nft/${contract}/7`,
+            },
+          },
+        }),
+        event(7, { source: "ai", category: "ai", summary: "The AI mind chose to rest." }),
+      ]),
+      { fetcher: vi.fn() as unknown as typeof fetch },
+    );
+    render(<ActivityFeed store={store} />);
+    expect(screen.getByRole("link", { name: "Block 11" }).getAttribute("href")).toBe("https://monadscan.com/block/11");
+    expect(screen.getByRole("link", { name: "Token 7" }).getAttribute("href")).toBe(`https://monadscan.com/nft/${contract}/7`);
+    expect(screen.getByText("The AI mind chose to rest.")).toBeTruthy();
+    expect(screen.queryByText("Real chain activity")).toBeNull();
   });
 
   it("shows recorded events newest first with source labels and entity links", () => {

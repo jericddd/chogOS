@@ -64,7 +64,7 @@ export function EventItem({
             {compact ? null : <span> · {CATEGORY_LABEL[event.category]}</span>}
             {event.chainStatus === "confirmed" && event.txHash ? (
               event.txUrl ? (
-                <a href={event.txUrl} target="_blank" rel="noreferrer" className="font-mono text-accent hover:underline">
+                <a href={event.txUrl} target="_blank" rel="noopener noreferrer" className="font-mono text-accent hover:underline">
                   {" · "}
                   {event.txHash.slice(0, 10)}…
                 </a>
@@ -78,8 +78,51 @@ export function EventItem({
               Verify
             </Link>
           </p>
+          <TransferLinks event={event} />
         </div>
       </div>
     </li>
+  );
+}
+
+function shortAddress(value: string): string {
+  return value.length > 12 ? `${value.slice(0, 6)}…${value.slice(-4)}` : value;
+}
+
+function TransferLinks({ event }: { event: WorldEventView }) {
+  const transfer = event.transfer;
+  if (!transfer) {
+    return null;
+  }
+  if (!transfer.canonical) {
+    return (
+      <p className="mt-1 text-xs leading-5 text-muted">
+        This transfer is not on the canonical chain. Explorer links are withheld.
+      </p>
+    );
+  }
+  const links = [
+    transfer.links.block && transfer.blockNumber
+      ? { href: transfer.links.block, label: `Block ${transfer.blockNumber}` }
+      : null,
+    transfer.links.from && transfer.from ? { href: transfer.links.from, label: `From ${shortAddress(transfer.from)}` } : null,
+    transfer.links.to && transfer.to ? { href: transfer.links.to, label: `To ${shortAddress(transfer.to)}` } : null,
+    transfer.links.token && transfer.tokenId ? { href: transfer.links.token, label: `Token ${transfer.tokenId}` } : null,
+    transfer.links.contract ? { href: transfer.links.contract, label: "Contract" } : null,
+  ].filter((link): link is { href: string; label: string } => Boolean(link));
+  if (links.length === 0 && transfer.chainId == null) {
+    return null;
+  }
+  return (
+    <p className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted">
+      <span>Chain {transfer.chainId ?? "—"}</span>
+      {transfer.txIndex ? <span>Tx index {transfer.txIndex}</span> : null}
+      {transfer.logIndex ? <span>Log {transfer.logIndex}</span> : null}
+      {links.map((link) => (
+        <a key={link.label} href={link.href} target="_blank" rel="noopener noreferrer" className="text-accent hover:underline" title={link.href}>
+          {link.label}
+        </a>
+      ))}
+    </p>
   );
 }

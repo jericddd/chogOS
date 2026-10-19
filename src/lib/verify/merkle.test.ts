@@ -1,7 +1,28 @@
 import { describe, expect, it } from "vitest";
+import { emptyObservation, OFFCHAIN_ROOT_SENTENCE, treeFormatHash, type AnchorObservationJson } from "@/lib/verify/anchor";
 import { hashEvent } from "@/lib/verify/canonical";
-import { buildEventTree, dumpTree, loadDumpedTree, proofForHash, TREE_FORMAT, verifyInclusion } from "@/lib/verify/merkle";
 import { findDuplicateSeqs, findSeqGaps, verifyEventLocally } from "@/lib/verify/chain";
+import { buildEventTree, dumpTree, loadDumpedTree, proofForHash, TREE_FORMAT, verifyInclusion } from "@/lib/verify/merkle";
+
+function observed(root: string, patch: Partial<AnchorObservationJson> = {}): AnchorObservationJson {
+  const event = {
+    batchId: "0x" + "11".repeat(32),
+    merkleRoot: root,
+    fromSeq: "1",
+    toSeq: "1",
+    eventCount: 1,
+    treeFormat: treeFormatHash(),
+  };
+  return emptyObservation({
+    observedChainId: 10143,
+    codeBytes: 32,
+    receiptStatus: "success",
+    receiptBlock: "1",
+    event,
+    storedBatch: { ...event, anchoredAt: "10" },
+    ...patch,
+  });
+}
 
 const h = (n: number) =>
   hashEvent({
@@ -84,52 +105,69 @@ describe("local verifier statuses", () => {
       root: tree.root,
       batchId: "batch",
     };
+    const span = { fromSeq: 1, toSeq: 1, eventCount: 1 };
+    const base = {
+      event,
+      storedHash: stored,
+      integrityClass: "live" as const,
+      proof: { format: TREE_FORMAT, root: tree.root, proof: proof.proof },
+      expectedRoot: tree.root,
+      batchSpan: span,
+    };
+    const absent = verifyEventLocally(base);
+    expect(absent.status).toBe("merkle_proof_verified");
+    expect(absent.reasons).toContain(OFFCHAIN_ROOT_SENTENCE);
+    const recordedOnly = verifyEventLocally({
+      ...base,
+      anchor,
+      recordedAnchorStatus: "confirmed",
+    });
+    expect(recordedOnly.status).toBe("merkle_proof_verified");
+    expect(recordedOnly.status).not.toBe("onchain_anchor_verified");
+    expect(recordedOnly.reasons.join(" ")).toMatch(/did not read the contract/);
+    const pending = verifyEventLocally({
+      ...base,
+      anchor,
+      recordedAnchorStatus: "submitted",
+      anchorObservation: observed(tree.root, { receiptStatus: "missing", event: null, storedBatch: null }),
+    });
+    expect(pending.status).toBe("merkle_proof_verified");
+    expect(pending.reasons.join(" ")).toMatch(/no confirmed receipt/);
     expect(
       verifyEventLocally({
-        event,
-        storedHash: stored,
-        integrityClass: "live",
-        proof: { format: TREE_FORMAT, root: tree.root, proof: proof.proof },
-        expectedRoot: tree.root,
+        ...base,
         anchor,
-      }).status,
-    ).toBe("merkle_proof_verified");
+        recordedAnchorStatus: "failed",
+      }).reasons.join(" "),
+    ).toMatch(/status is failed/);
     expect(
       verifyEventLocally({
-        event,
-        storedHash: stored,
-        integrityClass: "live",
-        proof: { format: TREE_FORMAT, root: tree.root, proof: proof.proof },
-        expectedRoot: tree.root,
-        anchor,
-        onchainRoot: tree.root,
-        onchainChainId: 143,
+        ...base,
+        anchor: { ...anchor, chainId: 10143 },
+        anchorObservation: observed(tree.root, { observedChainId: 143 }),
       }).status,
     ).toBe("verification_failed");
     expect(
       verifyEventLocally({
-        event,
-        storedHash: stored,
-        integrityClass: "live",
-        proof: { format: TREE_FORMAT, root: tree.root, proof: proof.proof },
-        expectedRoot: tree.root,
+        ...base,
         anchor,
-        onchainRoot: "0x" + "00".repeat(32),
-        onchainChainId: 10143,
+        anchorObservation: observed("0x" + "00".repeat(32)),
       }).status,
     ).toBe("verification_failed");
     expect(
       verifyEventLocally({
-        event,
-        storedHash: stored,
-        integrityClass: "live",
-        proof: { format: TREE_FORMAT, root: tree.root, proof: proof.proof },
-        expectedRoot: tree.root,
+        ...base,
         anchor,
-        onchainRoot: tree.root,
-        onchainChainId: 10143,
+        anchorObservation: emptyObservation({ rpcError: "timeout" }),
       }).status,
-    ).toBe("onchain_anchor_verified");
+    ).toBe("verification_failed");
+    const anchored = verifyEventLocally({
+      ...base,
+      anchor,
+      anchorObservation: observed(tree.root),
+    });
+    expect(anchored.status).toBe("onchain_anchor_verified");
+    expect(anchored.reasons.join(" ")).toMatch(/stores the root only/);
     expect(
       verifyEventLocally({
         event,

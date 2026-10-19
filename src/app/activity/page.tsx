@@ -20,7 +20,7 @@ export default function ActivityPage({ searchParams }: { searchParams: Search })
     <div>
       <PageHeader
         title="Civilization History"
-        lede="This feed lists actual recorded world events, newest first. Simulation rows are rule-based world transitions. System rows are setup and synchronization. AI rows are genuine model-backed decisions already recorded in this world. Onchain labels are reserved for activity verified against Monad and appear only when such rows exist."
+        lede="This feed lists actual recorded world events, newest first. Simulation rows are rule-based world transitions. System rows are setup and synchronization. AI rows are genuine model-backed decisions already recorded in this world. Onchain labels are reserved for confirmed Chog Genesis transfers observed by the watcher. They are not AI events."
       />
       <p className="-mt-2 mb-6">
         <AiDecisionsLink />

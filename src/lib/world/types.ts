@@ -1,4 +1,5 @@
 import type { BuildingKind, ConstructKind, WorkRole } from "@/lib/world/layout";
+import type { TransferEvidence } from "@/lib/world/transfer";
 
 export type WorldActivity =
   | "walking"
@@ -127,6 +128,8 @@ export type WorldEventView = {
   txHash: string | null;
   /** Explorer URL for a confirmed transaction. Null when the event is not a confirmed canonical transfer. */
   txUrl?: string | null;
+  /** Watcher fields for an NFT transfer. Absent on simulation and AI events. */
+  transfer?: TransferEvidence | null;
   intentId?: string | null;
   decisionId?: string | null;
 };

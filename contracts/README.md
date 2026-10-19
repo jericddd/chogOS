@@ -12,6 +12,8 @@ Compiler: Solidity `0.8.28`, Cancun, optimizer 200 runs.
 
 No address in this repository is a deployed EventAnchor. Do not invent one.
 
+The onchain batch id is the bytes32 passed to `submitBatch` and indexed in `BatchAnchored`. The database id in `event_integrity_batches` is a UUID and is not that bytes32. A live check reads `batchId` from the receipt log, then calls `getBatch`. It does not hash the UUID. The contract stores the root, range, count, and tree format. It does not verify an inclusion proof.
+
 ## Local tests
 
 ```bash
