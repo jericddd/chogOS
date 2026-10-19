@@ -3,6 +3,7 @@ import type { AnchorObservationJson } from "@/lib/verify/anchor";
 import type { ArtifactView } from "@/lib/verify/artifacts";
 import type { AnchorRecord } from "@/lib/verify/chain";
 import type { PublicProvenance } from "@/lib/verify/provenance";
+import type { TransferLogCheck } from "@/lib/verify/transfer-log";
 import type { TransferEvidence } from "@/lib/world/transfer";
 
 export type VerifyBundle = {
@@ -34,6 +35,8 @@ export type VerifyBundle = {
   explorerContractUrl: string | null;
   explorerBlockUrl: string | null;
   transfer: TransferEvidence | null;
+  /** Read-only receipt comparison. Null when this row is not an NFT transfer. matched is never true unless the check ran. */
+  transferLog: TransferLogCheck | null;
   provenance: PublicProvenance;
   artifacts: ArtifactView[];
   eventPath: string;

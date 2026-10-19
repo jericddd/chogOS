@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { formatRealAgo, formatWorldTime } from "@/lib/world/clock";
 import { CATEGORY_LABEL, SOURCE_DESCRIPTION, SOURCE_LABEL, eventSegments } from "@/lib/world/present";
+import { presentedAsMainnetGenesis, transferPresentationIssues } from "@/lib/world/transfer";
 import type { EventSource, WorldEventView } from "@/lib/world/types";
 
 const SOURCE_TONE: Record<EventSource, string> = {
@@ -62,15 +63,11 @@ export function EventItem({
               {now > 0 ? formatRealAgo(event.occurredAt, now) : event.occurredAt.slice(0, 16).replace("T", " ") + " UTC"}
             </time>
             {compact ? null : <span> · {CATEGORY_LABEL[event.category]}</span>}
-            {event.chainStatus === "confirmed" && event.txHash ? (
-              event.txUrl ? (
-                <a href={event.txUrl} target="_blank" rel="noopener noreferrer" className="font-mono text-accent hover:underline">
-                  {" · "}
-                  {event.txHash.slice(0, 10)}…
-                </a>
-              ) : (
-                <span className="font-mono"> · {event.txHash.slice(0, 10)}…</span>
-              )
+            {event.txUrl && event.txHash && (!event.transfer || presentedAsMainnetGenesis(event.transfer)) ? (
+              <a href={event.txUrl} target="_blank" rel="noopener noreferrer" className="font-mono text-accent hover:underline">
+                {" · "}
+                {event.txHash.slice(0, 10)}…
+              </a>
             ) : null}
             {" "}
             ·{" "}
@@ -94,10 +91,11 @@ function TransferLinks({ event }: { event: WorldEventView }) {
   if (!transfer) {
     return null;
   }
-  if (!transfer.canonical) {
+  if (!presentedAsMainnetGenesis(transfer)) {
+    const reason = transferPresentationIssues(transfer)[0] ?? "This transfer is not a complete Chog Genesis mainnet log.";
     return (
       <p className="mt-1 text-xs leading-5 text-muted">
-        This transfer is not on the canonical chain. Explorer links are withheld.
+        {reason} Explorer links are withheld.
       </p>
     );
   }

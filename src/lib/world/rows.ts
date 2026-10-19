@@ -254,7 +254,8 @@ export function toEvent(row: EventRow): WorldEventView {
   const transfer = transferEvidenceFromRow(row);
   const reorg = row.canonical === false;
   const inconsistent = transfer?.consistent === false;
-  const confirmed = !reorg && !inconsistent && row.chain_status === "confirmed";
+  const presentable = transfer?.canonical === true;
+  const confirmed = transfer ? presentable : !reorg && row.chain_status === "confirmed";
   return {
     id: row.id,
     seq: num(row.seq),
@@ -271,7 +272,7 @@ export function toEvent(row: EventRow): WorldEventView {
     buildingName: payloadText(row.payload, "buildingName"),
     chainStatus: confirmed ? "confirmed" : reorg || inconsistent ? "offchain" : row.chain_status,
     txHash: confirmed ? row.tx_hash : reorg || inconsistent ? null : row.tx_hash,
-    txUrl: confirmed ? explorerTxUrl(row.chain_id, row.tx_hash) : null,
+    txUrl: confirmed ? (transfer ? transfer.links.transaction : explorerTxUrl(row.chain_id, row.tx_hash)) : null,
     transfer,
     intentId: row.intent_id ?? payloadText(row.payload, "intentId"),
     decisionId: row.decision_id ?? payloadText(row.payload, "decisionId"),

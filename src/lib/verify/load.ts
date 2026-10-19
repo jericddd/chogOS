@@ -5,11 +5,12 @@ import { explorerAddressUrl, explorerBlockUrl, explorerTxUrl } from "@/lib/block
 import { hashEvent, type CanonicalEventInput } from "@/lib/verify/canonical";
 import { LEAF_ENCODING, TREE_FORMAT } from "@/lib/verify/merkle";
 import { planAnchorRead, readAnchorObservation } from "@/lib/verify/anchor";
+import { readTransferLog, unreadTransferLog } from "@/lib/verify/transfer-log";
 import { artifactsWithCode } from "@/lib/verify/artifacts";
 import type { AnchorRecord } from "@/lib/verify/chain";
 import { REVIEWER_CHECKS, buildPublicProvenance } from "@/lib/verify/provenance";
 import type { VerifyBundle } from "@/lib/verify/types";
-import { transferEvidenceFromRow } from "@/lib/world/transfer";
+import { presentedAsMainnetGenesis, transferEvidenceFromRow } from "@/lib/world/transfer";
 
 export type { VerifyBundle };
 
@@ -250,11 +251,17 @@ export async function loadVerifyBundle(id: string): Promise<VerifyBundle | { sta
     canonical: row.canonical,
     payload: row.payload,
   });
-  if (transfer && !transfer.canonical) {
-    notes.push("This transfer is not canonical. Explorer links for it are withheld.");
-  }
-  if (transfer && !transfer.consistent) {
-    notes.push("The payload transaction hash does not match the event row. Links are withheld.");
+  let transferLog = transfer ? unreadTransferLog() : null;
+  if (transfer && presentedAsMainnetGenesis(transfer)) {
+    if (config.rpcUrl) {
+      transferLog = await readTransferLog({ rpcUrl: config.rpcUrl, evidence: transfer });
+      notes.push(transferLog.summary);
+    } else {
+      notes.push("No read-only RPC is configured. This page did not read the transfer.");
+    }
+  } else if (transfer) {
+    notes.push(...transfer.issues);
+    notes.push("Explorer links are withheld. This is not presented as Chog Genesis mainnet activity.");
   }
 
   return {
@@ -275,6 +282,7 @@ export async function loadVerifyBundle(id: string): Promise<VerifyBundle | { sta
     explorerContractUrl: explorerContract,
     explorerBlockUrl: explorerBlock,
     transfer,
+    transferLog,
     provenance: buildPublicProvenance(),
     artifacts: await artifactsWithCode(config.rpcUrl, 143),
     eventPath: `/verify/events/${row.id}`,

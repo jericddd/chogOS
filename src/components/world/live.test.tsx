@@ -267,8 +267,11 @@ describe("activity feed", () => {
             chainId: 143,
             txHash: hash,
             payloadTxHash: null,
+            canonicalState: "canonical",
+            chainStatus: "confirmed",
+            issues: [],
             blockNumber: "11",
-            blockHash: null,
+            blockHash: `0x${"cd".repeat(32)}`,
             txIndex: null,
             logIndex: "4",
             contract,
@@ -294,6 +297,59 @@ describe("activity feed", () => {
     expect(screen.getByRole("link", { name: "Token 7" }).getAttribute("href")).toBe(`https://monadscan.com/nft/${contract}/7`);
     expect(screen.getByText("The AI mind chose to rest.")).toBeTruthy();
     expect(screen.queryByText("Real chain activity")).toBeNull();
+  });
+
+  it("withholds explorer links for a testnet or wrong-contract transfer even when the row says confirmed", () => {
+    const hash = `0x${"ab".repeat(32)}`;
+    const wrong = "0x3333333333333333333333333333333333333333";
+    const store = createLiveStore(
+      snapshot([
+        event(9, {
+          kind: "nft.transferred",
+          category: "onchain",
+          source: "onchain",
+          summary: "Chog #7 transferred.",
+          tokenId: "7",
+          chainStatus: "confirmed",
+          txHash: hash,
+          txUrl: `https://testnet.monadscan.com/tx/${hash}`,
+          transfer: {
+            kind: "nft.transferred",
+            canonical: true,
+            consistent: true,
+            canonicalState: "canonical",
+            chainStatus: "confirmed",
+            issues: [],
+            chainId: 10143,
+            txHash: hash,
+            payloadTxHash: null,
+            blockNumber: "11",
+            blockHash: `0x${"cd".repeat(32)}`,
+            txIndex: null,
+            logIndex: "4",
+            contract: wrong,
+            tokenId: "7",
+            from: "0x1111111111111111111111111111111111111111",
+            to: "0x2222222222222222222222222222222222222222",
+            links: {
+              transaction: `https://testnet.monadscan.com/tx/${hash}`,
+              block: "https://testnet.monadscan.com/block/11",
+              contract: `https://testnet.monadscan.com/address/${wrong}`,
+              from: "https://testnet.monadscan.com/address/0x1111111111111111111111111111111111111111",
+              to: "https://testnet.monadscan.com/address/0x2222222222222222222222222222222222222222",
+              token: `https://testnet.monadscan.com/nft/${wrong}/7`,
+            },
+          },
+        }),
+      ]),
+      { fetcher: vi.fn() as unknown as typeof fetch },
+    );
+    render(<ActivityFeed store={store} />);
+    expect(screen.getByText(/Chain id is not Monad mainnet/)).toBeTruthy();
+    expect(screen.getByText(/Explorer links are withheld/)).toBeTruthy();
+    expect(screen.queryByRole("link", { name: /0xabababab/ })).toBeNull();
+    expect(screen.queryByRole("link", { name: "Block 11" })).toBeNull();
+    expect(screen.queryByRole("link", { name: "Contract" })).toBeNull();
   });
 
   it("shows recorded events newest first with source labels and entity links", () => {

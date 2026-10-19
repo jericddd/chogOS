@@ -47,6 +47,7 @@ function bundle(patch: Partial<VerifyBundle> = {}): VerifyBundle {
     explorerContractUrl: null,
     explorerBlockUrl: null,
     transfer: null,
+    transferLog: null,
     provenance: {
       repository: "https://github.com/jericddd/chogOS",
       revision: { sha: null, label: "Build revision unavailable" },
@@ -136,6 +137,9 @@ describe("event verifier", () => {
             kind: "nft.transferred",
             canonical: true,
             consistent: true,
+            canonicalState: "canonical",
+            chainStatus: "confirmed",
+            issues: [],
             chainId: 143,
             txHash: hash,
             payloadTxHash: null,
@@ -159,11 +163,119 @@ describe("event verifier", () => {
         })}
       />,
     );
-    expect(screen.getByText("Real chain activity")).toBeTruthy();
+    expect(screen.getByText("Recorded Chog Genesis mainnet transfer")).toBeTruthy();
+    expect(screen.getByText(/has not independently verified this transaction/)).toBeTruthy();
+    expect(screen.getByText("not read")).toBeTruthy();
     expect(screen.getByRole("link", { name: "Transaction" }).getAttribute("href")).toBe(`https://monadscan.com/tx/${hash}`);
     expect(screen.getByText("not recorded on this activity")).toBeTruthy();
     expect(screen.getByText("verification_failed")).toBeTruthy();
     expect(screen.getByText(/Recomputed event hash does not match/)).toBeTruthy();
+  });
+
+  it("does not label a wrong contract or a matched flag without a read as verified mainnet activity", () => {
+    const hash = `0x${"ab".repeat(32)}`;
+    const wrong = "0x1111111111111111111111111111111111111111";
+    const { unmount } = render(
+      <EventVerifier
+        bundle={bundle({
+          transfer: {
+            kind: "nft.transferred",
+            canonical: true,
+            consistent: true,
+            canonicalState: "canonical",
+            chainStatus: "confirmed",
+            issues: [],
+            chainId: 143,
+            txHash: hash,
+            payloadTxHash: null,
+            blockNumber: "11",
+            blockHash: `0x${"cd".repeat(32)}`,
+            txIndex: null,
+            logIndex: "4",
+            contract: wrong,
+            tokenId: "104",
+            from: "0x1111111111111111111111111111111111111111",
+            to: "0x2222222222222222222222222222222222222222",
+            links: {
+              transaction: `https://monadscan.com/tx/${hash}`,
+              block: "https://monadscan.com/block/11",
+              contract: `https://monadscan.com/address/${wrong}`,
+              from: "https://monadscan.com/address/0x1111111111111111111111111111111111111111",
+              to: "https://monadscan.com/address/0x2222222222222222222222222222222222222222",
+              token: `https://monadscan.com/nft/${wrong}/104`,
+            },
+          },
+          transferLog: { attempted: true, matched: true, summary: "A read-only receipt check matched the stored Chog Genesis transfer log." },
+        })}
+      />,
+    );
+    expect(screen.getByText("Not Chog Genesis mainnet activity")).toBeTruthy();
+    expect(screen.getByText(/not the Chog Genesis contract/)).toBeTruthy();
+    expect(screen.queryByRole("link", { name: "Transaction" })).toBeNull();
+    expect(screen.queryByText("Recorded Chog Genesis mainnet transfer")).toBeNull();
+    expect(screen.queryByText(/read-only receipt check matched/)).toBeNull();
+    expect(screen.getByText("not read")).toBeTruthy();
+    unmount();
+
+    const contract = "0xc96d31f8626c6d03fae5dcd3d61e3fb9f4a73763";
+    const { unmount: unmountMismatch } = render(
+      <EventVerifier
+        bundle={bundle({
+          transfer: {
+            kind: "nft.transferred",
+            canonical: true,
+            consistent: true,
+            canonicalState: "canonical",
+            chainStatus: "confirmed",
+            issues: [],
+            chainId: 143,
+            txHash: hash,
+            payloadTxHash: null,
+            blockNumber: "11",
+            blockHash: `0x${"cd".repeat(32)}`,
+            txIndex: null,
+            logIndex: "4",
+            contract,
+            tokenId: "104",
+            from: "0x1111111111111111111111111111111111111111",
+            to: "0x2222222222222222222222222222222222222222",
+            links: {
+              transaction: `https://monadscan.com/tx/${hash}`,
+              block: "https://monadscan.com/block/11",
+              contract: `https://monadscan.com/address/${contract}`,
+              from: "https://monadscan.com/address/0x1111111111111111111111111111111111111111",
+              to: "https://monadscan.com/address/0x2222222222222222222222222222222222222222",
+              token: `https://monadscan.com/nft/${contract}/104`,
+            },
+          },
+          transferLog: {
+            attempted: true,
+            matched: false,
+            summary: "The transaction receipt was not found.",
+          },
+        })}
+      />,
+    );
+    expect(screen.getByText("Stored transfer did not match the chain")).toBeTruthy();
+    expect(screen.getByText("not matched")).toBeTruthy();
+    expect(screen.getByText("The transaction receipt was not found.")).toBeTruthy();
+    expect(screen.queryByText(/independently verified this transaction/)).toBeNull();
+    expect(screen.getByRole("link", { name: "Transaction" }).getAttribute("href")).toBe(`https://monadscan.com/tx/${hash}`);
+    unmountMismatch();
+
+    render(
+      <EventVerifier
+        bundle={bundle({
+          transferLog: {
+            attempted: true,
+            matched: true,
+            summary: "A read-only receipt check matched the stored Chog Genesis transfer log.",
+          },
+        })}
+      />,
+    );
+    expect(screen.getByText("Recorded world event")).toBeTruthy();
+    expect(screen.queryByText("A read-only receipt check matched the stored Chog Genesis transfer log.")).toBeNull();
   });
 });
 

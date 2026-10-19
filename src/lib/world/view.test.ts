@@ -249,10 +249,13 @@ describe("row mapping", () => {
       chainStatus: "confirmed",
       tokenId: "7",
       txHash: hash,
-      txUrl: `https://monadscan.com/tx/${hash}`,
+      txUrl: null,
     });
-    expect(confirmed.transfer?.links.from).toBe("https://monadscan.com/address/0x1111111111111111111111111111111111111111");
-    expect(confirmed.transfer?.links.to).toBe("https://monadscan.com/address/0x2222222222222222222222222222222222222222");
+    expect(confirmed.transfer?.canonical).toBe(false);
+    expect(confirmed.transfer?.links.from).toBeNull();
+    expect(confirmed.transfer?.links.to).toBeNull();
+    expect(confirmed.transfer?.links.transaction).toBeNull();
+    expect(confirmed.transfer?.issues.join(" ")).toMatch(/contract|block hash|log index|block number/i);
     expect(confirmed.transfer?.txIndex).toBeNull();
     const contract = "0xc96d31f8626c6d03fae5dcd3d61e3fb9f4a73763";
     const detailed = toEvent({

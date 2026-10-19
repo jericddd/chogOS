@@ -8,6 +8,7 @@ import { canonicalEventDocument } from "@/lib/verify/canonical";
 import { verifyEventLocally, type VerifyStatus } from "@/lib/verify/chain";
 import { LEAF_ENCODING } from "@/lib/verify/merkle";
 import type { VerifyBundle } from "@/lib/verify/types";
+import { TRANSFER_LOG_UNREAD, presentedAsMainnetGenesis, transferPresentationIssues } from "@/lib/world/transfer";
 import type { EventSource } from "@/lib/world/types";
 
 const STATUS_COPY: Record<VerifyStatus, string> = {
@@ -32,17 +33,38 @@ const STATUS_TONE: Record<VerifyStatus, string> = {
   verification_failed: "border-warning/50 text-warning",
 };
 
+function receiptMatched(bundle: VerifyBundle): boolean {
+  return Boolean(
+    bundle.transfer &&
+      presentedAsMainnetGenesis(bundle.transfer) &&
+      bundle.transferLog?.attempted === true &&
+      bundle.transferLog.matched === true,
+  );
+}
+
 function evidenceClass(bundle: VerifyBundle): { title: string; body: string } {
-  if (bundle.transfer?.canonical) {
+  if (bundle.transfer && presentedAsMainnetGenesis(bundle.transfer)) {
+    if (receiptMatched(bundle)) {
+      return {
+        title: "Recorded Chog Genesis mainnet transfer",
+        body: "A read-only receipt check matched the stored transfer log on chain 143. Compare the explorer transaction and log with the fields below. The event hash is a separate check of the stored record.",
+      };
+    }
+    if (bundle.transferLog?.attempted) {
+      return {
+        title: "Stored transfer did not match the chain",
+        body: "A read-only receipt check did not match this log. The application did not independently verify it. The stored fields and explorer links remain so you can compare them.",
+      };
+    }
     return {
-      title: "Real chain activity",
-      body: "This is a confirmed Chog Genesis transfer observed by the watcher. The transaction, block, and log are chain evidence. The event hash is a separate check of the stored record.",
+      title: "Recorded Chog Genesis mainnet transfer",
+      body: "The stored fields are a complete canonical watcher log for the official Chog Genesis contract on chain 143. Compare the explorer transaction and transfer log with these fields. The application has not independently verified this transaction.",
     };
   }
   if (bundle.transfer) {
     return {
-      title: "Watcher transfer, not canonical",
-      body: "The watcher recorded this transfer and does not treat it as part of the current canonical chain. Explorer links are withheld. This is not confirmed onchain activity.",
+      title: "Not Chog Genesis mainnet activity",
+      body: "Explorer links are withheld. A database status of confirmed, a payload contract, or a testnet chain is not enough to call this a Chog Genesis mainnet transfer.",
     };
   }
   return {
@@ -82,6 +104,10 @@ export function EventVerifier({ bundle }: { bundle: VerifyBundle }) {
   const evidence = evidenceClass(bundle);
   const offchain = result.reasons.includes(OFFCHAIN_ROOT_SENTENCE);
   const transfer = bundle.transfer;
+  const mainnet = transfer ? presentedAsMainnetGenesis(transfer) : false;
+  const issues = transfer ? transferPresentationIssues(transfer) : [];
+  const logCheck = bundle.transferLog;
+  const matched = receiptMatched(bundle);
 
   return (
     <div className="max-w-3xl space-y-6">
@@ -150,25 +176,43 @@ export function EventVerifier({ bundle }: { bundle: VerifyBundle }) {
         <section className="rounded-2xl border border-line bg-card px-4 py-4">
           <h2 className="font-serif text-2xl">Chain evidence</h2>
           <p className="mt-2 text-sm leading-6 text-muted">
-            {transfer.canonical
-              ? "These fields come from the watcher log stored on this activity. Confirmed means the log is still in the canonical watcher snapshot."
-              : "Links are withheld because this transfer is not a confirmed canonical log."}
+            {mainnet
+              ? matched
+                ? "The receipt check matched. The links open the same transaction, block, contract, and token on Monadscan."
+                : "These are the stored watcher fields. The links open Monadscan so you can compare them. Opening a link is not a verification by this application."
+              : "Links are withheld. The stored fields stay visible so a reviewer can see why this is not a Chog Genesis mainnet transfer."}
           </p>
+          {issues.length > 0 ? (
+            <ul className="mt-3 list-disc space-y-1 pl-5 text-sm leading-6 text-warning">
+              {issues.map((issue) => (
+                <li key={issue}>{issue}</li>
+              ))}
+            </ul>
+          ) : null}
           <dl className="mt-4 grid gap-3 text-sm sm:grid-cols-2">
             <Fact label="Chain id" value={transfer.chainId == null ? "—" : String(transfer.chainId)} />
-            <Fact label="Canonical" value={transfer.canonical ? "yes" : "no"} />
+            <Fact label="Watcher canonical" value={transfer.canonicalState} />
+            <Fact label="chain_status" value={transfer.chainStatus ?? "—"} />
+            <Fact label="Presented as mainnet" value={mainnet ? "yes" : "no"} />
             <Fact label="Row matches payload hash" value={transfer.consistent ? "yes" : "no"} />
-            <HashField label="Transaction hash" value={transfer.txHash} href={transfer.links.transaction} linkLabel="Transaction" />
-            <HashField label="Block number" value={transfer.blockNumber} href={transfer.links.block} linkLabel="Block" />
+            <Fact
+              label="Receipt check"
+              value={mainnet ? (matched ? "matched" : logCheck?.attempted ? "not matched" : "not read") : "not read"}
+            />
+            <HashField label="Transaction hash" value={transfer.txHash} href={mainnet ? transfer.links.transaction : null} linkLabel="Transaction" />
+            <HashField label="Block number" value={transfer.blockNumber} href={mainnet ? transfer.links.block : null} linkLabel="Block" />
             <HashField label="Block hash" value={transfer.blockHash} />
             <Fact label="Transaction index" value={transfer.txIndex ?? "not recorded on this activity"} />
             <Fact label="Log index" value={transfer.logIndex ?? "—"} />
-            <HashField label="NFT contract" value={transfer.contract} href={transfer.links.contract} linkLabel="Contract" />
-            <HashField label="Token id" value={transfer.tokenId} href={transfer.links.token} linkLabel="Token" />
-            <HashField label="From" value={transfer.from} href={transfer.links.from} linkLabel="From address" />
-            <HashField label="To" value={transfer.to} href={transfer.links.to} linkLabel="To address" />
+            <HashField label="NFT contract" value={transfer.contract} href={mainnet ? transfer.links.contract : null} linkLabel="Contract" />
+            <HashField label="Token id" value={transfer.tokenId} href={mainnet ? transfer.links.token : null} linkLabel="Token" />
+            <HashField label="From" value={transfer.from} href={mainnet ? transfer.links.from : null} linkLabel="From address" />
+            <HashField label="To" value={transfer.to} href={mainnet ? transfer.links.to : null} linkLabel="To address" />
             <HashField label="Payload transaction hash" value={transfer.payloadTxHash} />
           </dl>
+          <p className="mt-3 text-sm leading-6 text-muted">
+            {mainnet ? (logCheck?.summary ?? TRANSFER_LOG_UNREAD) : TRANSFER_LOG_UNREAD}
+          </p>
         </section>
       ) : null}
 

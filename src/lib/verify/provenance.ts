@@ -5,6 +5,8 @@ export const VERIFICATION_SOURCE_FILES = [
   "src/lib/verify/merkle.ts",
   "src/lib/verify/chain.ts",
   "src/lib/verify/anchor.ts",
+  "src/lib/verify/transfer-log.ts",
+  "src/lib/world/transfer.ts",
   "src/components/verify/event-verifier.tsx",
   "contracts/src/EventAnchor.sol",
 ] as const;
@@ -81,5 +83,6 @@ export const REVIEWER_CHECKS = [
   "A valid inclusion proof means the leaf matches the supplied root. It does not prove the root was published onchain.",
   "When anchorObservation is present, repeat eth_chainId, eth_getCode, the transaction receipt, and EventAnchor.getBatch on the recorded chain. The embedded observation is one server read, not a proof by itself.",
   "EventAnchor stores roots only. It does not verify inclusion and it does not prove the event happened.",
+  "For an nft.transferred row, compare chain 143, the Chog Genesis contract, transaction hash, block, block hash, log index, sender, receiver, and token id with the explorer log. chain_status confirmed is not that comparison. transferLog.matched is true only after a read-only receipt check matched.",
   "Do not send event data to a third-party hashing site.",
 ] as const;

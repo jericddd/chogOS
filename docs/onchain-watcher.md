@@ -78,7 +78,7 @@ Raise `CHOG_WATCHER_MAX_BLOCKS_PER_RUN` only after a run finishes inside the RPC
 
 ## What you should see
 
-Activities → Onchain on https://chogos.vercel.app lists one row per confirmed Chog Genesis transfer. The transaction hash links to Monadscan. A second run does not duplicate the row. A reorg hides the orphaned row instead of leaving it confirmed.
+Activities → Onchain on https://chogos.vercel.app lists one row per confirmed Chog Genesis transfer. The transaction hash links to Monadscan when the stored log is a complete canonical mainnet record: chain 143, the official Chog Genesis contract, and a valid transaction, block, block hash, log index, sender, receiver, and token id. A confirmed chain status alone does not create that link. A second run does not duplicate the row. A reorg hides the orphaned row instead of leaving it confirmed.
 
 Tokens 104 and 129 remain founding citizens. The treasury roster still calls them permanent citizens when the NFT is outside ChogTreasury.
 
