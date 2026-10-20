@@ -7,7 +7,7 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-
 export type OpenResult = { ok: true; id: string; created: boolean } | { ok: false; reason: string };
 export type StatusResult = { ok: true; status: string; duplicate: boolean } | { ok: false; reason: string };
 export type HoldsResult =
-  | { ok: true; created: boolean; createdKeys?: unknown }
+  | { ok: true; created: boolean; createdKeys?: unknown; operationId?: unknown }
   | { ok: false; outcome: string; reason: string };
 
 const UNRESOLVED_HOLD_REASON =
@@ -66,9 +66,25 @@ export type HoldInsert = {
 export type EconomyGateway = {
   openProposal(row: Record<string, string>): Promise<OpenResult>;
   applyStatus(input: { key: string; status: string; reason: string }): Promise<StatusResult>;
-  tryHolds(holds: readonly HoldInsert[]): Promise<HoldsResult>;
-  release(proposalId: string, keys: readonly string[]): Promise<{ ok: boolean }>;
+  tryHolds(holds: readonly HoldInsert[], operationId: string): Promise<HoldsResult>;
+  /** Releases rows stamped with this operation. It does not take a key list. */
+  release(proposalId: string, operationId: string): Promise<{ ok: boolean }>;
 };
+
+/**
+ * A response owns new holds only when it echoes this attempt's operation id
+ * and its key list is well formed. The key list is not what cleanup releases.
+ */
+export function proveHoldOperation(
+  held: { created: boolean; createdKeys?: unknown; operationId?: unknown },
+  submittedKeys: readonly string[],
+  operationId: string,
+): CreatedKeySelection {
+  if (typeof held.operationId !== "string" || held.operationId.toLowerCase() !== operationId.toLowerCase()) {
+    return { ok: false, code: "malformed", reason: UNRESOLVED_HOLD_REASON };
+  }
+  return selectCreatedKeys(held, submittedKeys);
+}
 
 export type PersistResult =
   | { ok: true; proposalId: string; status: string; reserved: boolean }
@@ -135,32 +151,50 @@ export async function persistEconomyDecision(
 
   let status = input.decision.outcome;
   let reason = input.decision.reason;
-  let createdKeys: readonly string[] = [];
+  let operationId: string | null = null;
+  let created = false;
   if (input.decision.reserved) {
     const inserts = holdInserts(input.proposal, input.holds, input.observation, opened.id);
     if ("error" in inserts) {
       return { ok: false, reason: inserts.error, reserved: false };
     }
     if (inserts.length > 0) {
-      const held = await gateway.tryHolds(inserts);
+      operationId = crypto.randomUUID();
+      const held = await gateway.tryHolds(inserts, operationId);
       if (!held.ok) {
-        status = holdFailureStatus(held.outcome);
-        reason = held.reason;
-      } else {
-        const selected = selectCreatedKeys(held, inserts.map((row) => row.key));
-        if (!selected.ok) {
+        if (held.outcome === "insufficient_funds" || held.outcome === "conflict") {
+          status = holdFailureStatus(held.outcome);
+          reason = held.reason;
+          operationId = null;
+        } else {
           logEconomyPersist({
             event: "hold_ownership_unresolved",
-            code: selected.code,
+            code: "missing",
             idempotencyKey: input.proposal.idempotencyKey,
             proposalId: opened.id,
+            operationId,
+            submittedCount: inserts.length,
+            created: false,
+            releaseCount: 0,
+          });
+          return { ok: false, reason: held.reason, reserved: false, outcome: "deferred" };
+        }
+      } else {
+        const proof = proveHoldOperation(held, inserts.map((row) => row.key), operationId);
+        if (!proof.ok) {
+          logEconomyPersist({
+            event: "hold_ownership_unresolved",
+            code: proof.code,
+            idempotencyKey: input.proposal.idempotencyKey,
+            proposalId: opened.id,
+            operationId,
             submittedCount: inserts.length,
             created: held.created,
             releaseCount: 0,
           });
-          return { ok: false, reason: selected.reason, reserved: false, outcome: "deferred" };
+          return { ok: false, reason: proof.reason, reserved: false, outcome: "deferred" };
         }
-        createdKeys = selected.keys;
+        created = held.created && proof.keys.length > 0;
       }
     }
   }
@@ -172,25 +206,26 @@ export async function persistEconomyDecision(
   });
   if (!applied.ok) {
     let releaseOk: boolean | null = null;
-    if (createdKeys.length > 0) {
-      const released = await gateway.release(opened.id, createdKeys);
+    if (created && operationId) {
+      const released = await gateway.release(opened.id, operationId);
       releaseOk = released.ok;
     }
     logEconomyPersist({
       event: "hold_status_unapplied",
       idempotencyKey: input.proposal.idempotencyKey,
       proposalId: opened.id,
-      submittedCount: createdKeys.length,
-      created: createdKeys.length > 0,
-      releaseCount: createdKeys.length,
+      operationId,
+      submittedCount: created ? 1 : 0,
+      created,
+      releaseCount: created ? 1 : 0,
       releaseOk,
     });
     const failure = releaseOk === false
-      ? `${applied.reason} The identified new reservations could not be released.`
+      ? `${applied.reason} The operation's new reservations could not be released.`
       : applied.reason;
     return { ok: false, reason: failure, reserved: false };
   }
-  return { ok: true, proposalId: opened.id, status: applied.status, reserved: createdKeys.length > 0 && status === "approved" };
+  return { ok: true, proposalId: opened.id, status: applied.status, reserved: created && status === "approved" };
 }
 
 function logEconomyPersist(input: {
@@ -198,6 +233,7 @@ function logEconomyPersist(input: {
   code?: "missing" | "malformed";
   idempotencyKey: string;
   proposalId: string;
+  operationId?: string | null;
   submittedCount: number;
   created: boolean;
   releaseCount: number;
@@ -210,6 +246,7 @@ function logEconomyPersist(input: {
       code: input.code ?? null,
       idempotencyKey: safeDiagnosticId(input.idempotencyKey),
       proposalId: safeDiagnosticId(input.proposalId),
+      operationId: input.operationId ? safeDiagnosticId(input.operationId) : null,
       submittedCount: input.submittedCount,
       created: input.created,
       releaseCount: input.releaseCount,

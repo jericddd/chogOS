@@ -14,7 +14,7 @@ import { reconcileChainTransfer, type ChainTransferEvidence } from "@/lib/econom
 import { applyRpcVerification, interpretLedgerSnapshot } from "@/lib/economy/ledger";
 import { assessTreasuryRead, emptySnapshot, readEconomicTreasury, type TreasuryReader, type TreasurySnapshot } from "@/lib/economy/observe";
 import { presentEconomy } from "@/lib/economy/present";
-import { holdFailureStatus, persistEconomyDecision, selectCreatedKeys, type EconomyGateway } from "@/lib/economy/persist";
+import { holdFailureStatus, persistEconomyDecision, proveHoldOperation, selectCreatedKeys, type EconomyGateway } from "@/lib/economy/persist";
 import { decideEconomicProposal, type EconomicProposal, type EconomyLimits } from "@/lib/economy/proposal";
 import { assessReceiptEvidence, settleRpcArgs } from "@/lib/economy/receipt";
 import { holdSequentially, tryHold, tryHoldBatch, type Hold, type HoldRequest } from "@/lib/economy/reserve";
@@ -796,60 +796,127 @@ describe("phase 8 reservation and trust regressions", () => {
     expect(prior.state).toBe("held");
   });
 
-  it("releases only keys created by the failed status write", async () => {
-    const released: string[][] = [];
+  it("does not release a pre-existing hold when createdKeys falsely lists it", async () => {
+    const existing = "proposal-1";
+    const createdKey = "proposal-1:gas";
+    const earlier = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+    const store = new Map<string, { operationId: string; state: "held" | "released"; proposalId: string }>([
+      [existing, { operationId: earlier, state: "held", proposalId: PROPOSAL_ID }],
+    ]);
+    const releasedOperations: string[] = [];
     const gateway: EconomyGateway = {
       async openProposal() {
-        return { ok: true, id: PROPOSAL_ID, created: true };
+        return { ok: true, id: PROPOSAL_ID, created: false };
       },
       async applyStatus() {
         return { ok: false, reason: "The proposal status could not be saved." };
       },
-      async tryHolds() {
-        return { ok: true, created: true, createdKeys: ["proposal-1:gas"] };
+      async tryHolds(rows, operationId) {
+        const inserted: string[] = [];
+        for (const row of rows) {
+          if (store.has(row.key)) {
+            continue;
+          }
+          store.set(row.key, { operationId, state: "held", proposalId: row.proposalId });
+          inserted.push(row.key);
+        }
+        return {
+          ok: true,
+          created: inserted.length > 0,
+          createdKeys: rows.map((row) => row.key),
+          operationId,
+        };
       },
-      async release(_proposalId, keys) {
-        released.push([...keys]);
+      async release(proposalId, operationId) {
+        releasedOperations.push(operationId);
+        for (const row of store.values()) {
+          if (row.proposalId === proposalId && row.operationId === operationId && row.state === "held") {
+            row.state = "released";
+          }
+        }
         return { ok: true };
       },
     };
     const item = proposal({ fundingRequestRaw: 20n, amountRaw: 20n, estimatedGasWei: 1n });
-    const saved = await persistEconomyDecision(gateway, {
-      proposal: item,
-      decision: { outcome: "approved", reason: "reserved", hold: null, reserved: true, executed: false },
-      holds: [
-        held({ key: item.idempotencyKey, proposalId: PROPOSAL_ID, amountRaw: 20n }),
-        held({ key: `${item.idempotencyKey}:gas`, proposalId: PROPOSAL_ID, bucket: "gas", amountRaw: 1n }),
-      ],
-      observation: fresh(),
-    });
-    expect(saved).toMatchObject({ ok: false, reserved: false });
-    expect(released).toEqual([["proposal-1:gas"]]);
-
-    const untouched: string[] = [];
-    const replay = await persistEconomyDecision(
-      {
-        ...gateway,
-        async tryHolds() {
-          return { ok: true, created: false, createdKeys: [] };
-        },
-        async applyStatus() {
-          return { ok: true, status: "approved", duplicate: false };
-        },
-        async release() {
-          untouched.push("released");
-          return { ok: true };
-        },
-      },
-      {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      const saved = await persistEconomyDecision(gateway, {
         proposal: item,
-        decision: { outcome: "approved", reason: "replay", hold: null, reserved: true, executed: false },
-        holds: [held({ key: item.idempotencyKey, proposalId: PROPOSAL_ID, amountRaw: 20n })],
+        decision: { outcome: "approved", reason: "reserved", hold: null, reserved: true, executed: false },
+        holds: [
+          held({ key: existing, proposalId: PROPOSAL_ID, amountRaw: 20n }),
+          held({ key: createdKey, proposalId: PROPOSAL_ID, bucket: "gas", amountRaw: 1n }),
+        ],
         observation: fresh(),
+      });
+      expect(saved).toMatchObject({ ok: false, reserved: false });
+      expect(store.get(existing)).toMatchObject({ state: "held", operationId: earlier });
+      expect(store.get(createdKey)?.state).toBe("released");
+      expect(releasedOperations).toHaveLength(1);
+      expect(releasedOperations[0]).toMatch(/^[0-9a-f-]{36}$/);
+      expect(releasedOperations.join(" ")).not.toContain(existing);
+      expect(proveHoldOperation(
+        { created: true, createdKeys: [existing, createdKey], operationId: releasedOperations[0] },
+        [existing, createdKey],
+        releasedOperations[0] ?? "",
+      ).ok).toBe(true);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("does not release when the response echoes another attempt's operation id", async () => {
+    const existing = "proposal-1";
+    const createdKey = "proposal-1:gas";
+    const earlier = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+    const store = new Map<string, { operationId: string; state: "held" | "released" }>([
+      [existing, { operationId: earlier, state: "held" }],
+    ]);
+    let released = false;
+    const gateway: EconomyGateway = {
+      async openProposal() {
+        return { ok: true, id: PROPOSAL_ID, created: false };
       },
-    );
-    expect(replay).toMatchObject({ ok: true, reserved: false });
-    expect(untouched).toEqual([]);
+      async applyStatus() {
+        return { ok: true, status: "approved", duplicate: false };
+      },
+      async tryHolds(rows, operationId) {
+        for (const row of rows) {
+          if (!store.has(row.key)) {
+            store.set(row.key, { operationId, state: "held" });
+          }
+        }
+        return {
+          ok: true,
+          created: true,
+          createdKeys: [existing, createdKey],
+          operationId: earlier,
+        };
+      },
+      async release() {
+        released = true;
+        return { ok: true };
+      },
+    };
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      const saved = await persistEconomyDecision(gateway, {
+        proposal: proposal({ fundingRequestRaw: 20n, amountRaw: 20n, estimatedGasWei: 1n }),
+        decision: { outcome: "approved", reason: "reserved", hold: null, reserved: true, executed: false },
+        holds: [
+          held({ key: existing, proposalId: PROPOSAL_ID, amountRaw: 20n }),
+          held({ key: createdKey, proposalId: PROPOSAL_ID, bucket: "gas", amountRaw: 1n }),
+        ],
+        observation: fresh(),
+      });
+      expect(saved).toMatchObject({ ok: false, reserved: false, outcome: "deferred" });
+      expect(released).toBe(false);
+      expect(store.get(existing)).toEqual({ operationId: earlier, state: "held" });
+      expect(store.get(createdKey)).toMatchObject({ state: "held" });
+      expect(store.get(createdKey)?.operationId).not.toBe(earlier);
+    } finally {
+      warn.mockRestore();
+    }
   });
 
   it("does not release submitted keys when createdKeys is missing or malformed", async () => {
@@ -865,7 +932,7 @@ describe("phase 8 reservation and trust regressions", () => {
         held({ key: `${item.idempotencyKey}:gas`, proposalId: PROPOSAL_ID, bucket: "gas", amountRaw: 1n }),
       ];
       const decision = { outcome: "approved" as const, reason: "reserved", hold: null, reserved: true, executed: false as const };
-      const responses: Array<{ created: boolean; createdKeys?: unknown }> = [
+      const responses: Array<{ created: boolean; createdKeys?: unknown; operationId?: string }> = [
         { created: true },
         { created: true, createdKeys: ["proposal-1", "https://rpc.example/secret?token=abc"] },
         { created: true, createdKeys: ["proposal-1", 1] },
@@ -873,6 +940,7 @@ describe("phase 8 reservation and trust regressions", () => {
         { created: true, createdKeys: [] },
         { created: true, createdKeys: ["proposal-1", "proposal-1"] },
         { created: false, createdKeys: ["proposal-1:gas"] },
+        { created: true, createdKeys: ["proposal-1:gas"], operationId: "33333333-3333-4333-8333-333333333333" },
       ];
       for (const response of responses) {
         const calls: string[] = [];
@@ -886,9 +954,14 @@ describe("phase 8 reservation and trust regressions", () => {
               calls.push("status");
               return { ok: true, status: "approved", duplicate: false };
             },
-            async tryHolds() {
+            async tryHolds(_rows, operationId) {
               calls.push("holds");
-              return { ok: true, created: response.created, createdKeys: response.createdKeys };
+              return {
+                ok: true,
+                created: response.created,
+                createdKeys: response.createdKeys,
+                operationId: "operationId" in response ? response.operationId : operationId,
+              };
             },
             async release() {
               calls.push("release");
@@ -916,8 +989,11 @@ describe("phase 8 reservation and trust regressions", () => {
   it("keeps an existing hold when a later retry follows a status-write failure", async () => {
     const existing = "proposal-1";
     const created = "proposal-1:gas";
-    const store = new Map<string, "held" | "released">([[existing, "held"]]);
-    const released: string[][] = [];
+    const earlier = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+    const store = new Map<string, { operationId: string; state: "held" | "released" }>([
+      [existing, { operationId: earlier, state: "held" }],
+    ]);
+    const released: string[] = [];
     const statuses: string[] = [];
     let failStatus = true;
     const gateway: EconomyGateway = {
@@ -931,24 +1007,28 @@ describe("phase 8 reservation and trust regressions", () => {
         }
         return { ok: true, status: input.status, duplicate: statuses.filter((status) => status === input.status).length > 1 };
       },
-      async tryHolds(rows) {
+      async tryHolds(rows, operationId) {
         const createdKeys: string[] = [];
         for (const row of rows) {
           if (store.has(row.key)) {
             continue;
           }
-          store.set(row.key, "held");
+          store.set(row.key, { operationId, state: "held" });
           createdKeys.push(row.key);
         }
-        return createdKeys.length === 0
-          ? { ok: true, created: false, createdKeys: [] }
-          : { ok: true, created: true, createdKeys };
+        return {
+          ok: true,
+          created: createdKeys.length > 0,
+          createdKeys,
+          operationId,
+        };
       },
-      async release(_proposalId, keys) {
-        released.push([...keys]);
-        for (const key of keys) {
-          if (store.get(key) === "held") {
-            store.set(key, "released");
+      async release(proposalId, operationId) {
+        released.push(operationId);
+        void proposalId;
+        for (const row of store.values()) {
+          if (row.operationId === operationId && row.state === "held") {
+            row.state = "released";
           }
         }
         return { ok: true };
@@ -968,20 +1048,80 @@ describe("phase 8 reservation and trust regressions", () => {
     try {
       const failed = await persistEconomyDecision(gateway, input);
       expect(failed).toMatchObject({ ok: false, reserved: false });
-      expect(released).toEqual([[created]]);
-      expect(store.get(existing)).toBe("held");
-      expect(store.get(created)).toBe("released");
+      expect(store.get(existing)).toMatchObject({ state: "held", operationId: earlier });
+      expect(store.get(created)?.state).toBe("released");
+      expect(released).toHaveLength(1);
 
       failStatus = false;
       const retried = await persistEconomyDecision(gateway, input);
       expect(retried).toMatchObject({ ok: true, status: "approved", reserved: false });
-      expect(released).toEqual([[created]]);
-      expect(store.get(existing)).toBe("held");
+      expect(store.get(existing)).toMatchObject({ state: "held", operationId: earlier });
+      expect(released).toHaveLength(1);
 
       const again = await persistEconomyDecision(gateway, input);
       expect(again).toMatchObject({ ok: true, reserved: false });
-      expect(store.get(existing)).toBe("held");
+      expect(store.get(existing)?.state).toBe("held");
       expect(released).toHaveLength(1);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("releases one attempt without touching a concurrent attempt", async () => {
+    const store = new Map<string, { operationId: string; state: "held" | "released"; proposalId: string }>();
+    const releaseCalls: string[] = [];
+    const gatewayFor = (idempotencyKey: string, proposalId: string, fail: boolean): EconomyGateway => ({
+      async openProposal() {
+        return { ok: true, id: proposalId, created: true };
+      },
+      async applyStatus() {
+        return fail
+          ? { ok: false, reason: "The proposal status could not be saved." }
+          : { ok: true, status: "approved", duplicate: false };
+      },
+      async tryHolds(rows, operationId) {
+        for (const row of rows) {
+          if (!store.has(row.key)) {
+            store.set(row.key, { operationId, state: "held", proposalId: row.proposalId });
+          }
+        }
+        return { ok: true, created: true, createdKeys: rows.map((row) => row.key), operationId };
+      },
+      async release(proposalId, operationId) {
+        releaseCalls.push(operationId);
+        for (const row of store.values()) {
+          if (row.proposalId === proposalId && row.operationId === operationId && row.state === "held") {
+            row.state = "released";
+          }
+        }
+        return { ok: true };
+      },
+    });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      const firstId = "22222222-2222-4222-8222-222222222221";
+      const secondId = "22222222-2222-4222-8222-222222222223";
+      const [failed, kept] = await Promise.all([
+        persistEconomyDecision(gatewayFor("attempt-a", firstId, true), {
+          proposal: proposal({ id: "attempt-a", idempotencyKey: "attempt-a", fundingRequestRaw: 20n, amountRaw: 20n, estimatedGasWei: 0n }),
+          decision: { outcome: "approved", reason: "reserved", hold: null, reserved: true, executed: false },
+          holds: [held({ key: "attempt-a", proposalId: firstId, amountRaw: 20n })],
+          observation: fresh(),
+        }),
+        persistEconomyDecision(gatewayFor("attempt-b", secondId, false), {
+          proposal: proposal({ id: "attempt-b", idempotencyKey: "attempt-b", fundingRequestRaw: 20n, amountRaw: 20n, estimatedGasWei: 0n }),
+          decision: { outcome: "approved", reason: "reserved", hold: null, reserved: true, executed: false },
+          holds: [held({ key: "attempt-b", proposalId: secondId, amountRaw: 20n })],
+          observation: fresh(),
+        }),
+      ]);
+      expect(failed.ok).toBe(false);
+      expect(kept).toMatchObject({ ok: true, reserved: true });
+      expect(store.get("attempt-a")?.state).toBe("released");
+      expect(store.get("attempt-b")?.state).toBe("held");
+      expect(store.get("attempt-a")?.operationId).not.toBe(store.get("attempt-b")?.operationId);
+      expect(releaseCalls).toHaveLength(1);
+      expect(releaseCalls[0]).toBe(store.get("attempt-a")?.operationId);
     } finally {
       warn.mockRestore();
     }
@@ -1096,110 +1236,239 @@ describe("phase 8 reservation and trust regressions", () => {
     expect(linked.activities[0]?.href).toBe(`https://monadscan.com/tx/${TX}`);
   });
 
-  it("narrows a service-role release to the keys returned by the reservation batch", async () => {
-    const updates: string[][] = [];
-    const client = {
-      rpc(fn: string) {
-        const data =
-          fn === "economy_open_proposal"
-            ? { ok: true, id: PROPOSAL_ID, created: true }
-            : fn === "economy_try_holds"
-              ? { ok: true, created: true, createdKeys: ["proposal-1:gas"] }
-              : { ok: false, reason: "The proposal status could not be saved." };
-        const promise = Promise.resolve({ data, error: null });
-        return Object.assign(promise, { abortSignal: () => promise });
-      },
-      from() {
-        const query = {
-          eq() {
-            return query;
-          },
-          in(_column: string, keys: string[]) {
-            updates.push(keys);
-            return query;
-          },
-          abortSignal() {
-            return Promise.resolve({ error: null });
-          },
+  it("releases by server operation id when createdKeys falsely includes a pre-existing hold", async () => {
+    const tableCalls: string[] = [];
+    const rpcCalls: Array<{ fn: string; args: Record<string, unknown> }> = [];
+    const client = rpcClient((fn, args) => {
+      rpcCalls.push({ fn, args });
+      if (fn === "economy_open_proposal") {
+        return { ok: true, id: PROPOSAL_ID, created: true };
+      }
+      if (fn === "economy_try_holds") {
+        const payload = args.p_holds as { operationId?: string; holds?: unknown[] };
+        return {
+          ok: true,
+          created: true,
+          createdKeys: ["proposal-1", "proposal-1:gas", "other-attempt"],
+          operationId: payload.operationId,
         };
-        return { update: () => query };
-      },
-    };
+      }
+      if (fn === "economy_apply_status") {
+        return { ok: false, reason: "The proposal status could not be saved." };
+      }
+      if (fn === "economy_release_operation") {
+        return { ok: true, released: 1 };
+      }
+      return { ok: false, reason: "unexpected" };
+    }, tableCalls);
     const item = proposal({ fundingRequestRaw: 20n, amountRaw: 20n, estimatedGasWei: 1n });
-    const saved = await saveEconomyDecision(client as unknown as SupabaseClient, {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      const forgedList = await saveEconomyDecision(client, {
+        proposal: item,
+        decision: { outcome: "approved", reason: "reserved", hold: null, reserved: true, executed: false },
+        holds: [
+          held({ key: item.idempotencyKey, amountRaw: 20n }),
+          held({ key: `${item.idempotencyKey}:gas`, bucket: "gas", amountRaw: 1n }),
+        ],
+        observation: fresh(),
+      });
+      expect(forgedList).toMatchObject({ ok: false, reserved: false, outcome: "deferred" });
+      expect(rpcCalls.map((call) => call.fn)).toEqual(["economy_open_proposal", "economy_try_holds"]);
+      expect(tableCalls).toEqual([]);
+
+      rpcCalls.length = 0;
+      const owned = rpcClient((fn, args) => {
+        rpcCalls.push({ fn, args });
+        if (fn === "economy_open_proposal") {
+          return { ok: true, id: PROPOSAL_ID, created: true };
+        }
+        if (fn === "economy_try_holds") {
+          const payload = args.p_holds as { operationId?: string; holds?: unknown[] };
+          return {
+            ok: true,
+            created: true,
+            createdKeys: ["proposal-1", "proposal-1:gas"],
+            operationId: payload.operationId,
+          };
+        }
+        if (fn === "economy_apply_status") {
+          return { ok: false, reason: "The proposal status could not be saved." };
+        }
+        if (fn === "economy_release_operation") {
+          return { ok: true, released: 1 };
+        }
+        return { ok: false, reason: "unexpected" };
+      }, tableCalls);
+      const saved = await saveEconomyDecision(owned, {
+        proposal: item,
+        decision: { outcome: "approved", reason: "reserved", hold: null, reserved: true, executed: false },
+        holds: [
+          held({ key: item.idempotencyKey, amountRaw: 20n }),
+          held({ key: `${item.idempotencyKey}:gas`, bucket: "gas", amountRaw: 1n }),
+        ],
+        observation: fresh(),
+      });
+      expect(saved.ok).toBe(false);
+      expect(saved.ok ? "" : saved.reason).not.toMatch(/could not be released/);
+      const holdsCall = rpcCalls.find((call) => call.fn === "economy_try_holds");
+      const payload = holdsCall?.args.p_holds as { operationId: string; holds: unknown[] };
+      expect(payload.operationId).toMatch(/^[0-9a-f-]{36}$/i);
+      expect(payload.holds).toHaveLength(2);
+      expect(Array.isArray(holdsCall?.args.p_holds)).toBe(false);
+      const releaseCall = rpcCalls.find((call) => call.fn === "economy_release_operation");
+      expect(releaseCall?.args).toEqual({ p_operation: payload.operationId, p_proposal: PROPOSAL_ID });
+      expect(JSON.stringify(releaseCall?.args)).not.toContain("proposal-1");
+      expect(rpcCalls.map((call) => call.fn)).toEqual([
+        "economy_open_proposal",
+        "economy_try_holds",
+        "economy_apply_status",
+        "economy_release_operation",
+      ]);
+      expect(tableCalls).toEqual([]);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("does not release or approve when the reservation response is unproven or rejected by older SQL", async () => {
+    const item = proposal({ fundingRequestRaw: 20n, amountRaw: 20n, estimatedGasWei: 1n });
+    const input = {
       proposal: item,
-      decision: { outcome: "approved", reason: "reserved", hold: null, reserved: true, executed: false },
+      decision: { outcome: "approved" as const, reason: "reserved", hold: null, reserved: true, executed: false as const },
       holds: [
         held({ key: item.idempotencyKey, amountRaw: 20n }),
         held({ key: `${item.idempotencyKey}:gas`, bucket: "gas", amountRaw: 1n }),
       ],
       observation: fresh(),
-    });
-    expect(saved.ok).toBe(false);
-    expect(updates).toEqual([["proposal-1:gas"]]);
-
-    const untouched: string[] = [];
-    const omitted = {
-      rpc(fn: string) {
-        const data =
-          fn === "economy_open_proposal"
-            ? { ok: true, id: PROPOSAL_ID, created: false }
-            : fn === "economy_try_holds"
-              ? { ok: true, created: true, createdKeys: { secret: "service_role-key" } }
-              : { ok: true, status: "approved", duplicate: false };
-        const promise = Promise.resolve({ data, error: null });
-        return Object.assign(promise, { abortSignal: () => promise });
-      },
-      from() {
-        untouched.push("release");
-        return { update: () => ({}) };
-      },
     };
+    const responses: unknown[] = [
+      { ok: true, created: true, createdKeys: { secret: "service_role-key" } },
+      { ok: true, created: true },
+      { ok: true, created: true, createdKeys: ["proposal-1:gas"], operationId: "33333333-3333-4333-8333-333333333333" },
+      { ok: true, created: true, createdKeys: ["proposal-1", "https://rpc.example/secret?token=abc"] },
+      { ok: false, outcome: "malformed", reason: "A reservation needs a positive amount and an observed balance." },
+    ];
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     try {
-      const blocked = await saveEconomyDecision(omitted as unknown as SupabaseClient, {
-        proposal: item,
-        decision: { outcome: "approved", reason: "reserved", hold: null, reserved: true, executed: false },
-        holds: [
-          held({ key: item.idempotencyKey, amountRaw: 20n }),
-          held({ key: `${item.idempotencyKey}:gas`, bucket: "gas", amountRaw: 1n }),
-        ],
-        observation: fresh(),
-      });
-      expect(blocked).toMatchObject({ ok: false, reserved: false, outcome: "deferred" });
-      expect(untouched).toEqual([]);
-      const missingKeys = {
-        rpc(fn: string) {
-          untouched.push(fn);
-          const data =
-            fn === "economy_open_proposal"
-              ? { ok: true, id: PROPOSAL_ID, created: false }
-              : { ok: true, created: true };
-          const promise = Promise.resolve({ data, error: null });
-          return Object.assign(promise, { abortSignal: () => promise });
-        },
-        from() {
-          untouched.push("release");
-          return { update: () => ({}) };
-        },
-      };
-      const missing = await saveEconomyDecision(missingKeys as unknown as SupabaseClient, {
-        proposal: item,
-        decision: { outcome: "approved", reason: "reserved", hold: null, reserved: true, executed: false },
-        holds: [
-          held({ key: item.idempotencyKey, amountRaw: 20n }),
-          held({ key: `${item.idempotencyKey}:gas`, bucket: "gas", amountRaw: 1n }),
-        ],
-        observation: fresh(),
-      });
-      expect(missing).toMatchObject({ ok: false, reserved: false, outcome: "deferred" });
-      expect(untouched).toEqual(["economy_open_proposal", "economy_try_holds"]);
-      expect(warn.mock.calls.map((call) => String(call[0])).join("\n")).not.toContain("service_role");
+      for (const response of responses) {
+        const calls: string[] = [];
+        const tableCalls: string[] = [];
+        const saved = await saveEconomyDecision(
+          rpcClient((fn, args) => {
+            calls.push(fn);
+            if (fn === "economy_open_proposal") {
+              return { ok: true, id: PROPOSAL_ID, created: false };
+            }
+            if (fn === "economy_try_holds") {
+              const payload = args.p_holds as { operationId?: string };
+              const body = response as { operationId?: string };
+              return body.operationId === undefined && (response as { ok?: boolean }).ok === true
+                ? { ...(response as Record<string, unknown>), operationId: payload.operationId }
+                : response;
+            }
+            return { ok: true, status: "approved", duplicate: false };
+          }, tableCalls),
+          input,
+        );
+        expect(saved).toMatchObject({ ok: false, reserved: false, outcome: "deferred" });
+        expect(calls).toEqual(["economy_open_proposal", "economy_try_holds"]);
+        expect(tableCalls).toEqual([]);
+      }
+      const logged = warn.mock.calls.map((call) => String(call[0])).join("\n");
+      expect(logged).not.toContain("service_role");
+      expect(logged).not.toContain("https://");
+      expect(logged).not.toContain("token=abc");
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("writes insufficient funds without releasing, and reports a failed operation release", async () => {
+    const item = proposal({ fundingRequestRaw: 20n, amountRaw: 20n, estimatedGasWei: 1n });
+    const input = {
+      proposal: item,
+      decision: { outcome: "approved" as const, reason: "reserved", hold: null, reserved: true, executed: false as const },
+      holds: [
+        held({ key: item.idempotencyKey, amountRaw: 20n }),
+        held({ key: `${item.idempotencyKey}:gas`, bucket: "gas", amountRaw: 1n }),
+      ],
+      observation: fresh(),
+    };
+    const shortCalls: string[] = [];
+    const short = await saveEconomyDecision(
+      rpcClient((fn) => {
+        shortCalls.push(fn);
+        if (fn === "economy_open_proposal") {
+          return { ok: true, id: PROPOSAL_ID, created: true };
+        }
+        if (fn === "economy_try_holds") {
+          return { ok: false, outcome: "insufficient_funds", reason: "The remaining observed balance cannot cover another reservation." };
+        }
+        if (fn === "economy_apply_status") {
+          return { ok: true, status: "insufficient_funds", duplicate: false };
+        }
+        return { ok: true, released: 1 };
+      }),
+      input,
+    );
+    expect(short).toMatchObject({ ok: true, status: "insufficient_funds", reserved: false });
+    expect(shortCalls).toEqual(["economy_open_proposal", "economy_try_holds", "economy_apply_status"]);
+
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      const failedRelease = await saveEconomyDecision(
+        rpcClient((fn, args) => {
+          if (fn === "economy_open_proposal") {
+            return { ok: true, id: PROPOSAL_ID, created: true };
+          }
+          if (fn === "economy_try_holds") {
+            const payload = args.p_holds as { operationId?: string };
+            return { ok: true, created: true, createdKeys: ["proposal-1", "proposal-1:gas"], operationId: payload.operationId };
+          }
+          if (fn === "economy_release_operation") {
+            return { ok: false, reason: "The reservation release failed." };
+          }
+          return { ok: false, reason: "The proposal status could not be saved." };
+        }),
+        input,
+      );
+      expect(failedRelease.ok).toBe(false);
+      expect(failedRelease.ok ? "" : failedRelease.reason).toMatch(/could not be released/);
     } finally {
       warn.mockRestore();
     }
   });
 });
+
+function rpcClient(
+  handler: (fn: string, args: Record<string, unknown>) => unknown,
+  tableCalls: string[] = [],
+): SupabaseClient {
+  return {
+    rpc(fn: string, args: Record<string, unknown> = {}) {
+      const data = handler(fn, args);
+      const promise = Promise.resolve({ data, error: null });
+      return Object.assign(promise, { abortSignal: () => promise });
+    },
+    from() {
+      tableCalls.push("from");
+      const query = {
+        eq() {
+          return query;
+        },
+        in() {
+          tableCalls.push("in");
+          return query;
+        },
+        abortSignal() {
+          return Promise.resolve({ error: null });
+        },
+      };
+      return { update: () => query };
+    },
+  } as unknown as SupabaseClient;
+}
 
 function walk(dir: string): string[] {
   return readdirSync(dir).flatMap((entry) => {
@@ -1260,12 +1529,17 @@ describe("phase 8 safety scans", () => {
     expect(sql).toContain("existing.asset is distinct from p_asset");
     expect(sql).toContain("existing.amount_raw is distinct from p_amount");
     expect(sql).toContain("existing.amount_raw is distinct from (p_row->>'amountraw')::numeric(78, 0)");
-    const holds = sql.slice(sql.indexOf("function economy_try_holds"), sql.indexOf("function economy_note_receipt"));
+    const holds = sql.slice(sql.indexOf("function economy_try_holds"), sql.indexOf("function economy_release_operation"));
     expect(holds.indexOf("different reservation")).toBeGreaterThan(0);
     expect(holds.indexOf("insufficient_funds")).toBeLessThan(holds.indexOf("insert into economy_reservations"));
+    expect(holds).toContain("operation_id");
     expect(holds).not.toContain("set state = 'released'");
     expect(holds).not.toContain("update economy_reservations");
     expect(holds).not.toContain("idempotency_key not in");
+    const cleanup = sql.slice(sql.indexOf("function economy_release_operation"), sql.indexOf("function economy_note_receipt"));
+    expect(cleanup).toContain("operation_id = p_operation");
+    expect(cleanup).toContain("set state = 'released'");
+    expect(cleanup).not.toContain("idempotency_key");
     expect(sql).toContain("does not query monad and does not verify a receipt");
     expect(sql).toContain("'anon'");
     expect(sql).toContain("'authenticated'");
@@ -1284,10 +1558,19 @@ describe("phase 8 safety scans", () => {
     expect(sql).not.toContain("watcher_");
     expect(sql).not.toMatch(/0x[0-9a-f]{64}/);
 
+    const noteRelease = note.slice(note.indexOf("if next_status = 'reverted'"), note.indexOf("return jsonb_build_object('ok', true, 'duplicate', false, 'status', next_status"));
+    expect(noteRelease).toContain("proposal_id = current.id and state = 'held'");
+    expect(noteRelease).not.toContain("operation_id");
+    expect(noteRelease).not.toContain("idempotency_key");
     const db = readFileSync("src/lib/economy/db.ts", "utf8");
     expect(db).toContain("verifyMainnetReceipt");
     expect(db).not.toContain("VerifiedReceipt");
     expect(db).toContain('reported === "conflict"');
+    expect(db).toContain("economy_release_operation");
+    expect(db).toContain("p_holds: { operationId, holds }");
+    expect(db).toContain("p_operation: operationId");
+    expect(db).not.toContain('from("economy_reservations")');
+    expect(db).not.toContain(".in(\"idempotency_key\"");
     const confirm = db.slice(db.indexOf("function confirmEconomyReceipt"), db.indexOf("function settleEconomyProposal"));
     expect(confirm.indexOf("verifyMainnetReceipt")).toBeGreaterThanOrEqual(0);
     expect(confirm.indexOf("verifyMainnetReceipt")).toBeLessThan(confirm.indexOf("economy_note_receipt"));

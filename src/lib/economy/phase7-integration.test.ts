@@ -69,10 +69,11 @@ function fresh() {
 
 function gateway(
   calls: string[],
-  holds: EconomyGateway["tryHolds"] = async (rows) => ({
+  holds: EconomyGateway["tryHolds"] = async (rows, operationId) => ({
     ok: true,
     created: true,
     createdKeys: rows.map((row) => row.key),
+    operationId,
   }),
 ): EconomyGateway {
   return {
@@ -84,9 +85,9 @@ function gateway(
       calls.push(`status:${input.status}`);
       return { ok: true, status: input.status, duplicate: false };
     },
-    async tryHolds(rows) {
+    async tryHolds(rows, operationId) {
       calls.push(`holds:${rows.length}`);
-      return holds(rows);
+      return holds(rows, operationId);
     },
     async release(proposalId) {
       calls.push(`release:${proposalId}`);

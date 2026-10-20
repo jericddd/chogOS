@@ -144,8 +144,10 @@ function supabaseGateway(client: SupabaseClient): EconomyGateway {
       }
       return { ok: true, status: body.status, duplicate: body.duplicate === true };
     },
-    async tryHolds(holds) {
-      const result = await callRpc(client, "economy_try_holds", { p_holds: holds });
+    async tryHolds(holds, operationId) {
+      const result = await callRpc(client, "economy_try_holds", {
+        p_holds: { operationId, holds },
+      });
       if (!result.ok) {
         return { ok: false, outcome: "deferred", reason: "The offchain reservation could not be saved." };
       }
@@ -155,33 +157,23 @@ function supabaseGateway(client: SupabaseClient): EconomyGateway {
         const outcome = reported === "insufficient_funds" || reported === "conflict" ? reported : "deferred";
         return { ok: false, outcome, reason: text(body?.reason) || "The offchain reservation could not be saved." };
       }
-      const created = body.created === true;
-      if (body.createdKeys === undefined) {
-        return { ok: true, created };
-      }
-      return { ok: true, created, createdKeys: body.createdKeys };
+      return {
+        ok: true,
+        created: body.created === true,
+        createdKeys: body.createdKeys,
+        operationId: body.operationId,
+      };
     },
-    async release(proposalId, keys) {
-      const wanted = keys.filter((key) => key.length > 0);
-      if (wanted.length === 0) {
-        return { ok: true };
-      }
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), LEDGER_TIMEOUT_MS);
-      try {
-        const { error } = await client
-          .from("economy_reservations")
-          .update({ state: "released" })
-          .eq("proposal_id", proposalId)
-          .eq("state", "held")
-          .in("idempotency_key", wanted)
-          .abortSignal(controller.signal);
-        return { ok: !error };
-      } catch {
+    async release(proposalId, operationId) {
+      const result = await callRpc(client, "economy_release_operation", {
+        p_operation: operationId,
+        p_proposal: proposalId,
+      });
+      if (!result.ok) {
         return { ok: false };
-      } finally {
-        clearTimeout(timer);
       }
+      const body = record(result.data);
+      return { ok: Boolean(body && body.ok === true) };
     },
   };
 }
