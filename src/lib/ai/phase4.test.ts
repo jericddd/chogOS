@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { evaluateBudget, haltFromError, isRetriableHaltReason, usagePeriods } from "@/lib/ai/budget";
 import { buildDecisionContext, decisionMessages } from "@/lib/ai/context";
+import { acceptGrowth, growthBlocker, landCanGrow } from "@/lib/ai/growth";
+import { describePlace } from "@/lib/ai/place";
 import { preferredFeasibleAction, rankActions, type PersonalityTraits } from "@/lib/ai/personality";
 import { timeoutWithinDeadline } from "@/lib/ai/invocation";
 import {
@@ -145,18 +147,20 @@ describe("structured decisions", () => {
         JSON.stringify({ action: "build", buildingId: "", buildKind: "road", summary: "Lay a road.", rationale: "Reach the woods." }),
       ).ok,
     ).toBe(false);
-    expect(
-      parseDecisionOutput(
-        JSON.stringify({
-          action: "build",
-          buildingId: "",
-          buildKind: "road",
-          roadStubId: "invented-path",
-          summary: "Lay a road.",
-          rationale: "Reach the woods.",
-        }),
-      ).ok,
-    ).toBe(false);
+    const inventedRoad = parseDecisionOutput(
+      JSON.stringify({
+        action: "build",
+        buildingId: "",
+        buildKind: "road",
+        roadStubId: "invented-path",
+        summary: "Lay a road.",
+        rationale: "Reach the woods.",
+      }),
+    );
+    expect(inventedRoad.ok).toBe(true);
+    if (inventedRoad.ok) {
+      expect(inventedRoad.decision.roadStubId).toBe("invented-path");
+    }
     const road = parseDecisionOutput(
       JSON.stringify({
         action: "build",
@@ -557,9 +561,132 @@ describe("decision context", () => {
     expect(withRoad.construction.roads.canBuildRoad).toBe(true);
     expect(withRoad.townProjects).toEqual([]);
     const messages = decisionMessages(withRoad, 8000);
+    expect(messages.system).toContain("how this town grows");
     expect(messages.system).toContain("roadStubId");
-    expect(messages.system).toContain("projectId");
-    expect(messages.system).toContain("request_wallet_activation");
+    expect(messages.system).not.toContain("Choose only from the feasible actions");
+    expect(messages.system).toContain("Do not return propose_economy or request_wallet_activation");
     expect(messages.user).toContain("east-y2-64");
+    expect(messages.user).toContain("East spur to plot 64,2");
+    expect(messages.user).not.toContain("\"feasible\"");
+    expect(messages.user).not.toContain("\"suggested\"");
+    expect(messages.user).not.toContain("\"ranked\"");
+    const place = describePlace(withRoad);
+    expect(place).toContain("Open lots that already touch a road");
+    expect(place).not.toContain("Choose only from");
+  });
+
+  it("keeps a growth judgment and refuses a daily action without substituting one", () => {
+    const open = buildDecisionContext({
+      citizenId: "11111111-1111-4111-8111-111111111111",
+      citizen: citizen(),
+      buildings: buildings(),
+      worldS: 12 * 3600,
+      stock: { wood: 60, stone: 40, food: 80, tools: 20 },
+      personality: industrious,
+      skills: [],
+      goals: [],
+      memories: [],
+      canBuild: true,
+      vacantServedLots: 26,
+      reservedLots: 0,
+      eligibleRoadStubs: [{ id: "east-y2-64", name: "East spur to plot 64,2", servesPlotIds: ["plot-64-2"] }],
+    });
+    expect(landCanGrow(open)).toBe(true);
+    const farm = parseDecisionOutput(
+      JSON.stringify({
+        action: "build",
+        buildingId: "",
+        buildKind: "farm",
+        summary: "Raise another farm on the open road-connected land.",
+        rationale: "Two farms already stand in the west and twenty-six lots on the roads are still empty.",
+      }),
+    );
+    expect(farm.ok).toBe(true);
+    if (farm.ok) {
+      const accepted = acceptGrowth(farm.decision, open);
+      expect(accepted.ok).toBe(true);
+      if (accepted.ok) {
+        expect(accepted.decision.buildKind).toBe("farm");
+        expect(accepted.decision.summary).toContain("another farm");
+      }
+    }
+    const named = parseDecisionOutput(
+      JSON.stringify({
+        action: "build",
+        buildingId: "",
+        buildKind: "road",
+        roadStubId: "East spur to plot 64,2",
+        summary: "Lay the unbuilt east spur.",
+        rationale: "The description says that survey has not been built.",
+      }),
+    );
+    expect(named.ok).toBe(true);
+    if (named.ok) {
+      const accepted = acceptGrowth(named.decision, open);
+      expect(accepted.ok).toBe(true);
+      if (accepted.ok) {
+        expect(accepted.decision.roadStubId).toBe("east-y2-64");
+      }
+    }
+    const visit = parseDecisionOutput(
+      JSON.stringify({
+        action: "socialize",
+        buildingId: "commons-square",
+        summary: "Meet at the square.",
+        rationale: "People are nearby.",
+      }),
+    );
+    expect(visit.ok).toBe(true);
+    if (visit.ok) {
+      const refused = acceptGrowth(visit.decision, open);
+      expect(refused.ok).toBe(false);
+      if (!refused.ok) {
+        expect(refused.reason).toContain("daily life");
+      }
+    }
+    const invented = parseDecisionOutput(
+      JSON.stringify({
+        action: "build",
+        buildingId: "",
+        buildKind: "road",
+        roadStubId: "east-y2-64",
+        summary: "Lay a road.",
+        rationale: "Reach new land.",
+      }),
+    );
+    expect(invented.ok).toBe(true);
+    if (invented.ok) {
+      const full = buildDecisionContext({
+        citizenId: "11111111-1111-4111-8111-111111111111",
+        citizen: citizen(),
+        buildings: buildings(),
+        worldS: 12 * 3600,
+        stock: { wood: 60, stone: 40, food: 400, tools: 400 },
+        personality: industrious,
+        skills: [],
+        goals: [],
+        memories: [],
+        canBuild: true,
+        vacantServedLots: 26,
+        reservedLots: 0,
+        completedRoadIds: ["east-y2-64"],
+      });
+      expect(acceptGrowth(invented.decision, full).ok).toBe(false);
+    }
+    const poor = buildDecisionContext({
+      citizenId: "11111111-1111-4111-8111-111111111111",
+      citizen: citizen(),
+      buildings: buildings(),
+      worldS: 12 * 3600,
+      stock: { wood: 0, stone: 0, food: 80, tools: 20 },
+      personality: industrious,
+      skills: [],
+      goals: [],
+      memories: [],
+      canBuild: false,
+      vacantServedLots: 26,
+    });
+    expect(landCanGrow(poor)).toBe(false);
+    expect(growthBlocker(poor)).toContain("storehouse");
   });
 });

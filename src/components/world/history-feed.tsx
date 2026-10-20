@@ -1,6 +1,7 @@
 "use client";
 
 import { ActivityFeed } from "@/components/world/activity-feed";
+import { GrowthDecisions } from "@/components/world/growth-decisions";
 import { useWorldStore } from "@/components/world/living-world";
 import type { EventFilter, RealtimeConfig, WorldLoad } from "@/lib/world/types";
 
@@ -14,5 +15,10 @@ export function HistoryFeed({
   filter: EventFilter;
 }) {
   const store = useWorldStore(initial, realtime);
-  return <ActivityFeed store={store} initialFilter={filter} mode="page" />;
+  return (
+    <div className="space-y-8">
+      <GrowthDecisions />
+      <ActivityFeed store={store} initialFilter={filter} mode="page" />
+    </div>
+  );
 }

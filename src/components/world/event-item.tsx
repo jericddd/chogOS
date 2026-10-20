@@ -57,6 +57,11 @@ export function EventItem({
               ),
             )}
           </p>
+          {event.source === "ai" && (event.mind?.rationale || event.mind?.summary) ? (
+            <p className="mt-1 text-sm leading-6 text-foreground/90">
+              {event.mind.rationale ?? event.mind.summary}
+            </p>
+          ) : null}
           <p className="mt-1 text-xs text-muted">
             {event.worldS !== null ? <span>{formatWorldTime(event.worldS)} · </span> : null}
             <time dateTime={event.occurredAt} title={new Date(event.occurredAt).toUTCString()}>

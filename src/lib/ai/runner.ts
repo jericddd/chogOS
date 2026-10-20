@@ -4,13 +4,14 @@ import { getAiProvider } from "@/lib/ai/provider";
 import { evaluateBudget, haltFromError, isRetriableHaltReason, usagePeriods, type UsageSnapshot } from "@/lib/ai/budget";
 import { timeoutWithinDeadline } from "@/lib/ai/invocation";
 import { buildDecisionContext, contextCommitment, decisionMessages } from "@/lib/ai/context";
+import { acceptGrowth, GROWTH_RESPONSE_SCHEMA, growthBlocker, landCanGrow } from "@/lib/ai/growth";
 import {
-  DECISION_RESPONSE_SCHEMA,
   isActivationAction,
   isEconomyAction,
   isWorldAction,
   jsonSafeDecision,
   parseDecisionOutput,
+  type ParsedDecision,
 } from "@/lib/ai/schema";
 import {
   activationDraftFromDecision,
@@ -21,7 +22,7 @@ import { productionBankRuntime } from "@/lib/chogbank/runtime";
 import { readEconomyLedger, saveEconomyDecision } from "@/lib/economy/db";
 import { evaluateProductionEconomy } from "@/lib/economy/production";
 import { proposalFromDraft } from "@/lib/economy/proposal";
-import { AiProviderError } from "@/lib/ai/types";
+import { AiProviderError, type AiCompletion } from "@/lib/ai/types";
 import type { PersonalityTraits } from "@/lib/ai/personality";
 import { readAppConfig, type AppConfig } from "@/lib/config/env";
 import { createServiceRoleClient } from "@/lib/db/client";
@@ -486,6 +487,27 @@ export async function runAiMind(config: AppConfig = readAppConfig()): Promise<Mi
         const commitment = contextCommitment(context);
         const messages = decisionMessages(context, config.aiMaxPromptChars);
 
+        if (!landCanGrow(context)) {
+          const reason = growthBlocker(context);
+          const { error: blockedError } = await client.from("ai_decisions").insert({
+            citizen_id: row.claimed_citizen_id,
+            purpose: "citizen_turn",
+            status: "rejected",
+            provider: config.aiProvider,
+            model: config.aiModel,
+            input_commitment: commitment,
+            validation_result: reason,
+          });
+          if (blockedError) {
+            report.decisions.push({ tokenId: row.token_id, status: "failed", detail: "could not persist the decision row" });
+            continue;
+          }
+          decided = true;
+          report.rejected += 1;
+          report.decisions.push({ tokenId: row.token_id, status: "blocked", detail: reason });
+          continue;
+        }
+
         const { data: inserted, error: insertError } = await client
           .from("ai_decisions")
             .insert({
@@ -512,7 +534,7 @@ export async function runAiMind(config: AppConfig = readAppConfig()): Promise<Mi
               { role: "system", content: messages.system },
               { role: "user", content: messages.user },
             ],
-            responseSchema: DECISION_RESPONSE_SCHEMA,
+            responseSchema: GROWTH_RESPONSE_SCHEMA,
             timeoutMs: providerTimeoutMs,
             maxOutputTokens: config.aiMaxOutputTokens,
           });
@@ -543,22 +565,71 @@ export async function runAiMind(config: AppConfig = readAppConfig()): Promise<Mi
         decided = true;
         await bumpUsage(client, completion.promptChars ?? messages.system.length + messages.user.length, completion.outputTokens);
 
-        const parsed = parseDecisionOutput(completion.text);
-        if (!parsed.ok) {
+        let parsed: { ok: true; decision: ParsedDecision } | { ok: false; reason: string } = parseDecisionOutput(completion.text);
+        let accepted = parsed.ok ? acceptGrowth(parsed.decision, context) : parsed;
+        if (!accepted.ok) {
+          const retryTimeout = timeoutWithinDeadline(startedAt, config.aiRequestTimeoutMs);
+          if (retryTimeout !== null) {
+            let retry: AiCompletion;
+            try {
+              retry = await provider.complete({
+                purpose: "citizen_turn",
+                messages: [
+                  { role: "system", content: messages.system },
+                  {
+                    role: "user",
+                    content: `${messages.user}\n\nThe land did not accept the last answer (${accepted.reason}). Read the description again and decide how this town grows. Daily life is already simulated.`,
+                  },
+                ],
+                responseSchema: GROWTH_RESPONSE_SCHEMA,
+                timeoutMs: retryTimeout,
+                maxOutputTokens: config.aiMaxOutputTokens,
+              });
+            } catch (error) {
+              const providerError =
+                error instanceof AiProviderError
+                  ? error
+                  : new AiProviderError(error instanceof Error ? error.message : "provider failed", "unavailable", false);
+              await client
+                .from("ai_decisions")
+                .update({ status: "failed", last_error: providerError.message })
+                .eq("id", decisionId);
+              report.rejected += 1;
+              report.decisions.push({ tokenId: row.token_id, status: "failed", detail: providerError.message });
+              if (providerError.halt) {
+                const halt = haltFromError(providerError);
+                if (halt) {
+                  await haltScheduler(client, halt.until, halt.reason);
+                  report.status = "halted";
+                  report.reason = halt.reason;
+                }
+                break;
+              }
+              continue;
+            }
+            report.inferred += 1;
+            completion = retry;
+            await bumpUsage(client, retry.promptChars ?? messages.system.length + messages.user.length, retry.outputTokens);
+            parsed = parseDecisionOutput(retry.text);
+            accepted = parsed.ok ? acceptGrowth(parsed.decision, context) : parsed;
+          }
+        }
+        if (!accepted.ok) {
           await client
             .from("ai_decisions")
             .update({
               status: "rejected",
               rationale: null,
               output: { raw: completion.text.slice(0, 500) },
-              validation_result: parsed.reason,
+              validation_result: accepted.reason,
               model: completion.model,
             })
             .eq("id", decisionId);
           report.rejected += 1;
-          report.decisions.push({ tokenId: row.token_id, status: "rejected", detail: parsed.reason });
+          report.decisions.push({ tokenId: row.token_id, status: "rejected", detail: accepted.reason });
           continue;
         }
+        parsed = { ok: true, decision: accepted.decision };
 
         await client
           .from("ai_decisions")

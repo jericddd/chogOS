@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { describePlace } from "@/lib/ai/place";
 import { type PersonalityTraits, type RankedAction } from "@/lib/ai/personality";
 import { considerWalletActivation } from "@/lib/chogbank/authorization";
 import type { ActivationState } from "@/lib/chogbank/types";
@@ -14,11 +15,7 @@ import {
   preferredBuildKind as preferredBuildKindFromNeeds,
   prioritizeTownActions,
 } from "@/lib/world/needs";
-import {
-  eligibleProjectCandidates,
-  openTownProjects,
-  prioritizeProjectActions,
-} from "@/lib/world/projects";
+import { openTownProjects, prioritizeProjectActions } from "@/lib/world/projects";
 import type { BuildingView, CitizenView, TownNeedView, TownProjectView } from "@/lib/world/types";
 
 export const FOOD_SHORTAGE = FOOD_SHORTAGE_ACTIVATE;
@@ -75,6 +72,12 @@ export type WalletActivationContext = {
   eligibleToRequest: boolean;
 };
 
+export type StandingPlace = {
+  name: string;
+  kind: string;
+  status: string;
+};
+
 export type DecisionContext = {
   tokenId: string;
   citizenId: string;
@@ -91,6 +94,7 @@ export type DecisionContext = {
   worldS: number;
   hour: number;
   stock: ResourceStock & { food: number; tools: number };
+  standing: StandingPlace[];
   feasible: FeasibleOption[];
   canBuild: boolean;
   suggested: RankedAction;
@@ -293,6 +297,11 @@ export function buildDecisionContext(input: {
     worldS: input.worldS,
     hour: worldHour(input.worldS),
     stock: input.stock,
+    standing: input.buildings.slice(0, 48).map((building) => ({
+      name: building.name,
+      kind: building.kind,
+      status: building.status,
+    })),
     feasible: feasible.slice(0, 24),
     canBuild,
     suggested: prioritized.suggested,
@@ -322,6 +331,8 @@ export function contextCommitment(context: DecisionContext): string {
     homeId: context.homeId,
     worldS: context.worldS,
     stock: context.stock,
+    standing: context.standing,
+    place: describePlace(context),
     feasible: context.feasible,
     canBuild: context.canBuild,
     suggested: context.suggested,
@@ -358,88 +369,32 @@ export function contextCommitment(context: DecisionContext): string {
 
 export function decisionMessages(context: DecisionContext, maxChars: number): { system: string; user: string } {
   const system = [
-    "You decide the next supported action for one chogOS citizen.",
+    "You decide how this town grows.",
+    "Read the description of where the town is. Decide the growth yourself from what you see.",
+    "Daily life is already simulated: sleep, work, shopping, rest, and visiting. Do not spend this decision on those.",
     "Return JSON only. Do not write SQL, code, URLs, or contract calls.",
-    "Choose only from the feasible actions.",
-    "For construction, action=build and buildKind must be house, farm, workshop, or road.",
-    "For a road, also set roadStubId to one of the listed eligible stub ids. Do not invent coordinates, tiles, lots, or costs. The server places the segment.",
-    "Use the real storehouse stock and the listed town needs. Those needs are engine facts, not suggestions you may invent.",
-    "When a listed need is active and a relevant feasible action exists, choose that action instead of an ordinary social visit.",
-    "Prefer a farm when food is short and a workshop when tools are short, but only if construction is listed as available. Do not propose a building when materials or lots are missing.",
-    "A completed farm is not food. A completed workshop is not tools. Do not mark a need resolved.",
-    "Town projects are engine facts. Choose a listed eligible project step when it matches a feasible action. Set projectId to that id. You cannot complete a project, skip a road, or unlock land by saying it is done.",
-    "A rejected workplace should not be repeated unless conditions changed.",
-    "source=ai is applied only if this JSON is later validated. You cannot complete a goal or a building by saying it is complete.",
-    "Enrollment does not create a wallet. Ordinary living, work, rest, and construction do not need one. request_wallet_activation only if a listed goal truly needs onchain access (a business, a trade, a payment). Include activationMotive, proposedOnchainActions, revenueHypothesis, and integer wei estimates. You cannot set spending limits, approve funding, or claim a transaction succeeded. ChogBank decides. If no wallet is needed, choose a feasible world action.",
-    "propose_economy only when a listed goal needs a payment, trade, or swap. Put the operation, asset, integer base-unit amounts, estimated gas, funding request, target, selector, and expected outcome in economy. A swap needs an explicit quote and slippage. The bank will not execute it. Do not claim that funds arrived or that a profit was earned.",
+    "action is build. buildKind is the structure you judge the town needs: house, farm, workshop, or road.",
+    "A house, farm, or workshop is raised on open land that already touches a road. You do not choose the lot, the door, or any coordinate. The server does.",
+    "A road is only a surveyed spur the description says is not built yet. Set roadStubId to that survey label. If you are not laying a road, set roadStubId to none.",
+    "summary is the growth in one sentence, in your own words. rationale is why this place needs it.",
+    "You cannot finish a building, invent a shortage, or complete a project by saying so.",
+    "Do not return propose_economy or request_wallet_activation. This decision cannot move money, approve funding, or deploy a wallet.",
     "The free Gemini tier may use this prompt to improve Google products. Do not include secrets. None are provided.",
   ].join(" ");
 
+  const place = describePlace(context);
   const user = JSON.stringify({
-    citizen: {
+    place,
+    you: {
       tokenId: context.tokenId,
       name: context.name,
       role: context.role,
-      activity: context.activity,
-      workId: context.workId,
-      homeId: context.homeId,
       locationId: context.locationId,
     },
-    personality: context.personality,
-    skills: context.skills,
-    goals: context.goals,
-    memories: context.memories.map((memory) => ({
-      content: memory.content,
-      outcome: memory.outcome,
-      importance: memory.importance,
-    })),
-    world: { hour: Math.round(context.hour * 10) / 10, stock: context.stock },
-    townNeeds: context.townNeeds.map((need) => ({
-      needType: need.needType,
-      status: need.status,
-      priority: need.priority,
-      blocker: need.blocker,
-      recommendedAction: need.recommendedAction,
-      recommendedKind: need.recommendedKind,
-      food: need.evidence.food,
-      wood: need.evidence.wood,
-      stone: need.evidence.stone,
-      tools: need.evidence.tools,
-    })),
-    feasible: context.feasible,
-    canBuild: context.canBuild,
-    suggested: context.suggested,
-    ranked: context.ranked,
-    construction: context.construction,
-    roads: context.construction.roads,
-    townProjects: context.townProjects.map((project) => ({
-      id: project.id,
-      type: project.projectType,
-      name: project.name,
-      status: project.status,
-      why: project.justification,
-      currentStep: project.currentStepId,
-      currentStepTitle: project.steps.find((step) => step.id === project.currentStepId)?.title ?? null,
-      blocker: project.blocker,
-      recommendedAction: project.recommendedAction,
-      recommendedKind: project.recommendedKind,
-      recommendedStubId: project.recommendedStubId,
-    })),
-    projectCandidates: eligibleProjectCandidates(context.townProjects),
-    walletActivation: context.walletActivation,
   });
 
   if (system.length + user.length <= maxChars) {
     return { system, user };
   }
-  const trimmed = {
-    ...JSON.parse(user),
-    memories: context.memories.slice(0, 3),
-    feasible: context.feasible.slice(0, 10),
-    construction: {
-      ...context.construction,
-      underConstruction: context.construction.underConstruction.slice(0, 3),
-    },
-  };
-  return { system, user: JSON.stringify(trimmed).slice(0, Math.max(200, maxChars - system.length - 32)) };
+  return { system, user: JSON.stringify({ place: place.slice(0, Math.max(200, maxChars - system.length - 80)) }) };
 }
