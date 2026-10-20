@@ -131,7 +131,7 @@ export function LivingWorld({ initial, realtime }: { initial: WorldLoad; realtim
 
   if (!live.snapshot) {
     return (
-      <div className="mx-auto max-w-7xl space-y-8 px-4 py-6 sm:px-6">
+      <div className="space-y-8">
         <WorldUnavailablePanel unavailable={live.unavailable ?? { status: "error", detail: "The world could not be read." }} />
         <GrowthDecisions />
         <ActivityFeed store={store} initialFilter={feedFilter} />

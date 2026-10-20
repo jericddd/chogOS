@@ -109,3 +109,10 @@ h2.font-serif {
   background:
     linear-gradient(180deg, #243044, #12182b);
 }
+
+/* The homepage map opts into the full viewport. Other pages keep the padded column. */
+.shell-main:has(.world-stage) {
+  max-width: none;
+  margin: 0;
+  padding: 0;
+}

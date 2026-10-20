@@ -19,6 +19,6 @@ async function WorldLive() {
 
 function WorldLoading() {
   return (
-    <div className="h-[calc(100dvh-var(--shell-header))] min-h-[24rem] animate-pulse bg-[#07140c]" aria-busy="true" />
+    <div className="world-stage h-[calc(100dvh-var(--shell-header))] min-h-[24rem] animate-pulse bg-[#07140c]" aria-busy="true" />
   );
 }

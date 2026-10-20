@@ -2,15 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-
-const items = [
-  { href: "/", label: "World" },
-  { href: "/citizens", label: "Citizens" },
-  { href: "/treasury", label: "Treasury" },
-  { href: "/activity", label: "History" },
-  { href: "/verify", label: "Verify" },
-  { href: "/enroll", label: "Enroll" },
-] as const;
+import { civilizationNavItems } from "@/components/shell/nav-items";
 
 export function CivilizationNav() {
   const pathname = usePathname();
@@ -20,7 +12,7 @@ export function CivilizationNav() {
       aria-label="Civilization"
       className="flex flex-nowrap gap-0.5 overflow-x-auto overscroll-x-contain pb-1 touch-pan-x [scrollbar-width:thin] [scrollbar-color:var(--line)_transparent] sm:gap-2 sm:pb-0.5 [&::-webkit-scrollbar]:h-0.5 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-line"
     >
-      {items.map((item) => {
+      {civilizationNavItems.map((item) => {
         const active = item.href === "/" ? pathname === "/" : pathname.startsWith(item.href);
         return (
           <Link
