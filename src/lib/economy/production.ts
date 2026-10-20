@@ -51,6 +51,7 @@ export async function readConfiguredEconomicTreasury(config: AppConfig, nowMs: n
 /**
  * The production decision path. executionEnabled is fixed false in this
  * function. Callers cannot turn it on with an environment variable.
+ * A passing proposal can still record an offchain hold. That hold is not a broadcast.
  */
 export async function evaluateProductionEconomy(input: {
   config: AppConfig;

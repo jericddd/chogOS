@@ -18,6 +18,7 @@ import {
   isActivationDraft,
 } from "@/lib/chogbank/from-decision";
 import { productionBankRuntime } from "@/lib/chogbank/runtime";
+import { readEconomyLedger, saveEconomyDecision } from "@/lib/economy/db";
 import { evaluateProductionEconomy } from "@/lib/economy/production";
 import { proposalFromDraft } from "@/lib/economy/proposal";
 import { AiProviderError } from "@/lib/ai/types";
@@ -825,35 +826,59 @@ export async function runAiMind(config: AppConfig = readAppConfig()): Promise<Mi
             nftContract: config.chogNftAddress,
             nowMs: Date.now(),
           });
-          const evaluated = await evaluateProductionEconomy({
-            config,
-            proposal,
-            nowMs: Date.now(),
-          });
-          const detail = evaluated.decision.reason;
+          const nowMs = Date.now();
+          let outcome = "deferred";
+          let detail = "The economic proposal could not be saved.";
+          let reserved = false;
+          let executed = false;
+          let observation = "unavailable";
+          try {
+            const ledger = await readEconomyLedger(client, nowMs);
+            const evaluated = await evaluateProductionEconomy({
+              config,
+              proposal,
+              nowMs,
+              holds: ledger.complete ? ledger.holds : [],
+              dailyGasWei: ledger.complete ? BigInt(ledger.dailyGasRaw) : 0n,
+              dailyGasKnown: ledger.complete,
+            });
+            const persisted = await saveEconomyDecision(client, {
+              proposal,
+              decision: evaluated.decision,
+              holds: evaluated.holds,
+              observation: evaluated.observation,
+            });
+            outcome = persisted.ok ? persisted.status : evaluated.decision.outcome;
+            reserved = persisted.ok ? persisted.reserved : false;
+            executed = evaluated.decision.executed;
+            observation = evaluated.observation.status;
+            detail = persisted.ok ? evaluated.decision.reason : `${evaluated.decision.reason} ${persisted.reason}`;
+          } catch {
+            detail = "The economic proposal could not be saved.";
+          }
           await client
             .from("ai_decisions")
             .update({
-              status: evaluated.decision.outcome === "rejected" ? "rejected" : "queued",
+              status: outcome === "rejected" ? "rejected" : "queued",
               validation_result: detail,
               output: {
                 ...jsonSafeDecision(parsed.decision),
                 economyDecision: {
-                  outcome: evaluated.decision.outcome,
-                  reason: evaluated.decision.reason,
-                  reserved: evaluated.decision.reserved,
-                  executed: evaluated.decision.executed,
-                  observation: evaluated.observation.status,
+                  outcome,
+                  reason: detail,
+                  reserved,
+                  executed,
+                  observation,
                 },
               },
             })
             .eq("id", decisionId);
-          if (evaluated.decision.outcome === "rejected") {
+          if (outcome === "rejected") {
             report.rejected += 1;
           } else {
             report.submitted += 1;
           }
-          report.decisions.push({ tokenId: row.token_id, status: evaluated.decision.outcome, detail });
+          report.decisions.push({ tokenId: row.token_id, status: outcome, detail });
           continue;
         }
 

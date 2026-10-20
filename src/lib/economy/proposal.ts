@@ -211,7 +211,7 @@ export function decideEconomicProposal(input: {
   if (!rule) {
     return refuse("unsupported_protocol", "That target or selector is not on the executable allowlist.");
   }
-  if (!input.factoryDeployed) {
+  if (input.executionEnabled && !input.factoryDeployed) {
     return refuse("deferred", "The citizen wallet factory is not deployed. A predicted address is not a balance.");
   }
   const capital = proposal.fundingRequestRaw;
@@ -270,10 +270,19 @@ export function decideEconomicProposal(input: {
   if (gasObserved < proposal.estimatedGasWei) {
     return refuse("insufficient_funds", "Observed MON cannot cover the estimated gas.");
   }
-  if (!input.executionEnabled) {
-    return refuse("deferred", "Policy checks passed, but production execution is disabled. No funds were reserved or sent.");
+  const reserved = reserveApproved(input.holds, proposal, observed, gasObserved);
+  if (reserved.decision.outcome !== "approved" || input.executionEnabled) {
+    return reserved;
   }
-  return reserveApproved(input.holds, proposal, observed, gasObserved);
+  return {
+    ...reserved,
+    decision: {
+      ...reserved.decision,
+      reason: reserved.decision.reserved
+        ? "Offchain reservation recorded against the observed balance. Production execution is disabled, so nothing was signed or broadcast."
+        : "The offchain reservation already exists. Production execution is disabled, so nothing was signed or broadcast.",
+    },
+  };
 }
 
 function reserveApproved(

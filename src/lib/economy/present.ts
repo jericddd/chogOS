@@ -69,6 +69,7 @@ export function presentEconomy(input: {
   execution: ProductionExecution;
   allowlistReason: string;
   ledgerLoaded: boolean;
+  ledgerDetail?: string | null;
   reservedGasRaw?: string | null;
   reservedDeploymentRaw?: string | null;
   allocatedMonRaw?: string | null;
@@ -134,8 +135,8 @@ export function presentEconomy(input: {
       : "Explorer links appear only for transfers with verified mainnet evidence.",
     blocked,
     ledgerNote: input.ledgerLoaded
-      ? "Reservation totals come from the loaded ledger."
-      : "The economic ledger was not queried for this page. Reserved and allocated amounts are not shown as zero.",
+      ? "Reservation totals come from the loaded ledger. A reservation is not a payment, and it is not a broadcast."
+      : input.ledgerDetail || "The economic ledger was not queried for this page. Reserved and allocated amounts are not shown as zero.",
   };
 }
 

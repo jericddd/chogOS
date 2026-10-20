@@ -31,6 +31,7 @@ import {
   type TreasurySnapshot,
 } from "@/lib/economy/observe";
 import { presentEconomy } from "@/lib/economy/present";
+import { assessReceiptEvidence } from "@/lib/economy/receipt";
 import { evaluateProductionEconomy } from "@/lib/economy/production";
 import {
   decideEconomicProposal,
@@ -53,6 +54,7 @@ const TARGET = getAddress("0x3333333333333333333333333333333333333333");
 const OTHER = getAddress("0x4444444444444444444444444444444444444444");
 const SELECTOR = "0xa9059cbb" as Hex;
 const TX = `0x${"ab".repeat(32)}` as Hex;
+const BLOCK = `0x${"cd".repeat(32)}` as Hex;
 
 const LIMITS: EconomyLimits = {
   maxCitizenCapitalWei: 1_000_000_000_000_000_000n,
@@ -487,7 +489,7 @@ describe("policy, allowlist, and production gates", () => {
     expect(decided.holds).toEqual([]);
   });
 
-  it("blocks a missing factory and reserves only inside the local execution flag", () => {
+  it("blocks execution without a deployed factory and still records an offchain hold", () => {
     const observation = fresh(10_000n, 9_000n);
     const blocked = decideEconomicProposal({
       proposal: proposal(),
@@ -513,13 +515,16 @@ describe("policy, allowlist, and production gates", () => {
       dailyGasWei: 0n,
       dailyGasKnown: true,
       allowlist: rules,
-      factoryDeployed: true,
+      factoryDeployed: false,
       nowMs: NOW,
       executionEnabled: false,
     });
-    expect(disabled.decision.outcome).toBe("deferred");
-    expect(disabled.decision.reason).toMatch(/execution is disabled/);
-    expect(disabled.decision.reserved).toBe(false);
+    expect(disabled.decision.outcome).toBe("approved");
+    expect(disabled.decision.executed).toBe(false);
+    expect(disabled.decision.reserved).toBe(true);
+    expect(disabled.decision.reason).toMatch(/offchain/i);
+    expect(disabled.decision.reason).toMatch(/disabled/i);
+    expect(disabled.holds.map((hold) => hold.bucket).sort()).toEqual(["business_capital", "gas"]);
 
     const approved = decideEconomicProposal({
       proposal: proposal(),
@@ -653,9 +658,22 @@ describe("policy, allowlist, and production gates", () => {
       dailyGasKnown: true,
       observation: fresh(10_000n, 0n),
     });
-    expect(evaluated.decision.outcome).toBe("deferred");
-    expect(evaluated.decision.reserved).toBe(false);
-    expect(evaluated.holds).toEqual([]);
+    expect(evaluated.decision.outcome).toBe("approved");
+    expect(evaluated.decision.executed).toBe(false);
+    expect(evaluated.decision.reserved).toBe(true);
+    expect(evaluated.decision.reason).toMatch(/offchain/i);
+    expect(evaluated.holds.map((hold) => hold.bucket).sort()).toEqual(["business_capital", "gas"]);
+    const unknownGas = await evaluateProductionEconomy({
+      config: readAppConfig(env({
+        ECONOMY_PROTOCOL_ALLOWLIST: JSON.stringify([{ chainId: 143, target: TARGET, selectors: [SELECTOR], assets: ["MON"], label: "fixture" }]),
+      })),
+      proposal: proposal({ id: "proposal-gas", idempotencyKey: "proposal-gas" }),
+      nowMs: NOW,
+      observation: fresh(10_000n, 0n),
+    });
+    expect(unknownGas.decision.outcome).toBe("deferred");
+    expect(unknownGas.decision.reserved).toBe(false);
+    expect(unknownGas.holds).toEqual([]);
     expect(productionBankRuntime(readAppConfig(env())).factoryDeployed).toBe(false);
   });
 });
@@ -745,7 +763,10 @@ describe("proposals, identity, and presentation", () => {
     }
     expect(readFileSync("src/lib/ai/context.ts", "utf8")).toContain("propose_economy");
     expect(readFileSync("src/lib/ai/runner.ts", "utf8")).toContain("evaluateProductionEconomy");
+    expect(readFileSync("src/lib/ai/runner.ts", "utf8")).toContain("saveEconomyDecision");
+    expect(readFileSync("src/lib/ai/runner.ts", "utf8")).toContain("readEconomyLedger");
     expect(readFileSync("src/lib/ai/runner.ts", "utf8")).not.toContain("sendTransaction");
+    expect(readFileSync("src/lib/economy/load.ts", "utf8")).toContain("readEconomyLedger");
   });
 
   it("does not present a proposal or a simulated job as a confirmed transaction", () => {
@@ -755,18 +776,48 @@ describe("proposals, identity, and presentation", () => {
     expect(again.records).toHaveLength(1);
     let records = noteSubmission(opened.records, "tools-104", "t1");
     expect(records[0]?.status).toBe("proposed");
-    records = noteReceipt(records, "tools-104", { status: "success", txHash: TX }, "t2");
+    const receipt = assessReceiptEvidence({
+      chainId: 143,
+      observedChainId: 143,
+      txHash: TX,
+      status: "success",
+      blockNumber: 10n,
+      blockHash: BLOCK,
+    });
+    expect(receipt.ok).toBe(true);
+    if (!receipt.ok) {
+      return;
+    }
+    records = noteReceipt(records, "tools-104", receipt.evidence, "t2");
     expect(records[0]?.status).toBe("proposed");
     records = [{ ...records[0]!, status: "approved", reason: "reserved in a local test" }];
     records = noteSubmission(records, "tools-104", "t3");
     expect(records[0]?.status).toBe("submitted");
-    records = noteReceipt(records, "tools-104", { status: "missing", txHash: null }, "t4");
+    records = noteReceipt(records, "tools-104", null, "t4");
     expect(records[0]?.status).toBe("submitted");
-    records = noteReceipt(records, "tools-104", { status: "success", txHash: TX }, "t5");
+    expect(assessReceiptEvidence({
+      chainId: 10143,
+      observedChainId: 10143,
+      txHash: TX,
+      status: "success",
+      blockNumber: 10n,
+      blockHash: BLOCK,
+    }).ok).toBe(false);
+    records = noteReceipt(records, "tools-104", receipt.evidence, "t5");
     expect(records[0]?.status).toBe("confirmed");
     expect(records[0]?.executed).toBe(false);
-    records = settleProposal(records, "tools-104", "t6");
-    expect(records[0]?.status).toBe("settled");
+    const withoutJournal = settleProposal(records, "tools-104", receipt.evidence, [], "t6");
+    expect(withoutJournal.ok).toBe(false);
+    const posted = reconcileChainTransfer([], evidence(), "t6");
+    expect(posted.ok).toBe(true);
+    if (!posted.ok) {
+      return;
+    }
+    const settled = settleProposal(records, "tools-104", receipt.evidence, posted.lines, "t7");
+    expect(settled.ok).toBe(true);
+    if (settled.ok) {
+      expect(settled.records[0]?.status).toBe("settled");
+    }
     const retried = retryProposal(
       [{ ...opened.record, status: "deferred", reason: "later" }],
       "tools-104",
@@ -822,7 +873,17 @@ describe("proposals, identity, and presentation", () => {
     expect(sql).toContain("revoke all");
     expect(sql).toContain("chain_id = 143");
     expect(sql).toContain("execution_enabled = false");
+    expect(sql).toContain("authorizes_execution = false");
+    expect(sql).toContain("economy_open_proposal");
+    expect(sql).toContain("economy_try_holds");
+    expect(sql).toContain("economy_note_receipt");
+    expect(sql).toContain("economy_settle_proposal");
+    expect(sql).toContain("economy_ledger_snapshot");
+    expect(sql).toContain("settlement requires a counted journal posting");
     expect(sql).toContain("append-only");
+    const holdFn = sql.slice(sql.indexOf("function economy_try_hold"), sql.indexOf("function economy_append_journal"));
+    expect(holdFn).toContain("for update");
+    expect(holdFn).not.toContain("execution_enabled");
     expect(sql).not.toContain("private_key");
     expect(sql).not.toMatch(/0x[0-9a-f]{64}/);
     expect(readFileSync("src/components/shell/nav.tsx", "utf8")).not.toContain('href: "/economy"');

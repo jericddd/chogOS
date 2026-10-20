@@ -206,6 +206,45 @@ export function assessTreasuryRead(input: {
   };
 }
 
+/**
+ * Apply a loaded hold summary. An unread ledger clears unallocated amounts so a
+ * fresh balance is not presented as spendable while reservations are unknown.
+ */
+export function withLedgerReservations(
+  snapshot: TreasurySnapshot,
+  held: {
+    reservedGasWei: bigint;
+    reservedDeploymentWei: bigint;
+    allocatedMon: bigint;
+    allocatedChog: bigint;
+  } | null,
+): TreasurySnapshot {
+  if (!held) {
+    return { ...snapshot, unallocatedMon: null, unallocatedChog: null };
+  }
+  return applyHeldReservations(snapshot, held);
+}
+
+/** Subtract loaded holds from a fresh observation. A missing or stale read stays null. */
+export function applyHeldReservations(
+  snapshot: TreasurySnapshot,
+  held: {
+    reservedGasWei: bigint;
+    reservedDeploymentWei: bigint;
+    allocatedMon: bigint;
+    allocatedChog: bigint;
+  } | null,
+): TreasurySnapshot {
+  if (!held || snapshot.status !== "observed") {
+    return snapshot;
+  }
+  return {
+    ...snapshot,
+    unallocatedMon: remaining(snapshot.mon.raw, held.reservedGasWei + held.reservedDeploymentWei + held.allocatedMon),
+    unallocatedChog: remaining(snapshot.chog.raw, held.allocatedChog),
+  };
+}
+
 export async function readEconomicTreasury(input: {
   address: Address | null;
   token?: Address;

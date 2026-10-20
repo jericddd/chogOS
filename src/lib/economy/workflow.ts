@@ -1,3 +1,5 @@
+import type { JournalLine } from "@/lib/economy/journal";
+import { journalSupportsReceipt, verifiedReceiptOk, type VerifiedReceipt } from "@/lib/economy/receipt";
 import type { EconomyOutcome } from "@/lib/economy/proposal";
 
 export const PROPOSAL_STATUSES = [
@@ -36,6 +38,8 @@ export type ProposalRecord = {
   /** Always false. A database row is not a broadcast. */
   executed: false;
   txHash: string | null;
+  /** Present only after assessReceiptEvidence accepts a mainnet receipt. */
+  receipt: VerifiedReceipt | null;
   history: ProposalAudit[];
 };
 
@@ -62,6 +66,7 @@ export function openProposal(
     expiresAtMs: input.expiresAtMs,
     executed: false,
     txHash: null,
+    receipt: null,
     history: [{ at: input.at, status: "proposed", reason: "Structured proposal received. It is not a transaction." }],
   };
   return { record, records: [...existing, record], created: true };
@@ -136,33 +141,76 @@ export function noteSubmission(records: readonly ProposalRecord[], key: string, 
   });
 }
 
+/**
+ * A transaction hash on its own is not a receipt. Confirmation requires
+ * evidence that assessReceiptEvidence has already accepted.
+ */
 export function noteReceipt(
   records: readonly ProposalRecord[],
   key: string,
-  evidence: { status: "success" | "reverted" | "missing"; txHash: string | null },
+  evidence: VerifiedReceipt | null,
   at: string,
 ): ProposalRecord[] {
   return records.map((record) => {
     if (record.idempotencyKey !== key || record.status !== "submitted") {
       return record;
     }
-    if (evidence.status === "missing" || !evidence.txHash || !/^0x[0-9a-fA-F]{64}$/.test(evidence.txHash)) {
+    if (!evidence || !verifiedReceiptOk(evidence)) {
       return record;
     }
     if (evidence.status === "reverted") {
-      return { ...move(record, "reverted", "The receipt reverted. No revenue was realized.", at), txHash: evidence.txHash };
+      return {
+        ...move(record, "reverted", "The mainnet receipt reverted. No revenue was realized.", at),
+        txHash: evidence.txHash,
+        receipt: evidence,
+      };
     }
-    return { ...move(record, "confirmed", "The receipt succeeded. Settlement still requires a ledger posting.", at), txHash: evidence.txHash };
+    return {
+      ...move(record, "confirmed", "The mainnet receipt succeeded. Settlement still requires a counted journal posting.", at),
+      txHash: evidence.txHash,
+      receipt: evidence,
+    };
   });
 }
 
-export function settleProposal(records: readonly ProposalRecord[], key: string, at: string): ProposalRecord[] {
-  return records.map((record) => {
-    if (record.idempotencyKey !== key || record.status !== "confirmed") {
-      return record;
-    }
-    return move(record, "settled", "Settled against chain evidence. This row is not itself a transfer.", at);
-  });
+export function settleProposal(
+  records: readonly ProposalRecord[],
+  key: string,
+  evidence: VerifiedReceipt,
+  journal: readonly JournalLine[],
+  at: string,
+): { ok: true; records: ProposalRecord[] } | { ok: false; reason: string; records: ProposalRecord[] } {
+  const current = records.find((record) => record.idempotencyKey === key);
+  if (!current || current.status !== "confirmed") {
+    return { ok: false, reason: "Only a confirmed proposal can be settled.", records: [...records] };
+  }
+  if (!verifiedReceiptOk(evidence) || evidence.status !== "success") {
+    return { ok: false, reason: "Settlement requires a successful mainnet receipt.", records: [...records] };
+  }
+  if (!current.receipt || !sameReceipt(current.receipt, evidence) || current.txHash?.toLowerCase() !== evidence.txHash.toLowerCase()) {
+    return { ok: false, reason: "The settlement receipt does not match the confirmed receipt.", records: [...records] };
+  }
+  if (!journalSupportsReceipt(journal, evidence.txHash)) {
+    return { ok: false, reason: "Settlement requires a counted journal posting for the verified receipt.", records: [...records] };
+  }
+  return {
+    ok: true,
+    records: records.map((record) =>
+      record.idempotencyKey === key
+        ? move(record, "settled", "Settled against the verified mainnet receipt and its journal posting. This row is not itself a transfer.", at)
+        : record,
+    ),
+  };
+}
+
+function sameReceipt(left: VerifiedReceipt, right: VerifiedReceipt): boolean {
+  return (
+    left.txHash.toLowerCase() === right.txHash.toLowerCase() &&
+    left.blockHash.toLowerCase() === right.blockHash.toLowerCase() &&
+    left.blockNumber === right.blockNumber &&
+    left.status === right.status &&
+    left.chainId === right.chainId
+  );
 }
 
 function move(record: ProposalRecord, status: ProposalStatus, reason: string, at: string): ProposalRecord {

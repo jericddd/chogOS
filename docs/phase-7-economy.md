@@ -29,7 +29,7 @@ A citizen submits a structured proposal: objective, rationale, operation, target
 
 Outcomes are `approved`, `rejected`, `deferred`, `insufficient_funds`, `budget_exhausted`, and `unsupported_protocol`. Each one carries a reason.
 
-The production path calls `evaluateProductionEconomy`, which sets `executionEnabled: false` and `factoryDeployed: false`. A configured factory address, `CITIZEN_ACCOUNT_FACTORY_CODE_VERIFIED`, or `CHOG_BANK_RELAYER_ENABLED` does not reserve funds or broadcast. `approved` is reachable only from the in-memory policy test that passes `executionEnabled: true`. That approval still does not sign.
+The production path calls `evaluateProductionEconomy`, which sets `executionEnabled: false` and `factoryDeployed: false`. A configured factory address, `CITIZEN_ACCOUNT_FACTORY_CODE_VERIFIED`, or `CHOG_BANK_RELAYER_ENABLED` does not broadcast. When the other policy checks pass, including a fresh mainnet balance and a known daily gas total, the same path can record an offchain hold. That hold is an accounting reservation. `executed` stays false, and `authorizes_execution` cannot be stored as true. Turning on `executionEnabled` still requires a deployed factory before any hold, and this phase never turns that flag on.
 
 The executable protocol allowlist defaults to empty. `ECONOMY_PROTOCOL_ALLOWLIST` must be explicit JSON with chain id 143, a checksum target, selectors, and assets `MON` or `CHOG`. Malformed JSON becomes an empty list. No router, pool, or marketplace address is built in. `EXECUTABLE_ADAPTERS` is empty. An allowlisted call without a registered adapter stays non-executable.
 
@@ -39,7 +39,7 @@ The executable protocol allowlist defaults to empty. `ECONOMY_PROTOCOL_ALLOWLIST
 
 Holds and journal lines are different:
 
-- A hold (`gas`, `deployment`, or `business_capital`) is a reservation. It is not a payment.
+- A hold (`gas`, `deployment`, or `business_capital`) is an offchain reservation. It is not a payment and it does not authorize a signature.
 - Gas and deployment holds are native MON. Business capital may be MON or `$CHOG`.
 - Available funds are the fresh observed balance minus holds of that asset. A missing observation stays null. It is not zero.
 - Journal lines are append-only and balanced. Counted treasury position includes account `treasury` with status `observed` or `realized` only.
@@ -80,9 +80,11 @@ Review and apply manually, later:
 
 `supabase/migrations/20261019230000_phase7_economy.sql`
 
-That file creates `economy_lock`, `economy_controls`, `economy_proposals`, `economy_proposal_audit`, `economy_reservations`, and `economy_journal`. Amounts are `numeric(78, 0)`. Chain id is checked as `143`. Row level security is enabled. `anon` and `authenticated` are revoked when those roles exist. `service_role` receives table grants. Journal and audit rows are insert-only. `economy_try_hold` takes `economy_lock` with `FOR UPDATE` and returns without reserving while `execution_enabled` is false. That column is constrained false, so turning it on requires a new migration.
+That file creates `economy_lock`, `economy_controls`, `economy_proposals`, `economy_proposal_audit`, `economy_reservations`, and `economy_journal`. Amounts are `numeric(78, 0)`. Chain id is checked as `143`. Row level security is enabled. `anon` and `authenticated` are revoked when those roles exist. `service_role` receives table grants. Journal and audit rows are insert-only. `economy_open_proposal` inserts a proposal, and a trigger appends the audit row. `economy_try_holds` takes `economy_lock` with `FOR UPDATE` and can reserve while `execution_enabled` is false. That column is still constrained false, so turning execution on requires a new migration. `authorizes_execution` is constrained false on every reservation.
 
-The public `/economy` page does not query these tables. Until they are applied and a server path is reviewed, the page says the ledger was not loaded.
+`/economy` reads `economy_ledger_snapshot` through the service role. A missing configuration, a missing function, or a failed read stays "not loaded" and is not shown as zero. Unallocated amounts stay unavailable until that read succeeds. The page does not apply this migration.
+
+`economy_apply_status` cannot mark a proposal confirmed, reverted, or settled. `economy_note_receipt` accepts only chain 143, a 32-byte transaction hash, a block number, a block hash, and a success or reverted status. `economy_settle_proposal` then requires that stored success receipt plus a counted `economy_journal` posting for the same transaction. A hash alone does not settle.
 
 ## Operational states
 
@@ -92,7 +94,7 @@ Only `observed` on chain `143` exposes unallocated amounts. Those amounts are st
 
 Proposal statuses: `proposed`, `approved`, `rejected`, `deferred`, `insufficient_funds`, `budget_exhausted`, `unsupported_protocol`, `cancelled`, `expired`, `submitted`, `confirmed`, `reverted`, `settled`.
 
-`submitted` is not `confirmed`. `confirmed` requires a 32-byte transaction hash (64 hex characters). Explorer links are rendered only for verified mainnet evidence. Simulated proposals do not receive a link.
+`submitted` is not `confirmed`. `confirmed` requires a verified Monad mainnet receipt: chain 143, a 32-byte transaction hash, a block number, and a block hash. `settled` also requires a counted journal posting for that receipt. Explorer links are rendered only for that verified evidence. A proposal that only has a hash does not receive a link.
 
 ## Invariants
 
