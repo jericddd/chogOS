@@ -92,4 +92,74 @@ describe("world loader", () => {
     expect(construction).toContainEqual({ table: "civilization_events", method: "eq", args: ["category", "construction"] });
     expect(construction).toContainEqual({ table: "civilization_events", method: "eq", args: ["source", "ai"] });
   });
+
+  it("attaches the stored model reason to an AI event and leaves other rows untouched", async () => {
+    const decisionId = "22222222-2222-4222-8222-222222222222";
+    respond = (table) => {
+      if (table === "civilization_events") {
+        return {
+          data: [
+            {
+              id: "11111111-1111-4111-8111-111111111111",
+              seq: 9,
+              kind: "construction.started",
+              category: "construction",
+              source: "ai",
+              summary: "Farm construction started on a surveyed lot.",
+              occurred_at: "2026-10-20T00:00:00.000Z",
+              world_s: 10,
+              tick_seq: 1,
+              building_id: "farm-3",
+              chain_status: "offchain",
+              tx_hash: null,
+              payload: {},
+              decision_id: decisionId,
+            },
+            {
+              id: "33333333-3333-4333-8333-333333333333",
+              seq: 8,
+              kind: "citizen.sleep",
+              category: "citizen",
+              source: "simulation",
+              summary: "A citizen went to sleep.",
+              occurred_at: "2026-10-20T00:00:00.000Z",
+              world_s: 9,
+              tick_seq: 1,
+              building_id: "house-01",
+              chain_status: "offchain",
+              tx_hash: null,
+              payload: {},
+              decision_id: null,
+            },
+          ],
+          error: null,
+        };
+      }
+      if (table === "ai_decisions") {
+        return {
+          data: [
+            {
+              id: decisionId,
+              rationale: "The open lots along the road are still empty, so the town should raise a farm.",
+              output: { summary: "Raise a farm on open land." },
+            },
+          ],
+          error: null,
+        };
+      }
+      return { data: [], error: null };
+    };
+    const { loadEventPage } = await import("@/lib/world/load");
+    const page = await loadEventPage({}, null, 10);
+    expect(page.status).toBe("ok");
+    if (page.status !== "ok") {
+      return;
+    }
+    expect(page.events[0]?.mind).toEqual({
+      summary: "Raise a farm on open land.",
+      rationale: "The open lots along the road are still empty, so the town should raise a farm.",
+    });
+    expect(page.events[1]?.mind).toBeUndefined();
+    expect(calls).toContainEqual({ table: "ai_decisions", method: "in", args: ["id", [decisionId]] });
+  });
 });

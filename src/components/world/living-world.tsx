@@ -3,6 +3,7 @@
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { ActivityFeed } from "@/components/world/activity-feed";
+import { GrowthDecisions } from "@/components/world/growth-decisions";
 import { createLiveStore, sharedLiveStore, useLive, type LiveStore } from "@/components/world/live-store";
 import { useNow } from "@/components/world/use-now";
 import { WorldCanvas, type Selection, type WorldCanvasHandle } from "@/components/world/world-canvas";
@@ -131,6 +132,7 @@ export function LivingWorld({ initial, realtime }: { initial: WorldLoad; realtim
     return (
       <div className="space-y-8">
         <WorldUnavailablePanel unavailable={live.unavailable ?? { status: "error", detail: "The world could not be read." }} />
+        <GrowthDecisions />
         <ActivityFeed store={store} initialFilter={feedFilter} />
       </div>
     );
@@ -202,6 +204,7 @@ export function LivingWorld({ initial, realtime }: { initial: WorldLoad; realtim
           </div>
         </aside>
       </div>
+      <GrowthDecisions />
       <ActivityFeed store={store} initialFilter={feedFilter} />
     </div>
   );

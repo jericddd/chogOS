@@ -132,6 +132,11 @@ export type WorldEventView = {
   transfer?: TransferEvidence | null;
   intentId?: string | null;
   decisionId?: string | null;
+  /** The model's own words for this event, when a stored decision is linked. Absent when there is none. */
+  mind?: {
+    summary: string | null;
+    rationale: string | null;
+  };
 };
 
 export type RealtimeConfig = { url: string; anonKey: string; channel: string };

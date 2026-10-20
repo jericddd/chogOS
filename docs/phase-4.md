@@ -39,10 +39,10 @@ Google's rate limits are per project and usage tier (RPM / TPM / RPD). They are 
 `Observe → Decide → Validate → Execute → Verify outcome → Remember → Decide again`
 
 1. `POST /api/ai/run` (or `npm run ai:runner`) claims eligible citizens. This is **not** inside `world_tick()`.
-2. Context is personality, skills, open goals, up to 8 memories, current activity, feasible actions from `precheckAction`, and whether a served plot is free.
-3. Gemini returns JSON. `parseDecisionOutput` is independent of the vendor.
+2. The mind receives a description of the town: what stands, which lots already touch a road, which surveyed roads are unbuilt, storehouse stock, and what this citizen remembers. It does not receive a menu of sleep, work, shop, rest, or visit.
+3. Gemini returns a growth judgment. `parseDecisionOutput` is independent of the vendor. A daily-life action is rejected. The server places a house, farm, workshop, or surveyed road only when the land can hold it, and does not substitute a different action.
 4. The row is stored in `ai_decisions` with `input_commitment` (SHA-256 of the context, not the raw key).
-5. `precheckAction` + `validateProposal` + `submitIntent`. `source=ai` requires a real `ai_decisions.id`.
+5. Placement goes through `world_place_building` or `world_place_road` with `source=ai` and that decision id. Both functions re-check the land before anything is recorded.
 6. `world_tick()` re-runs `world_check_action`. Accepted intents can set `decision_source=ai`. Rejected intents store a failure memory, never a success.
 7. Completed work awards skill XP once per `(event_id, skill)` and may advance a matching goal.
 
@@ -57,7 +57,7 @@ Rule-based activity stays `source=simulation`. A model timeout does not stop the
 
 ## Construction
 
-The engine still has no free-form map generator. Phase 4 started **house** construction on a vacant, road-served genesis-v1.1 lot. Phase 5a extends that same path to `house | farm | workshop`. East lots at y=2 stay reserved until a road touches them. The model cannot pick coordinates. `planConstruction` chooses the plot, door, and complete `world_routes` table; `world_place_building` re-validates overlap and inserts `under_construction` at 0%. Completion is still +4% per builder shift with Storehouse wood/stone. Unknown kinds, including `road`, are rejected honestly. See [phase-5.md](phase-5.md).
+The mind decides how the town grows from that description. Daily life stays on `world_tick()`. The engine still has no free-form map generator. Phase 4 started **house** construction on a vacant, road-served genesis-v1.1 lot. Phase 5a extends that same path to `house | farm | workshop`. East lots at y=2 stay reserved until a road touches them. The model cannot pick coordinates. `planConstruction` chooses the plot, door, and complete `world_routes` table; `world_place_building` re-validates overlap and inserts `under_construction` at 0%. Completion is still +4% per builder shift with Storehouse wood/stone. Unknown kinds, including `road`, are rejected honestly. See [phase-5.md](phase-5.md).
 
 ## Scheduling
 

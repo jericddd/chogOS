@@ -2,7 +2,6 @@ import { ACTIVATION_MOTIVES, type ActivationMotive } from "@/lib/chogbank/types"
 import type { EconomyDraft } from "@/lib/economy/proposal";
 import { parseEconomyDraft } from "@/lib/economy/proposal";
 import { CONSTRUCT_KINDS, type ConstructKind } from "@/lib/world/layout";
-import { ROAD_STUB_IDS } from "@/lib/world/roads";
 import { WORLD_ACTIONS, type WorldAction } from "@/lib/world/actions";
 
 export const DECISION_ACTIONS = [...WORLD_ACTIONS, "build", "request_wallet_activation", "propose_economy"] as const;
@@ -121,7 +120,7 @@ export function parseDecisionOutput(text: string): { ok: true; decision: ParsedD
   if (action === "build") {
     if (body.buildKind === "road") {
       const stub = typeof body.roadStubId === "string" ? body.roadStubId.trim() : "";
-      if (!ROAD_STUB_IDS.has(stub)) {
+      if (!stub || stub.length > 80 || /https?:\/\//i.test(stub)) {
         return { ok: false, reason: "unknown road stub" };
       }
       buildKind = "road";

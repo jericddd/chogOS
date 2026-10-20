@@ -180,7 +180,57 @@ async function readEvents(
   if (result.error) {
     fail(result.error, "history");
   }
-  return ((result.data ?? []) as unknown as EventRow[]).filter((row) => row.canonical !== false).map(toEvent);
+  const events = ((result.data ?? []) as unknown as EventRow[]).filter((row) => row.canonical !== false).map(toEvent);
+  return attachMind(client, events);
+}
+
+function mindText(value: unknown): string | null {
+  if (typeof value !== "string") {
+    return null;
+  }
+  const text = value.trim();
+  return text ? text.slice(0, 400) : null;
+}
+
+/** Join stored model words onto events that already point at an AI decision. Never invents a row. */
+async function attachMind(client: SupabaseClient, events: WorldEventView[]): Promise<WorldEventView[]> {
+  const ids = [
+    ...new Set(
+      events.flatMap((event) =>
+        event.decisionId && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(event.decisionId)
+          ? [event.decisionId]
+          : [],
+      ),
+    ),
+  ];
+  if (ids.length === 0) {
+    return events;
+  }
+  const { data, error } = await client.from("ai_decisions").select("id, rationale, output").in("id", ids);
+  if (error || !data) {
+    return events;
+  }
+  const byId = new Map<string, NonNullable<WorldEventView["mind"]>>();
+  for (const row of data as Array<{ id?: string; rationale?: unknown; output?: unknown }>) {
+    if (!row.id) {
+      continue;
+    }
+    const output =
+      row.output && typeof row.output === "object" && !Array.isArray(row.output)
+        ? (row.output as Record<string, unknown>)
+        : null;
+    const mind = {
+      summary: mindText(output?.summary),
+      rationale: mindText(row.rationale) ?? mindText(output?.rationale),
+    };
+    if (mind.summary || mind.rationale) {
+      byId.set(row.id, mind);
+    }
+  }
+  return events.map((event) => {
+    const mind = event.decisionId ? byId.get(event.decisionId) : undefined;
+    return mind ? { ...event, mind } : event;
+  });
 }
 
 async function readTownNeeds(client: SupabaseClient): Promise<{ ready: boolean; needs: TownNeedView[] }> {
