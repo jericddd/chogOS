@@ -1,7 +1,7 @@
 # Phase 7 — Treasury, ChogBank, and the citizen economy
 
 Date: 19 October 2026.
-Base: `cursor/phase-65-public-verification-155c` (PR #34, draft, unmerged).
+Base: `cursor/phase-1-genesis-world-155c`. PR #34 is already merged there as `f1dc993`.
 Status: **implementation and review only**. No contract deploy, no signed transaction, no broadcast, no hosted SQL, no watcher checkpoint change, no production configuration change.
 
 ## Architecture
@@ -121,7 +121,7 @@ There is no live end-to-end transaction test. Signing and broadcasting stay disa
 
 All of the following are separate work. None of them is authorized by merging this PR:
 
-1. Keep PR #34’s verification rules, then retarget this branch only after that PR has merged.
+1. Keep the verification rules from merged PR #34. This pull request targets `cursor/phase-1-genesis-world-155c`.
 2. Review and apply `20261019230000_phase7_economy.sql` to the hosted database. Do not reset the watcher cursor while doing so.
 3. Choose a public economic treasury that is not the NFT treasury, fund it manually, and set `CHOG_BANK_ASSET_ADDRESS` plus `MONAD_RPC_URL`. Confirm a fresh mainnet observation.
 4. Deploy the V2 implementation, factory, and wallets only under a separate review. Do not change the bytecode that the predicted addresses were computed from unless that review also recomputes every address.
