@@ -14,7 +14,7 @@ import { reconcileChainTransfer, type ChainTransferEvidence } from "@/lib/econom
 import { applyRpcVerification, interpretLedgerSnapshot } from "@/lib/economy/ledger";
 import { assessTreasuryRead, emptySnapshot, readEconomicTreasury, type TreasuryReader, type TreasurySnapshot } from "@/lib/economy/observe";
 import { presentEconomy } from "@/lib/economy/present";
-import { holdFailureStatus, persistEconomyDecision, type EconomyGateway } from "@/lib/economy/persist";
+import { holdFailureStatus, persistEconomyDecision, selectCreatedKeys, type EconomyGateway } from "@/lib/economy/persist";
 import { decideEconomicProposal, type EconomicProposal, type EconomyLimits } from "@/lib/economy/proposal";
 import { assessReceiptEvidence, settleRpcArgs } from "@/lib/economy/receipt";
 import { holdSequentially, tryHold, tryHoldBatch, type Hold, type HoldRequest } from "@/lib/economy/reserve";
@@ -852,6 +852,141 @@ describe("phase 8 reservation and trust regressions", () => {
     expect(untouched).toEqual([]);
   });
 
+  it("does not release submitted keys when createdKeys is missing or malformed", async () => {
+    expect(selectCreatedKeys({ created: true }, ["proposal-1"])).toMatchObject({ ok: false, code: "missing" });
+    expect(selectCreatedKeys({ created: false }, ["proposal-1"])).toEqual({ ok: true, keys: [] });
+    const identified = selectCreatedKeys({ created: true, createdKeys: ["proposal-1:gas"] }, ["proposal-1", "proposal-1:gas"]);
+    expect(identified).toEqual({ ok: true, keys: ["proposal-1:gas"] });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      const item = proposal({ fundingRequestRaw: 20n, amountRaw: 20n, estimatedGasWei: 1n });
+      const holds = [
+        held({ key: item.idempotencyKey, proposalId: PROPOSAL_ID, amountRaw: 20n }),
+        held({ key: `${item.idempotencyKey}:gas`, proposalId: PROPOSAL_ID, bucket: "gas", amountRaw: 1n }),
+      ];
+      const decision = { outcome: "approved" as const, reason: "reserved", hold: null, reserved: true, executed: false as const };
+      const responses: Array<{ created: boolean; createdKeys?: unknown }> = [
+        { created: true },
+        { created: true, createdKeys: ["proposal-1", "https://rpc.example/secret?token=abc"] },
+        { created: true, createdKeys: ["proposal-1", 1] },
+        { created: true, createdKeys: "proposal-1" },
+        { created: true, createdKeys: [] },
+        { created: true, createdKeys: ["proposal-1", "proposal-1"] },
+        { created: false, createdKeys: ["proposal-1:gas"] },
+      ];
+      for (const response of responses) {
+        const calls: string[] = [];
+        const saved = await persistEconomyDecision(
+          {
+            async openProposal() {
+              calls.push("open");
+              return { ok: true, id: PROPOSAL_ID, created: false };
+            },
+            async applyStatus() {
+              calls.push("status");
+              return { ok: true, status: "approved", duplicate: false };
+            },
+            async tryHolds() {
+              calls.push("holds");
+              return { ok: true, created: response.created, createdKeys: response.createdKeys };
+            },
+            async release() {
+              calls.push("release");
+              return { ok: true };
+            },
+          },
+          { proposal: item, decision, holds, observation: fresh() },
+        );
+        expect(saved).toMatchObject({ ok: false, reserved: false, outcome: "deferred" });
+        expect(saved.ok ? "" : saved.reason).toMatch(/left unchanged/);
+        expect(calls).toEqual(["open", "holds"]);
+      }
+      const logged = warn.mock.calls.map((call) => String(call[0])).join("\n");
+      expect(logged).toContain("hold_ownership_unresolved");
+      expect(logged).toContain("\"code\":\"missing\"");
+      expect(logged).toContain("\"code\":\"malformed\"");
+      expect(logged).not.toContain("https://");
+      expect(logged).not.toContain("token=abc");
+      expect(logged).not.toContain("service_role");
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("keeps an existing hold when a later retry follows a status-write failure", async () => {
+    const existing = "proposal-1";
+    const created = "proposal-1:gas";
+    const store = new Map<string, "held" | "released">([[existing, "held"]]);
+    const released: string[][] = [];
+    const statuses: string[] = [];
+    let failStatus = true;
+    const gateway: EconomyGateway = {
+      async openProposal() {
+        return { ok: true, id: PROPOSAL_ID, created: false };
+      },
+      async applyStatus(input) {
+        statuses.push(input.status);
+        if (failStatus) {
+          return { ok: false, reason: "The proposal status could not be saved." };
+        }
+        return { ok: true, status: input.status, duplicate: statuses.filter((status) => status === input.status).length > 1 };
+      },
+      async tryHolds(rows) {
+        const createdKeys: string[] = [];
+        for (const row of rows) {
+          if (store.has(row.key)) {
+            continue;
+          }
+          store.set(row.key, "held");
+          createdKeys.push(row.key);
+        }
+        return createdKeys.length === 0
+          ? { ok: true, created: false, createdKeys: [] }
+          : { ok: true, created: true, createdKeys };
+      },
+      async release(_proposalId, keys) {
+        released.push([...keys]);
+        for (const key of keys) {
+          if (store.get(key) === "held") {
+            store.set(key, "released");
+          }
+        }
+        return { ok: true };
+      },
+    };
+    const item = proposal({ fundingRequestRaw: 20n, amountRaw: 20n, estimatedGasWei: 1n });
+    const input = {
+      proposal: item,
+      decision: { outcome: "approved" as const, reason: "reserved", hold: null, reserved: true, executed: false as const },
+      holds: [
+        held({ key: existing, proposalId: PROPOSAL_ID, amountRaw: 20n }),
+        held({ key: created, proposalId: PROPOSAL_ID, bucket: "gas", amountRaw: 1n }),
+      ],
+      observation: fresh(),
+    };
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      const failed = await persistEconomyDecision(gateway, input);
+      expect(failed).toMatchObject({ ok: false, reserved: false });
+      expect(released).toEqual([[created]]);
+      expect(store.get(existing)).toBe("held");
+      expect(store.get(created)).toBe("released");
+
+      failStatus = false;
+      const retried = await persistEconomyDecision(gateway, input);
+      expect(retried).toMatchObject({ ok: true, status: "approved", reserved: false });
+      expect(released).toEqual([[created]]);
+      expect(store.get(existing)).toBe("held");
+
+      const again = await persistEconomyDecision(gateway, input);
+      expect(again).toMatchObject({ ok: true, reserved: false });
+      expect(store.get(existing)).toBe("held");
+      expect(released).toHaveLength(1);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
   it("does not settle invalid, fabricated, reverted, mismatched, or unavailable receipts", async () => {
     const cases: Array<{ name: string; call: RpcCaller; hash?: string; verified: boolean }> = [
       { name: "invalid", call: mainnet().call, hash: "0x123", verified: false },
@@ -1002,6 +1137,67 @@ describe("phase 8 reservation and trust regressions", () => {
     });
     expect(saved.ok).toBe(false);
     expect(updates).toEqual([["proposal-1:gas"]]);
+
+    const untouched: string[] = [];
+    const omitted = {
+      rpc(fn: string) {
+        const data =
+          fn === "economy_open_proposal"
+            ? { ok: true, id: PROPOSAL_ID, created: false }
+            : fn === "economy_try_holds"
+              ? { ok: true, created: true, createdKeys: { secret: "service_role-key" } }
+              : { ok: true, status: "approved", duplicate: false };
+        const promise = Promise.resolve({ data, error: null });
+        return Object.assign(promise, { abortSignal: () => promise });
+      },
+      from() {
+        untouched.push("release");
+        return { update: () => ({}) };
+      },
+    };
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      const blocked = await saveEconomyDecision(omitted as unknown as SupabaseClient, {
+        proposal: item,
+        decision: { outcome: "approved", reason: "reserved", hold: null, reserved: true, executed: false },
+        holds: [
+          held({ key: item.idempotencyKey, amountRaw: 20n }),
+          held({ key: `${item.idempotencyKey}:gas`, bucket: "gas", amountRaw: 1n }),
+        ],
+        observation: fresh(),
+      });
+      expect(blocked).toMatchObject({ ok: false, reserved: false, outcome: "deferred" });
+      expect(untouched).toEqual([]);
+      const missingKeys = {
+        rpc(fn: string) {
+          untouched.push(fn);
+          const data =
+            fn === "economy_open_proposal"
+              ? { ok: true, id: PROPOSAL_ID, created: false }
+              : { ok: true, created: true };
+          const promise = Promise.resolve({ data, error: null });
+          return Object.assign(promise, { abortSignal: () => promise });
+        },
+        from() {
+          untouched.push("release");
+          return { update: () => ({}) };
+        },
+      };
+      const missing = await saveEconomyDecision(missingKeys as unknown as SupabaseClient, {
+        proposal: item,
+        decision: { outcome: "approved", reason: "reserved", hold: null, reserved: true, executed: false },
+        holds: [
+          held({ key: item.idempotencyKey, amountRaw: 20n }),
+          held({ key: `${item.idempotencyKey}:gas`, bucket: "gas", amountRaw: 1n }),
+        ],
+        observation: fresh(),
+      });
+      expect(missing).toMatchObject({ ok: false, reserved: false, outcome: "deferred" });
+      expect(untouched).toEqual(["economy_open_proposal", "economy_try_holds"]);
+      expect(warn.mock.calls.map((call) => String(call[0])).join("\n")).not.toContain("service_role");
+    } finally {
+      warn.mockRestore();
+    }
   });
 });
 

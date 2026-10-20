@@ -67,7 +67,14 @@ function fresh() {
   });
 }
 
-function gateway(calls: string[], holds: EconomyGateway["tryHolds"] = async () => ({ ok: true, created: true })): EconomyGateway {
+function gateway(
+  calls: string[],
+  holds: EconomyGateway["tryHolds"] = async (rows) => ({
+    ok: true,
+    created: true,
+    createdKeys: rows.map((row) => row.key),
+  }),
+): EconomyGateway {
   return {
     async openProposal() {
       calls.push("open");

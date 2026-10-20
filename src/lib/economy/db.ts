@@ -156,10 +156,10 @@ function supabaseGateway(client: SupabaseClient): EconomyGateway {
         return { ok: false, outcome, reason: text(body?.reason) || "The offchain reservation could not be saved." };
       }
       const created = body.created === true;
-      const createdKeys = Array.isArray(body.createdKeys)
-        ? body.createdKeys.filter((item): item is string => typeof item === "string" && item.length > 0)
-        : undefined;
-      return { ok: true, created, ...(createdKeys ? { createdKeys } : {}) };
+      if (body.createdKeys === undefined) {
+        return { ok: true, created };
+      }
+      return { ok: true, created, createdKeys: body.createdKeys };
     },
     async release(proposalId, keys) {
       const wanted = keys.filter((key) => key.length > 0);

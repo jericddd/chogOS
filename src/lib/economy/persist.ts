@@ -7,8 +7,51 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-
 export type OpenResult = { ok: true; id: string; created: boolean } | { ok: false; reason: string };
 export type StatusResult = { ok: true; status: string; duplicate: boolean } | { ok: false; reason: string };
 export type HoldsResult =
-  | { ok: true; created: boolean; createdKeys?: readonly string[] }
+  | { ok: true; created: boolean; createdKeys?: unknown }
   | { ok: false; outcome: string; reason: string };
+
+const UNRESOLVED_HOLD_REASON =
+  "The reservation response did not identify the new holds. Existing reservations were left unchanged. Retry the same proposal; nothing was released.";
+
+export type CreatedKeySelection =
+  | { ok: true; keys: readonly string[] }
+  | { ok: false; code: "missing" | "malformed"; reason: string };
+
+/**
+ * Keys this call may release are the ones the database listed and this call submitted.
+ * A missing or malformed list is not evidence that every submitted key is new.
+ */
+export function selectCreatedKeys(
+  held: { created: boolean; createdKeys?: unknown },
+  submittedKeys: readonly string[],
+): CreatedKeySelection {
+  const submitted = new Set(submittedKeys.filter((key) => key.length > 0 && key.length <= 120));
+  if (held.createdKeys === undefined) {
+    if (held.created) {
+      return { ok: false, code: "missing", reason: UNRESOLVED_HOLD_REASON };
+    }
+    return { ok: true, keys: [] };
+  }
+  if (!Array.isArray(held.createdKeys)) {
+    return { ok: false, code: "malformed", reason: UNRESOLVED_HOLD_REASON };
+  }
+  const keys: string[] = [];
+  const seen = new Set<string>();
+  for (const item of held.createdKeys) {
+    if (typeof item !== "string" || item.length === 0 || item.length > 120 || !submitted.has(item) || seen.has(item)) {
+      return { ok: false, code: "malformed", reason: UNRESOLVED_HOLD_REASON };
+    }
+    seen.add(item);
+    keys.push(item);
+  }
+  if (held.created && keys.length === 0) {
+    return { ok: false, code: "missing", reason: UNRESOLVED_HOLD_REASON };
+  }
+  if (!held.created && keys.length > 0) {
+    return { ok: false, code: "malformed", reason: UNRESOLVED_HOLD_REASON };
+  }
+  return { ok: true, keys };
+}
 
 export type HoldInsert = {
   key: string;
@@ -29,7 +72,7 @@ export type EconomyGateway = {
 
 export type PersistResult =
   | { ok: true; proposalId: string; status: string; reserved: boolean }
-  | { ok: false; reason: string; reserved: false };
+  | { ok: false; reason: string; reserved: false; outcome?: "deferred" };
 
 /** Conflict is terminal for this key. Other hold failures stay retryable. */
 export function holdFailureStatus(outcome: string): "insufficient_funds" | "rejected" | "deferred" {
@@ -92,7 +135,7 @@ export async function persistEconomyDecision(
 
   let status = input.decision.outcome;
   let reason = input.decision.reason;
-  let createdKeys: string[] = [];
+  let createdKeys: readonly string[] = [];
   if (input.decision.reserved) {
     const inserts = holdInserts(input.proposal, input.holds, input.observation, opened.id);
     if ("error" in inserts) {
@@ -104,7 +147,20 @@ export async function persistEconomyDecision(
         status = holdFailureStatus(held.outcome);
         reason = held.reason;
       } else {
-        createdKeys = held.createdKeys ? [...held.createdKeys] : held.created ? inserts.map((row) => row.key) : [];
+        const selected = selectCreatedKeys(held, inserts.map((row) => row.key));
+        if (!selected.ok) {
+          logEconomyPersist({
+            event: "hold_ownership_unresolved",
+            code: selected.code,
+            idempotencyKey: input.proposal.idempotencyKey,
+            proposalId: opened.id,
+            submittedCount: inserts.length,
+            created: held.created,
+            releaseCount: 0,
+          });
+          return { ok: false, reason: selected.reason, reserved: false, outcome: "deferred" };
+        }
+        createdKeys = selected.keys;
       }
     }
   }
@@ -115,12 +171,58 @@ export async function persistEconomyDecision(
     reason: reason.slice(0, 500),
   });
   if (!applied.ok) {
+    let releaseOk: boolean | null = null;
     if (createdKeys.length > 0) {
-      await gateway.release(opened.id, createdKeys);
+      const released = await gateway.release(opened.id, createdKeys);
+      releaseOk = released.ok;
     }
-    return { ok: false, reason: applied.reason, reserved: false };
+    logEconomyPersist({
+      event: "hold_status_unapplied",
+      idempotencyKey: input.proposal.idempotencyKey,
+      proposalId: opened.id,
+      submittedCount: createdKeys.length,
+      created: createdKeys.length > 0,
+      releaseCount: createdKeys.length,
+      releaseOk,
+    });
+    const failure = releaseOk === false
+      ? `${applied.reason} The identified new reservations could not be released.`
+      : applied.reason;
+    return { ok: false, reason: failure, reserved: false };
   }
   return { ok: true, proposalId: opened.id, status: applied.status, reserved: createdKeys.length > 0 && status === "approved" };
+}
+
+function logEconomyPersist(input: {
+  event: "hold_ownership_unresolved" | "hold_status_unapplied";
+  code?: "missing" | "malformed";
+  idempotencyKey: string;
+  proposalId: string;
+  submittedCount: number;
+  created: boolean;
+  releaseCount: number;
+  releaseOk?: boolean | null;
+}): void {
+  console.warn(
+    JSON.stringify({
+      source: "economy.persist",
+      event: input.event,
+      code: input.code ?? null,
+      idempotencyKey: safeDiagnosticId(input.idempotencyKey),
+      proposalId: safeDiagnosticId(input.proposalId),
+      submittedCount: input.submittedCount,
+      created: input.created,
+      releaseCount: input.releaseCount,
+      releaseOk: input.releaseOk ?? null,
+    }),
+  );
+}
+
+function safeDiagnosticId(value: string): string {
+  if (/https?:|bearer|private|secret|token=|service_role/i.test(value)) {
+    return "[redacted]";
+  }
+  return value.slice(0, 120);
 }
 
 function holdInserts(
