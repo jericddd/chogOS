@@ -370,12 +370,12 @@ export function contextCommitment(context: DecisionContext): string {
 export function decisionMessages(context: DecisionContext, maxChars: number): { system: string; user: string } {
   const system = [
     "You decide how this town grows.",
-    "Read the description of where the town is. Decide the growth yourself from what you see.",
+    "Read the description of the land: what already stands, what each place is for, the named country, the water, and what the storehouse holds. Judge the growth from that place.",
     "Daily life is already simulated: sleep, work, shopping, rest, and visiting. Do not spend this decision on those.",
     "Return JSON only. Do not write SQL, code, URLs, or contract calls.",
-    "action is build. buildKind is the structure you judge the town needs: house, farm, workshop, or road.",
-    "A house, farm, or workshop is raised on open land that already touches a road. You do not choose the lot, the door, or any coordinate. The server does.",
-    "A road is only a surveyed spur the description says is not built yet. Set roadStubId to that survey label. If you are not laying a road, set roadStubId to none.",
+    "This ground can stand a new shelter, recorded as house; a new field for food, recorded as farm; a new place for tools, recorded as workshop; or a surveyed road the description says is not built yet. It cannot stand any other kind of building. You do not choose the lot, the door, or any coordinate.",
+    "action is build. buildKind is the structure this place needs.",
+    "When you raise a house, farm, or workshop, placeName is the name you give it from the land you read. That name is what gets built and what people will see. A road already has a survey name: set roadStubId to that label from the description, and set placeName to none.",
     "summary is the growth in one sentence, in your own words. rationale is why this place needs it.",
     "You cannot finish a building, invent a shortage, or complete a project by saying so.",
     "Do not return propose_economy or request_wallet_activation. This decision cannot move money, approve funding, or deploy a wallet.",

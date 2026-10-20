@@ -640,6 +640,7 @@ describe("decision context", () => {
     expect(withRoad.townProjects).toEqual([]);
     const messages = decisionMessages(withRoad, 8000);
     expect(messages.system).toContain("how this town grows");
+    expect(messages.system).toContain("placeName");
     expect(messages.system).toContain("roadStubId");
     expect(messages.system).not.toContain("Choose only from the feasible actions");
     expect(messages.system).toContain("Do not return propose_economy or request_wallet_activation");
@@ -650,6 +651,9 @@ describe("decision context", () => {
     expect(messages.user).not.toContain("\"ranked\"");
     const place = describePlace(withRoad);
     expect(place).toContain("Open lots that already touch a road");
+    expect(place).toContain("Founding Town");
+    expect(place).toContain("Mossy Woods");
+    expect(place).toContain("shelter");
     expect(place).not.toContain("Choose only from");
   });
 
@@ -675,6 +679,7 @@ describe("decision context", () => {
         action: "build",
         buildingId: "",
         buildKind: "farm",
+        placeName: "South Meadow Field",
         summary: "Raise another farm on the open road-connected land.",
         rationale: "Two farms already stand in the west and twenty-six lots on the roads are still empty.",
       }),
@@ -685,7 +690,25 @@ describe("decision context", () => {
       expect(accepted.ok).toBe(true);
       if (accepted.ok) {
         expect(accepted.decision.buildKind).toBe("farm");
+        expect(accepted.decision.placeName).toBe("South Meadow Field");
         expect(accepted.decision.summary).toContain("another farm");
+      }
+    }
+    const unnamed = parseDecisionOutput(
+      JSON.stringify({
+        action: "build",
+        buildingId: "",
+        buildKind: "farm",
+        summary: "Raise a farm.",
+        rationale: "The lots are empty.",
+      }),
+    );
+    expect(unnamed.ok).toBe(true);
+    if (unnamed.ok) {
+      const refused = acceptGrowth(unnamed.decision, open);
+      expect(refused.ok).toBe(false);
+      if (!refused.ok) {
+        expect(refused.reason).toContain("name the place");
       }
     }
     const named = parseDecisionOutput(

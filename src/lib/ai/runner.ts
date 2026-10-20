@@ -867,7 +867,7 @@ export async function runAiMind(
             p_plot: plan.plan.plotId,
             p_kind: plan.plan.kind,
             p_id: plan.plan.buildingId,
-            p_name: plan.plan.name,
+            p_name: parsed.decision.placeName ?? plan.plan.name,
             p_door_x: plan.plan.door.x,
             p_door_y: plan.plan.door.y,
             p_routes: plan.plan.routes,
@@ -929,7 +929,7 @@ export async function runAiMind(
           report.decisions.push({
             tokenId: row.token_id,
             status: "constructed",
-            detail: `Started ${plan.plan.name} on ${plan.plan.plotId}`,
+            detail: `Started ${parsed.decision.placeName ?? plan.plan.name} on ${plan.plan.plotId}`,
           });
           continue;
         }
