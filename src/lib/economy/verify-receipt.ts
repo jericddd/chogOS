@@ -1,10 +1,21 @@
+import { getAddress } from "viem";
+import { addresses } from "@/lib/blockchain/addresses";
 import { publicRpcError } from "@/lib/verify/anchor";
 
 const HASH = /^0x[0-9a-fA-F]{64}$/i;
 const QUANTITY = /^0x[0-9a-fA-F]+$/;
 const ADDRESS = /^0x[0-9a-fA-F]{40}$/i;
 const DATA = /^0x(?:[0-9a-fA-F]{2})*$/i;
-const READ_METHODS = new Set(["eth_chainId", "eth_getTransactionReceipt", "eth_getBlockByNumber"]);
+/** keccak256("Transfer(address,address,uint256)"). Kept here so log queries cannot import a second topic. */
+const TRANSFER_TOPIC = "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef";
+const MAX_LOG_BLOCKS = 100n;
+const READ_METHODS = new Set([
+  "eth_chainId",
+  "eth_blockNumber",
+  "eth_getTransactionReceipt",
+  "eth_getBlockByNumber",
+  "eth_getLogs",
+]);
 const RPC_TIMEOUT_MS = 4_000;
 
 /**
@@ -152,12 +163,17 @@ export async function verifyMainnetReceipt(input: {
   return { ok: true, receipt: Object.freeze(sealed) as RpcVerifiedReceipt };
 }
 
-/** POST JSON-RPC for the three read methods. An unset URL fails closed and is not a verification. */
+/**
+ * POST JSON-RPC for receipt verification and bounded $CHOG log discovery.
+ * An unset URL fails closed and is not a verification. eth_getLogs is pinned to the
+ * configured token, the Transfer topic, and a 100-block span.
+ */
 export function jsonRpcCaller(rpcUrl: string | undefined, timeoutMs = RPC_TIMEOUT_MS): RpcCaller {
   return async (method, params) => {
     if (!READ_METHODS.has(method)) {
       throw new Error("That RPC method is not part of the read-only receipt check.");
     }
+    assertReadParams(method, params);
     if (!rpcUrl || !/^https:\/\//i.test(rpcUrl)) {
       throw new Error("Monad mainnet RPC is not configured.");
     }
@@ -195,6 +211,66 @@ export function jsonRpcCaller(rpcUrl: string | undefined, timeoutMs = RPC_TIMEOU
       clearTimeout(timer);
     }
   };
+}
+
+function assertReadParams(method: string, params: unknown[]): void {
+  if (method === "eth_chainId" || method === "eth_blockNumber") {
+    if (params.length !== 0) {
+      throw new Error("The read-only RPC parameters were rejected.");
+    }
+    return;
+  }
+  if (method === "eth_getTransactionReceipt") {
+    if (params.length !== 1 || typeof params[0] !== "string" || !HASH.test(params[0])) {
+      throw new Error("The read-only RPC parameters were rejected.");
+    }
+    return;
+  }
+  if (method === "eth_getBlockByNumber") {
+    if (params.length !== 2 || typeof params[0] !== "string" || !QUANTITY.test(params[0]) || params[1] !== false) {
+      throw new Error("The read-only RPC parameters were rejected.");
+    }
+    return;
+  }
+  if (method === "eth_getLogs") {
+    assertLogQuery(params);
+    return;
+  }
+  throw new Error("That RPC method is not part of the read-only receipt check.");
+}
+
+function assertLogQuery(params: unknown[]): void {
+  if (params.length !== 1 || !params[0] || typeof params[0] !== "object" || Array.isArray(params[0])) {
+    throw new Error("The read-only RPC parameters were rejected.");
+  }
+  const filter = params[0] as Record<string, unknown>;
+  const allowed = new Set(["address", "fromBlock", "toBlock", "topics"]);
+  const keys = Object.keys(filter);
+  if (keys.length !== allowed.size || keys.some((key) => !allowed.has(key))) {
+    throw new Error("The read-only RPC parameters were rejected.");
+  }
+  let token: string;
+  try {
+    token = getAddress(typeof filter.address === "string" ? filter.address : "");
+  } catch {
+    throw new Error("The read-only RPC parameters were rejected.");
+  }
+  if (token !== addresses.chogToken) {
+    throw new Error("The read-only RPC parameters were rejected.");
+  }
+  if (
+    !Array.isArray(filter.topics) ||
+    filter.topics.length !== 1 ||
+    typeof filter.topics[0] !== "string" ||
+    filter.topics[0].toLowerCase() !== TRANSFER_TOPIC
+  ) {
+    throw new Error("The read-only RPC parameters were rejected.");
+  }
+  const from = parseQuantity(filter.fromBlock);
+  const to = parseQuantity(filter.toBlock);
+  if (from === null || to === null || from < 0n || to < from || to - from + 1n > MAX_LOG_BLOCKS) {
+    throw new Error("The read-only RPC parameters were rejected.");
+  }
 }
 
 function failRpc(error: unknown): ReceiptVerifyResult {
