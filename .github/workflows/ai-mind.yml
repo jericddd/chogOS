@@ -4,7 +4,7 @@ name: AI mind
 
 on:
   schedule:
-    - cron: "*/30 * * * *"
+    - cron: "*/10 * * * *"
   workflow_dispatch:
 
 concurrency:
@@ -14,7 +14,7 @@ concurrency:
 jobs:
   run:
     runs-on: ubuntu-latest
-    timeout-minutes: 3
+    timeout-minutes: 6
     permissions:
       contents: read
     steps:
@@ -36,7 +36,8 @@ jobs:
           code="$(curl -sS -o /tmp/ai-mind.json -w "%{http_code}" -X POST \
             -H "Authorization: Bearer ${AI_RUNNER_SECRET}" \
             -H "Content-Type: application/json" \
-            --max-time 90 \
+            -H "x-chog-ai-wait: long" \
+            --max-time 260 \
             "$url")"
           python3 -c 'from pathlib import Path; print(Path("/tmp/ai-mind.json").read_text()[:2000])'
           echo "http $code"

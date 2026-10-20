@@ -1,11 +1,12 @@
 import { NextResponse } from "next/server";
 import { bearerMatches } from "@/lib/auth/bearer";
 import { clientKey, rateLimit } from "@/lib/auth/rate-limit";
+import { deadlineForRequest } from "@/lib/ai/invocation";
 import { runAiMind } from "@/lib/ai/runner";
 import { readAppConfig } from "@/lib/config/env";
 
-/** Hobby-safe ceiling. One bounded Gemini call must finish inside this window. */
-export const maxDuration = 60;
+/** Hobby maximum is 300s. The runner stops starting calls before that. */
+export const maxDuration = 300;
 
 /**
  * Cloud-side AI decision runner. Independent of world_tick and of the browser.
@@ -36,7 +37,7 @@ async function handle(request: Request): Promise<NextResponse> {
     return denied;
   }
   const config = readAppConfig();
-  const report = await runAiMind(config);
+  const report = await runAiMind(config, deadlineForRequest(request));
   const status =
     report.status === "unconfigured" ? 503 : report.status === "disabled" ? 403 : report.status === "error" ? 502 : 200;
   return NextResponse.json({ ok: report.status === "ran" || report.status === "idle", report }, { status });

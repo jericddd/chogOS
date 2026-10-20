@@ -55,6 +55,7 @@ describe("AI runner route", () => {
       }),
     );
     expect(runAiMind).toHaveBeenCalledTimes(1);
+    expect(runAiMind.mock.calls[0]?.[1]).toBe(80_000);
     expect(allowed.status).toBe(200);
   });
 
@@ -82,6 +83,19 @@ describe("AI runner route", () => {
       }),
     );
     expect(runAiMind).toHaveBeenCalledTimes(1);
+    expect(runAiMind.mock.calls[0]?.[1]).toBe(80_000);
     expect(allowed.status).toBe(403);
+    const longWait = await POST(
+      new Request("http://x/api/ai/run", {
+        method: "POST",
+        headers: {
+          authorization: "Bearer ai-runner-secret-for-tests-only",
+          "x-forwarded-for": "8.8.8.10",
+          "x-chog-ai-wait": "long",
+        },
+      }),
+    );
+    expect(longWait.status).toBe(403);
+    expect(runAiMind.mock.calls[1]?.[1]).toBe(240_000);
   });
 });

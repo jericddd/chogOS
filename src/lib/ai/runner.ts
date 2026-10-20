@@ -2,7 +2,7 @@ import "server-only";
 import { randomUUID } from "node:crypto";
 import { getAiProvider } from "@/lib/ai/provider";
 import { evaluateBudget, haltFromError, isRetriableHaltReason, usagePeriods, type UsageSnapshot } from "@/lib/ai/budget";
-import { timeoutWithinDeadline } from "@/lib/ai/invocation";
+import { AI_INVOCATION_DEADLINE_MS, awaitFreeTierSlot, timeoutWithinDeadline } from "@/lib/ai/invocation";
 import { buildDecisionContext, contextCommitment, decisionMessages } from "@/lib/ai/context";
 import { acceptGrowth, GROWTH_RESPONSE_SCHEMA, growthBlocker, landCanGrow } from "@/lib/ai/growth";
 import {
@@ -356,7 +356,10 @@ async function linkTownNeed(
   await client.rpc("world_link_town_need", { p_need: match.needType, p_decision: decisionId });
 }
 
-export async function runAiMind(config: AppConfig = readAppConfig()): Promise<MindRunReport> {
+export async function runAiMind(
+  config: AppConfig = readAppConfig(),
+  deadlineMs: number = AI_INVOCATION_DEADLINE_MS,
+): Promise<MindRunReport> {
   if (!config.supabaseUrl || !config.supabaseServiceRoleKey) {
     return emptyReport("unconfigured", config, "Supabase is not configured.");
   }
@@ -393,38 +396,82 @@ export async function runAiMind(config: AppConfig = readAppConfig()): Promise<Mi
       return { ...emptyReport(budget.code === "halted" ? "halted" : "budget", config, budget.reason) };
     }
 
-    const { data: claimed, error: claimError } = await client.rpc("ai_claim_citizens", {
-      p_run: runId,
-      p_limit: config.aiDecisionsPerRun,
-      p_interval: `${config.aiMinDecisionIntervalSeconds} seconds`,
-    });
-    if (claimError) {
-      return emptyReport("error", config, "The decision claim failed.");
-    }
-    const queue = (claimed ?? []) as Array<{ claimed_citizen_id: string; token_id: string }>;
-    report.claimed = queue.length;
-    if (queue.length === 0) {
-      await client
-        .from("ai_scheduler_state")
-        .update({ last_run_at: new Date().toISOString(), last_error: null })
-        .eq("singleton", true);
-      return { ...report, status: "idle", reason: "No eligible citizens." };
-    }
-
     const provider = getAiProvider(config);
     const startedAt = Date.now();
+    let lastModelStartedAt = 0;
+    let endRun = false;
 
-    for (const row of queue) {
+    async function takeModelSlot(): Promise<{ timeoutMs: number } | null> {
+      const slot = await awaitFreeTierSlot(
+        lastModelStartedAt,
+        startedAt,
+        config.aiRequestTimeoutMs,
+        Date.now(),
+        (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+        deadlineMs,
+      );
+      if (!slot) {
+        return null;
+      }
+      lastModelStartedAt = slot.startedAtMs;
+      return { timeoutMs: slot.timeoutMs };
+    }
+
+    function deferForDeadline(tokenId: string): void {
+      endRun = true;
+      report.reason = report.reason ?? "Stopped remaining citizens before the host timeout.";
+      report.decisions.push({
+        tokenId,
+        status: "deferred",
+        detail: "stopped before the host timeout",
+      });
+    }
+
+    while (!endRun) {
+      if (timeoutWithinDeadline(startedAt, config.aiRequestTimeoutMs, Date.now(), deadlineMs) === null) {
+        break;
+      }
+      const gate = evaluateBudget(config, await readUsage(client));
+      if (!gate.ok) {
+        report.reason = gate.reason;
+        report.status = gate.code === "halted" ? "halted" : "budget";
+        break;
+      }
+
+      const { data: claimed, error: claimError } = await client.rpc("ai_claim_citizens", {
+        p_run: runId,
+        p_limit: config.aiDecisionsPerRun,
+        p_interval: `${config.aiMinDecisionIntervalSeconds} seconds`,
+      });
+      if (claimError) {
+        if (report.claimed === 0) {
+          return emptyReport("error", config, "The decision claim failed.");
+        }
+        report.reason = report.reason ?? "The decision claim failed.";
+        break;
+      }
+      const queue = (claimed ?? []) as Array<{ claimed_citizen_id: string; token_id: string }>;
+      if (queue.length === 0) {
+        if (report.claimed === 0) {
+          await client
+            .from("ai_scheduler_state")
+            .update({ last_run_at: new Date().toISOString(), last_error: null })
+            .eq("singleton", true);
+          return { ...report, status: "idle", reason: "No eligible citizens." };
+        }
+        break;
+      }
+      report.claimed += queue.length;
+
+      for (const row of queue) {
       let decided = false;
       try {
-        const providerTimeoutMs = timeoutWithinDeadline(startedAt, config.aiRequestTimeoutMs);
+        if (endRun) {
+          continue;
+        }
+        const providerTimeoutMs = timeoutWithinDeadline(startedAt, config.aiRequestTimeoutMs, Date.now(), deadlineMs);
         if (providerTimeoutMs === null) {
-          report.reason = report.reason ?? "Stopped remaining citizens before the host timeout.";
-          report.decisions.push({
-            tokenId: row.token_id,
-            status: "deferred",
-            detail: "stopped before the host timeout",
-          });
+          deferForDeadline(row.token_id);
           continue;
         }
 
@@ -433,7 +480,8 @@ export async function runAiMind(config: AppConfig = readAppConfig()): Promise<Mi
         if (!still.ok) {
           report.reason = still.reason;
           report.status = still.code === "halted" ? "halted" : "budget";
-          break;
+          endRun = true;
+          continue;
         }
 
         const bundle = await loadCitizenBundle(client, row.claimed_citizen_id);
@@ -508,6 +556,12 @@ export async function runAiMind(config: AppConfig = readAppConfig()): Promise<Mi
           continue;
         }
 
+        const slot = await takeModelSlot();
+        if (!slot) {
+          deferForDeadline(row.token_id);
+          continue;
+        }
+
         const { data: inserted, error: insertError } = await client
           .from("ai_decisions")
             .insert({
@@ -535,7 +589,7 @@ export async function runAiMind(config: AppConfig = readAppConfig()): Promise<Mi
               { role: "user", content: messages.user },
             ],
             responseSchema: GROWTH_RESPONSE_SCHEMA,
-            timeoutMs: providerTimeoutMs,
+            timeoutMs: slot.timeoutMs,
             maxOutputTokens: config.aiMaxOutputTokens,
           });
         } catch (error) {
@@ -556,7 +610,8 @@ export async function runAiMind(config: AppConfig = readAppConfig()): Promise<Mi
               report.status = providerError.code === "quota" || providerError.code === "billing" ? "halted" : "halted";
               report.reason = halt.reason;
             }
-            break;
+            endRun = true;
+            continue;
           }
           continue;
         }
@@ -568,8 +623,8 @@ export async function runAiMind(config: AppConfig = readAppConfig()): Promise<Mi
         let parsed: { ok: true; decision: ParsedDecision } | { ok: false; reason: string } = parseDecisionOutput(completion.text);
         let accepted = parsed.ok ? acceptGrowth(parsed.decision, context) : parsed;
         if (!accepted.ok) {
-          const retryTimeout = timeoutWithinDeadline(startedAt, config.aiRequestTimeoutMs);
-          if (retryTimeout !== null) {
+          const retrySlot = await takeModelSlot();
+          if (retrySlot) {
             let retry: AiCompletion;
             try {
               retry = await provider.complete({
@@ -582,7 +637,7 @@ export async function runAiMind(config: AppConfig = readAppConfig()): Promise<Mi
                   },
                 ],
                 responseSchema: GROWTH_RESPONSE_SCHEMA,
-                timeoutMs: retryTimeout,
+                timeoutMs: retrySlot.timeoutMs,
                 maxOutputTokens: config.aiMaxOutputTokens,
               });
             } catch (error) {
@@ -603,7 +658,8 @@ export async function runAiMind(config: AppConfig = readAppConfig()): Promise<Mi
                   report.status = "halted";
                   report.reason = halt.reason;
                 }
-                break;
+                endRun = true;
+                continue;
               }
               continue;
             }
@@ -1032,6 +1088,7 @@ export async function runAiMind(config: AppConfig = readAppConfig()): Promise<Mi
           p_run: runId,
           p_decided: decided,
         });
+      }
       }
     }
 
