@@ -2,7 +2,7 @@
 
 The civilization **already runs with your PC off**. That is Supabase `pg_cron` calling `world_tick()`.
 
-As of 2026-10-14 the mind tables, Gemini env, and a live `source=ai` market visit are on production. Vercel Hobby Cron still hits `/api/ai/run` once per day at 16:00 UTC. GitHub Actions (free on this public repo) pokes the same URL every 30 **real** minutes so more citizens can decide without paying for Vercel Pro. Your laptop can stay off. Opening the homepage does not call the model.
+As of 2026-10-14 the mind tables, Gemini env, and a live `source=ai` market visit are on production. Vercel Hobby Cron still hits `/api/ai/run` once per day at 16:00 UTC. GitHub Actions (free on this public repo) pokes the same URL every 10 **real** minutes. Each poke keeps making growth decisions until the free daily cap, then stops. A Gemini quota error stops it sooner and does not turn on billing. Your laptop can stay off. Opening the homepage does not call the model.
 
 After merging the Actions workflow, add the runner secret here (same string as Vercel `AI_RUNNER_SECRET`):
 
@@ -57,7 +57,8 @@ Google may use free-tier prompts to improve Google products. The runner only sen
 | `AI_RUNNER_SECRET` | a long random string (`openssl rand -hex 32`) |
 | `CRON_SECRET` | **the same string** as `AI_RUNNER_SECRET` |
 | `AI_RUNNER_ENABLED` | `true` |
-| `AI_DECISIONS_PER_RUN` | `1` (keep at 1 on Vercel Hobby; 4+ hits the 60s function timeout) |
+
+Leave `AI_DECISIONS_PER_RUN`, `AI_MIN_DECISION_INTERVAL_SECONDS`, `AI_MAX_DECISIONS_PER_HOUR`, and `AI_MAX_DECISIONS_PER_DAY` unset. The app then uses 8 decisions per poke, 5 minutes between a citizen's turns, 60 per hour, and 500 per day. If those names are already saved on Vercel from an older setup, delete them and redeploy. A saved `1` or `48` overrides the new defaults.
 
 Leave `AI_RUNNER_ENABLED` as `false` if you only want to test the key first.
 

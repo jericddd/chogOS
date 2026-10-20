@@ -4,7 +4,15 @@ import { buildDecisionContext, decisionMessages } from "@/lib/ai/context";
 import { acceptGrowth, growthBlocker, landCanGrow } from "@/lib/ai/growth";
 import { describePlace } from "@/lib/ai/place";
 import { preferredFeasibleAction, rankActions, type PersonalityTraits } from "@/lib/ai/personality";
-import { timeoutWithinDeadline } from "@/lib/ai/invocation";
+import {
+  AI_INVOCATION_DEADLINE_MS,
+  AI_INVOCATION_DEADLINE_SHORT_MS,
+  FREE_TIER_REQUEST_GAP_MS,
+  awaitFreeTierSlot,
+  deadlineForRequest,
+  freeTierWaitMs,
+  timeoutWithinDeadline,
+} from "@/lib/ai/invocation";
 import {
   createGeminiProvider,
   GEMINI_HOBBY_FALLBACK_MODEL,
@@ -13,6 +21,7 @@ import {
   geminiEndpoint,
   geminiModelsToTry,
   geminiThinkingConfig,
+  withRememberedModel,
 } from "@/lib/ai/providers/gemini";
 import { createProviderFromConfig } from "@/lib/ai/resolve";
 import { parseDecisionOutput } from "@/lib/ai/schema";
@@ -325,6 +334,36 @@ describe("Gemini adapter", () => {
     expect(second[0]).toContain(GEMINI_HOBBY_FALLBACK_MODEL);
   });
 
+  it("asks the model that already answered before walking the missing-model list again", async () => {
+    const fetchSpy = vi.fn(async (url: string) => {
+      if (String(url).includes(GEMINI_HOBBY_FALLBACK_MODEL)) {
+        return new Response(
+          JSON.stringify({
+            candidates: [{ content: { parts: [{ text: '{"action":"build","summary":"Grow.","rationale":"Land."}' }] } }],
+          }),
+          { status: 200 },
+        );
+      }
+      return new Response(JSON.stringify({ error: { message: "model is not found" } }), { status: 404 });
+    });
+    vi.stubGlobal("fetch", fetchSpy);
+    const config = readAppConfig({
+      AI_PROVIDER: "gemini",
+      AI_API_KEY: "test-key",
+      AI_MODEL: "gemini-3.8-flash",
+    } as unknown as NodeJS.ProcessEnv);
+    const provider = createGeminiProvider(config);
+    await provider.complete({ purpose: "x", messages: [{ role: "user", content: "x" }] });
+    fetchSpy.mockClear();
+    const again = await provider.complete({ purpose: "x", messages: [{ role: "user", content: "y" }] });
+    expect(again.model).toBe(GEMINI_HOBBY_FALLBACK_MODEL);
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    expect(String((fetchSpy.mock.calls[0] as unknown[])[0])).toContain(GEMINI_HOBBY_FALLBACK_MODEL);
+    expect(withRememberedModel([...GEMINI_HOBBY_MODELS], GEMINI_HOBBY_FALLBACK_MODEL)[0]).toBe(
+      GEMINI_HOBBY_FALLBACK_MODEL,
+    );
+  });
+
   it("surfaces Gemini HTTP 400 body text and does not halt", async () => {
     const fetchSpy = vi.fn(
       async () =>
@@ -400,14 +439,50 @@ describe("Gemini adapter", () => {
 });
 
 describe("budgets", () => {
-  it("stops new inference when the hourly or daily cap is reached", () => {
+  it("stops new inference when the hourly or daily cap is reached", async () => {
     const config = readAppConfig({} as NodeJS.ProcessEnv);
-    expect(config.aiMaxDecisionsPerHour).toBe(12);
-    expect(config.aiDecisionsPerRun).toBe(1);
+    expect(config.aiMaxDecisionsPerHour).toBe(60);
+    expect(config.aiMaxDecisionsPerDay).toBe(500);
+    expect(config.aiDecisionsPerRun).toBe(8);
+    expect(config.aiMinDecisionIntervalSeconds).toBe(300);
     expect(config.aiRequestTimeoutMs).toBe(40_000);
     expect(config.aiMaxOutputTokens).toBe(2048);
-    expect(timeoutWithinDeadline(0, 20_000, 40_000)).toBe(5_500);
-    expect(timeoutWithinDeadline(0, 20_000, 47_000)).toBeNull();
+    expect(AI_INVOCATION_DEADLINE_MS).toBe(240_000);
+    expect(AI_INVOCATION_DEADLINE_SHORT_MS).toBe(80_000);
+    expect(deadlineForRequest(new Request("http://x"))).toBe(AI_INVOCATION_DEADLINE_SHORT_MS);
+    expect(deadlineForRequest(new Request("http://x", { headers: { "x-chog-ai-wait": "long" } }))).toBe(
+      AI_INVOCATION_DEADLINE_MS,
+    );
+    expect(timeoutWithinDeadline(0, 20_000, 76_000, AI_INVOCATION_DEADLINE_SHORT_MS)).toBeNull();
+    expect(FREE_TIER_REQUEST_GAP_MS).toBe(12_000);
+    expect(timeoutWithinDeadline(0, 20_000, 40_000)).toBe(20_000);
+    expect(timeoutWithinDeadline(0, 40_000, AI_INVOCATION_DEADLINE_MS - 10_000)).toBe(7_500);
+    expect(timeoutWithinDeadline(0, 20_000, AI_INVOCATION_DEADLINE_MS - 4_000)).toBeNull();
+    expect(freeTierWaitMs(0, 1_000)).toBe(0);
+    expect(freeTierWaitMs(1_000, 5_000)).toBe(8_000);
+    expect(freeTierWaitMs(1_000, 13_000)).toBe(0);
+    const slept: number[] = [];
+    const tooLate = AI_INVOCATION_DEADLINE_MS - 10_000;
+    await expect(
+      awaitFreeTierSlot(tooLate - 6_000, 0, 20_000, tooLate, async (ms) => {
+        slept.push(ms);
+      }),
+    ).resolves.toBeNull();
+    expect(slept).toEqual([]);
+    await expect(
+      awaitFreeTierSlot(1_000, 0, 20_000, 5_000, async (ms) => {
+        slept.push(ms);
+      }),
+    ).resolves.toEqual({ startedAtMs: 13_000, timeoutMs: 20_000 });
+    expect(slept).toEqual([8_000]);
+    const overridden = readAppConfig({
+      AI_DECISIONS_PER_RUN: "1",
+      AI_MAX_DECISIONS_PER_HOUR: "12",
+      AI_MAX_DECISIONS_PER_DAY: "20",
+    } as unknown as NodeJS.ProcessEnv);
+    expect(overridden.aiDecisionsPerRun).toBe(1);
+    expect(overridden.aiMaxDecisionsPerHour).toBe(12);
+    expect(overridden.aiMaxDecisionsPerDay).toBe(20);
     expect(config.aiRunnerEnabled).toBe(false);
     expect(aiStatusLabel(config)).toBe("Awaiting AI activation");
     expect(
@@ -416,10 +491,13 @@ describe("budgets", () => {
       ),
     ).toBe("AI mind on Gemini");
     expect(
-      evaluateBudget(config, { hourInvocations: 12, dayInvocations: 1, haltUntil: null, haltReason: null }).ok,
+      evaluateBudget(config, { hourInvocations: 60, dayInvocations: 1, haltUntil: null, haltReason: null }).ok,
     ).toBe(false);
     expect(
-      evaluateBudget(config, { hourInvocations: 0, dayInvocations: 48, haltUntil: null, haltReason: null }).ok,
+      evaluateBudget(config, { hourInvocations: 59, dayInvocations: 1, haltUntil: null, haltReason: null }).ok,
+    ).toBe(true);
+    expect(
+      evaluateBudget(config, { hourInvocations: 0, dayInvocations: 500, haltUntil: null, haltReason: null }).ok,
     ).toBe(false);
     const halt = haltFromError(new AiProviderError("quota", "quota", true), new Date("2026-10-14T12:00:00Z"));
     expect(halt?.until).toBe("2026-10-15T00:00:00.000Z");

@@ -28,6 +28,14 @@ export function geminiModelsToTry(configured: string): string[] {
   return [model];
 }
 
+/** Try the model that already answered in this process before the 404 ladder. */
+export function withRememberedModel(models: readonly string[], remembered: string | undefined): string[] {
+  if (!remembered || models[0] === remembered || !models.includes(remembered)) {
+    return [...models];
+  }
+  return [remembered, ...models.filter((model) => model !== remembered)];
+}
+
 export function geminiThinkingConfig(model: string): Record<string, unknown> {
   if (model.startsWith("gemini-2.")) {
     return { thinkingBudget: 0 };
@@ -132,6 +140,7 @@ function readOutputTokens(body: unknown): number | undefined {
 
 export function createGeminiProvider(config: AppConfig): AiProvider {
   const configured = config.aiModel ?? GEMINI_DEFAULT_MODEL;
+  let rememberedModel: string | undefined;
   return {
     id: "gemini",
     async complete(request: AiCompletionRequest): Promise<AiCompletion> {
@@ -157,7 +166,7 @@ export function createGeminiProvider(config: AppConfig): AiProvider {
         "x-goog-api-key": apiKey,
         "Content-Type": "application/json",
       };
-      const models = geminiModelsToTry(configured);
+      const models = withRememberedModel(geminiModelsToTry(configured), rememberedModel);
       let lastFailure: AiProviderError | undefined;
 
       for (const model of models) {
@@ -215,6 +224,7 @@ export function createGeminiProvider(config: AppConfig): AiProvider {
             if (!text) {
               throw new AiProviderError("Gemini returned an empty completion.", "invalid", false);
             }
+            rememberedModel = model;
             return {
               provider: "gemini",
               model,
