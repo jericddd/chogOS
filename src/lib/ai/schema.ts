@@ -1,9 +1,11 @@
 import { ACTIVATION_MOTIVES, type ActivationMotive } from "@/lib/chogbank/types";
+import type { EconomyDraft } from "@/lib/economy/proposal";
+import { parseEconomyDraft } from "@/lib/economy/proposal";
 import { CONSTRUCT_KINDS, type ConstructKind } from "@/lib/world/layout";
 import { ROAD_STUB_IDS } from "@/lib/world/roads";
 import { WORLD_ACTIONS, type WorldAction } from "@/lib/world/actions";
 
-export const DECISION_ACTIONS = [...WORLD_ACTIONS, "build", "request_wallet_activation"] as const;
+export const DECISION_ACTIONS = [...WORLD_ACTIONS, "build", "request_wallet_activation", "propose_economy"] as const;
 export type DecisionAction = (typeof DECISION_ACTIONS)[number];
 export type DecisionBuildKind = ConstructKind | "road" | "none";
 
@@ -21,6 +23,7 @@ export type ParsedDecision = {
   revenueHypothesis: string | null;
   claimedDeploymentWei: bigint | null;
   claimedGasWei: bigint | null;
+  economy: EconomyDraft | null;
 };
 
 export const DECISION_RESPONSE_SCHEMA: Record<string, unknown> = {
@@ -39,6 +42,7 @@ export const DECISION_RESPONSE_SCHEMA: Record<string, unknown> = {
     revenueHypothesis: { type: "string" },
     estimatedDeploymentWei: { type: "string" },
     estimatedGasWei: { type: "string" },
+    economy: { type: "object" },
   },
   required: ["action", "buildingId", "summary", "rationale"],
 };
@@ -91,7 +95,7 @@ export function parseDecisionOutput(text: string): { ok: true; decision: ParsedD
   }
 
   const buildingId = typeof body.buildingId === "string" ? body.buildingId.trim() : "";
-  if (action === "request_wallet_activation") {
+  if (action === "request_wallet_activation" || action === "propose_economy") {
     if (buildingId && buildingId !== "none" && !BUILDING_RE.test(buildingId)) {
       return { ok: false, reason: "invalid building id" };
     }
@@ -139,6 +143,19 @@ export function parseDecisionOutput(text: string): { ok: true; decision: ParsedD
   let revenueHypothesis: string | null = null;
   let claimedDeploymentWei: bigint | null = null;
   let claimedGasWei: bigint | null = null;
+  let economy: EconomyDraft | null = null;
+  if (action === "propose_economy") {
+    const economyBody = asRecord(body.economy) ?? {};
+    const draft = parseEconomyDraft({
+      ...economyBody,
+      objective: typeof economyBody.objective === "string" ? economyBody.objective : summary,
+      rationale: typeof economyBody.rationale === "string" ? economyBody.rationale : rationale,
+    });
+    if (!draft.ok) {
+      return draft;
+    }
+    economy = draft.draft;
+  }
   if (action === "request_wallet_activation") {
     const motive = typeof body.activationMotive === "string" ? body.activationMotive : "";
     if (!(ACTIVATION_MOTIVES as readonly string[]).includes(motive)) {
@@ -164,7 +181,7 @@ export function parseDecisionOutput(text: string): { ok: true; decision: ParsedD
     ok: true,
     decision: {
       action: action as DecisionAction,
-      buildingId: action === "build" || action === "request_wallet_activation" ? "" : buildingId,
+      buildingId: action === "build" || action === "request_wallet_activation" || action === "propose_economy" ? "" : buildingId,
       buildKind,
       roadStubId,
       goalId,
@@ -176,6 +193,7 @@ export function parseDecisionOutput(text: string): { ok: true; decision: ParsedD
       revenueHypothesis,
       claimedDeploymentWei,
       claimedGasWei,
+      economy,
     },
   };
 }
@@ -201,10 +219,23 @@ export function isActivationAction(action: DecisionAction): boolean {
   return action === "request_wallet_activation";
 }
 
+export function isEconomyAction(action: DecisionAction): boolean {
+  return action === "propose_economy";
+}
+
 export function jsonSafeDecision(decision: ParsedDecision): Record<string, unknown> {
   return {
     ...decision,
     claimedDeploymentWei: decision.claimedDeploymentWei?.toString() ?? null,
     claimedGasWei: decision.claimedGasWei?.toString() ?? null,
+    economy: decision.economy
+      ? {
+          ...decision.economy,
+          amountRaw: decision.economy.amountRaw.toString(10),
+          estimatedGasWei: decision.economy.estimatedGasWei.toString(10),
+          fundingRequestRaw: decision.economy.fundingRequestRaw.toString(10),
+          quotePriceRaw: decision.economy.quotePriceRaw?.toString(10) ?? null,
+        }
+      : null,
   };
 }

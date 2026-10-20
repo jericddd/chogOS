@@ -7,6 +7,7 @@ import { buildDecisionContext, contextCommitment, decisionMessages } from "@/lib
 import {
   DECISION_RESPONSE_SCHEMA,
   isActivationAction,
+  isEconomyAction,
   isWorldAction,
   jsonSafeDecision,
   parseDecisionOutput,
@@ -17,6 +18,9 @@ import {
   isActivationDraft,
 } from "@/lib/chogbank/from-decision";
 import { productionBankRuntime } from "@/lib/chogbank/runtime";
+import { readEconomyLedger, saveEconomyDecision } from "@/lib/economy/db";
+import { evaluateProductionEconomy } from "@/lib/economy/production";
+import { proposalFromDraft } from "@/lib/economy/proposal";
 import { AiProviderError } from "@/lib/ai/types";
 import type { PersonalityTraits } from "@/lib/ai/personality";
 import { readAppConfig, type AppConfig } from "@/lib/config/env";
@@ -800,6 +804,81 @@ export async function runAiMind(config: AppConfig = readAppConfig()): Promise<Mi
             status: "constructed",
             detail: `Started ${plan.plan.name} on ${plan.plan.plotId}`,
           });
+          continue;
+        }
+
+        if (isEconomyAction(parsed.decision.action)) {
+          const draft = parsed.decision.economy;
+          if (!draft) {
+            await client
+              .from("ai_decisions")
+              .update({ status: "rejected", validation_result: "economic proposal is required" })
+              .eq("id", decisionId);
+            report.rejected += 1;
+            report.decisions.push({ tokenId: row.token_id, status: "rejected", detail: "economic proposal is required" });
+            continue;
+          }
+          const proposal = proposalFromDraft(draft, {
+            id: decisionId,
+            idempotencyKey: `economy:${decisionId}`,
+            citizenId: row.claimed_citizen_id,
+            tokenId: String(bundle.citizen.tokenId),
+            nftContract: config.chogNftAddress,
+            nowMs: Date.now(),
+          });
+          const nowMs = Date.now();
+          let outcome = "deferred";
+          let detail = "The economic proposal could not be saved.";
+          let reserved = false;
+          let executed = false;
+          let observation = "unavailable";
+          try {
+            const ledger = await readEconomyLedger(client, nowMs);
+            const evaluated = await evaluateProductionEconomy({
+              config,
+              proposal,
+              nowMs,
+              holds: ledger.complete ? ledger.holds : [],
+              dailyGasWei: ledger.complete ? BigInt(ledger.dailyGasRaw) : 0n,
+              dailyGasKnown: ledger.complete,
+            });
+            const persisted = await saveEconomyDecision(client, {
+              proposal,
+              decision: evaluated.decision,
+              holds: evaluated.holds,
+              observation: evaluated.observation,
+            });
+            outcome = persisted.ok ? persisted.status : evaluated.decision.outcome;
+            reserved = persisted.ok ? persisted.reserved : false;
+            executed = evaluated.decision.executed;
+            observation = evaluated.observation.status;
+            detail = persisted.ok ? evaluated.decision.reason : `${evaluated.decision.reason} ${persisted.reason}`;
+          } catch {
+            detail = "The economic proposal could not be saved.";
+          }
+          await client
+            .from("ai_decisions")
+            .update({
+              status: outcome === "rejected" ? "rejected" : "queued",
+              validation_result: detail,
+              output: {
+                ...jsonSafeDecision(parsed.decision),
+                economyDecision: {
+                  outcome,
+                  reason: detail,
+                  reserved,
+                  executed,
+                  observation,
+                },
+              },
+            })
+            .eq("id", decisionId);
+          if (outcome === "rejected") {
+            report.rejected += 1;
+          } else {
+            report.submitted += 1;
+          }
+          report.decisions.push({ tokenId: row.token_id, status: outcome, detail });
           continue;
         }
 

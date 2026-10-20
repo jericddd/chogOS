@@ -371,6 +371,7 @@ export function decisionMessages(context: DecisionContext, maxChars: number): { 
     "A rejected workplace should not be repeated unless conditions changed.",
     "source=ai is applied only if this JSON is later validated. You cannot complete a goal or a building by saying it is complete.",
     "Enrollment does not create a wallet. Ordinary living, work, rest, and construction do not need one. request_wallet_activation only if a listed goal truly needs onchain access (a business, a trade, a payment). Include activationMotive, proposedOnchainActions, revenueHypothesis, and integer wei estimates. You cannot set spending limits, approve funding, or claim a transaction succeeded. ChogBank decides. If no wallet is needed, choose a feasible world action.",
+    "propose_economy only when a listed goal needs a payment, trade, or swap. Put the operation, asset, integer base-unit amounts, estimated gas, funding request, target, selector, and expected outcome in economy. A swap needs an explicit quote and slippage. The bank will not execute it. Do not claim that funds arrived or that a profit was earned.",
     "The free Gemini tier may use this prompt to improve Google products. Do not include secrets. None are provided.",
   ].join(" ");
 

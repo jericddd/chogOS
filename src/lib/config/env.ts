@@ -80,6 +80,16 @@ export type AppConfig = {
   /** Public asset-control address. Must differ from the gas-paying address. */
   chogBankAssetAddress?: Address;
   chogBankObservationMaxAgeMs: number;
+  /** Economic budgets. $CHOG limits are token base units and default to zero. */
+  economyLimits: {
+    maxCitizenCapitalWei: bigint;
+    maxBusinessAllocationWei: bigint;
+    maxChogPerTxRaw: bigint;
+    maxCitizenChogRaw: bigint;
+    maxBusinessChogRaw: bigint;
+  };
+  /** Operator JSON. Invalid JSON stays unparsed here and fail-closes in the allowlist parser. */
+  economyAllowlist?: string;
 };
 
 const DEFAULT_IPFS_GATEWAY = "https://gateway.pinata.cloud/ipfs";
@@ -149,6 +159,17 @@ function readBoundedInt(
     throw new Error(`Invalid ${label}. Use an integer from ${min} to ${max}.`);
   }
   return parsed;
+}
+
+function readRaw(value: string | undefined, label: string, fallback: bigint): bigint {
+  const raw = blankToUndefined(value);
+  if (!raw) {
+    return fallback;
+  }
+  if (!/^[0-9]+$/.test(raw)) {
+    throw new Error(`Invalid ${label}. Use a non-negative integer in base units.`);
+  }
+  return BigInt(raw);
 }
 
 function readWei(value: string | undefined, label: string, fallback: bigint): bigint {
@@ -350,6 +371,22 @@ export function readAppConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
       1_000,
       3_600_000,
     ),
+    economyLimits: {
+      maxCitizenCapitalWei: readRaw(
+        env.CHOG_BANK_MAX_CITIZEN_CAPITAL_WEI,
+        "CHOG_BANK_MAX_CITIZEN_CAPITAL_WEI",
+        1_000_000_000_000_000_000n,
+      ),
+      maxBusinessAllocationWei: readRaw(
+        env.CHOG_BANK_MAX_BUSINESS_CAPITAL_WEI,
+        "CHOG_BANK_MAX_BUSINESS_CAPITAL_WEI",
+        2_000_000_000_000_000_000n,
+      ),
+      maxChogPerTxRaw: readRaw(env.CHOG_BANK_MAX_CHOG_PER_TX_RAW, "CHOG_BANK_MAX_CHOG_PER_TX_RAW", 0n),
+      maxCitizenChogRaw: readRaw(env.CHOG_BANK_MAX_CITIZEN_CHOG_RAW, "CHOG_BANK_MAX_CITIZEN_CHOG_RAW", 0n),
+      maxBusinessChogRaw: readRaw(env.CHOG_BANK_MAX_BUSINESS_CHOG_RAW, "CHOG_BANK_MAX_BUSINESS_CHOG_RAW", 0n),
+    },
+    economyAllowlist: blankToUndefined(env.ECONOMY_PROTOCOL_ALLOWLIST)?.slice(0, 20_000),
   };
 }
 
