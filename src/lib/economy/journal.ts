@@ -13,6 +13,7 @@ export const JOURNAL_KINDS = [
   "revenue_returned",
   "loss_realized",
   "capital_recovered",
+  "receipt_observed",
 ] as const;
 
 export type JournalKind = (typeof JOURNAL_KINDS)[number];

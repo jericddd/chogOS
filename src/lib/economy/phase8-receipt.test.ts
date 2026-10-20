@@ -16,7 +16,7 @@ import { assessTreasuryRead, emptySnapshot, readEconomicTreasury, type TreasuryR
 import { presentEconomy } from "@/lib/economy/present";
 import { holdFailureStatus, persistEconomyDecision, proveHoldOperation, selectCreatedKeys, type EconomyGateway } from "@/lib/economy/persist";
 import { decideEconomicProposal, type EconomicProposal, type EconomyLimits } from "@/lib/economy/proposal";
-import { assessReceiptEvidence, settleRpcArgs } from "@/lib/economy/receipt";
+import { assessReceiptEvidence, receiptJournalArgs, settlementReadiness, settleRpcArgs } from "@/lib/economy/receipt";
 import { holdSequentially, tryHold, tryHoldBatch, type Hold, type HoldRequest } from "@/lib/economy/reserve";
 import { isRpcVerifiedReceipt, jsonRpcCaller, verifyMainnetReceipt, type RpcCaller, type RpcVerifiedReceipt } from "@/lib/economy/verify-receipt";
 import { noteReceipt, noteSubmission, openProposal, planConfirmation, planSettlement, settleProposal } from "@/lib/economy/workflow";
@@ -157,6 +157,31 @@ function fakeClient(onRpc: (fn: string, args: Record<string, unknown>) => unknow
   return { client: client as unknown as SupabaseClient, calls };
 }
 
+function proposalReader(row: { status: string; tx_hash: string | null } | null) {
+  const calls: string[] = [];
+  const client = {
+    from(table: string) {
+      calls.push(table);
+      const query = {
+        select() {
+          return query;
+        },
+        eq() {
+          return query;
+        },
+        abortSignal() {
+          return query;
+        },
+        maybeSingle() {
+          return Promise.resolve({ data: row, error: null });
+        },
+      };
+      return query;
+    },
+  };
+  return { client: client as unknown as SupabaseClient, calls };
+}
+
 async function verifiedReceipt(tx: Hex = TX, status: "0x1" | "0x0" = "0x1"): Promise<RpcVerifiedReceipt> {
   const result = await verifyMainnetReceipt({
     txHash: tx,
@@ -213,6 +238,11 @@ describe("mainnet receipt verification", () => {
     expect(isRpcVerifiedReceipt(forged)).toBe(false);
     expect(settleRpcArgs("proposal-1", forged).ok).toBe(false);
     expect(settleRpcArgs("proposal-1", shaped.ok ? shaped.evidence : null).ok).toBe(false);
+    expect(receiptJournalArgs(forged).ok).toBe(false);
+    expect(receiptJournalArgs(shaped.ok ? shaped.evidence : null).ok).toBe(false);
+    expect(settlementReadiness({ status: "confirmed", txHash: OTHER_TX }, TX).ok).toBe(false);
+    expect(settlementReadiness({ status: "submitted", txHash: TX }, TX).ok).toBe(false);
+    expect(settlementReadiness({ status: "confirmed", txHash: TX }, TX).ok).toBe(true);
 
     const wrongChain = mainnet({ chain: "0x27a7" });
     const wrong = await verifyMainnetReceipt({ txHash: TX, call: wrongChain.call });
@@ -387,7 +417,7 @@ describe("confirmation and settlement", () => {
   it("writes SQL only with fields taken from the RPC verifier", async () => {
     const script = mainnet();
     const saved = fakeClient(() => ({ ok: true, status: "confirmed", duplicate: false }));
-    const confirmed = await confirmEconomyReceipt(saved.client, "proposal-1", TX.toUpperCase(), script.call);
+    const confirmed = await confirmEconomyReceipt("proposal-1", TX.toUpperCase(), { call: script.call, verifier: saved.client });
     expect(confirmed).toEqual({ ok: true, status: "confirmed", duplicate: false, verified: true });
     expect(saved.calls).toHaveLength(1);
     expect(saved.calls[0]).toEqual({
@@ -407,7 +437,7 @@ describe("confirmation and settlement", () => {
     const refused = fakeClient(() => {
       throw new Error("SQL must not run");
     });
-    const unverified = await confirmEconomyReceipt(refused.client, "proposal-1", TX, mismatched.call);
+    const unverified = await confirmEconomyReceipt("proposal-1", TX, { call: mismatched.call, verifier: refused.client });
     expect(unverified).toMatchObject({ ok: false, verified: false });
     expect(refused.calls).toEqual([]);
 
@@ -417,27 +447,56 @@ describe("confirmation and settlement", () => {
     const notSettled = fakeClient(() => {
       throw new Error("SQL must not run");
     });
-    const revertedSettle = await settleEconomyProposal(notSettled.client, "proposal-1", TX, reverted.call);
+    const revertedSettle = await settleEconomyProposal("proposal-1", TX, { call: reverted.call, verifier: notSettled.client });
     expect(revertedSettle).toMatchObject({ ok: false, verified: true });
     expect(notSettled.calls).toEqual([]);
 
-    const duplicate = fakeClient(() => ({ ok: true, status: "settled", duplicate: true }));
-    const settled = await settleEconomyProposal(duplicate.client, "proposal-1", TX, mainnet().call);
+    const duplicate = fakeClient((fn) =>
+      fn === "economy_append_journal"
+        ? { ok: true, duplicate: false }
+        : { ok: true, status: "settled", duplicate: true },
+    );
+    const reader = proposalReader({ status: "confirmed", tx_hash: TX });
+    const settled = await settleEconomyProposal("proposal-1", TX, {
+      call: mainnet().call,
+      verifier: duplicate.client,
+      reader: reader.client,
+    });
     expect(settled).toEqual({ ok: true, status: "settled", duplicate: true, verified: true });
-    expect(duplicate.calls[0]?.fn).toBe("economy_settle_proposal");
-    expect(duplicate.calls[0]?.args).toEqual({ p_key: "proposal-1", p_tx: TX });
+    expect(duplicate.calls.map((call) => call.fn)).toEqual(["economy_append_journal", "economy_settle_proposal"]);
+    expect(duplicate.calls[0]?.args).toMatchObject({
+      p_lines: [
+        expect.objectContaining({ kind: "receipt_observed", evidenceKey: `143:${TX}:receipt`, account: "external", side: "debit" }),
+        expect.objectContaining({ kind: "receipt_observed", evidenceKey: `143:${TX}:receipt`, account: "external", side: "credit" }),
+      ],
+    });
+    expect(duplicate.calls[1]?.args).toEqual({ p_key: "proposal-1", p_tx: TX });
+    expect(reader.calls).toEqual(["economy_proposals"]);
 
-    const conflicted = fakeClient(() => ({
-      ok: false,
-      outcome: "conflict",
-      reason: "This proposal is already tied to a different transaction.",
-    }));
-    const conflict = await settleEconomyProposal(conflicted.client, "proposal-1", TX, mainnet().call);
+    const unset = await settleEconomyProposal("proposal-1", TX, {
+      call: mainnet().call,
+      verifier: null,
+      reader: proposalReader({ status: "confirmed", tx_hash: TX }).client,
+    });
+    expect(unset).toMatchObject({ ok: false, verified: true, reason: expect.stringMatching(/verifier is not configured/) });
+
+    const conflicted = fakeClient(() => {
+      throw new Error("SQL must not run");
+    });
+    const conflict = await settleEconomyProposal("proposal-1", TX, {
+      call: mainnet().call,
+      verifier: conflicted.client,
+      reader: proposalReader({ status: "confirmed", tx_hash: OTHER_TX }).client,
+    });
     expect(conflict).toMatchObject({
       ok: false,
       verified: true,
       reason: "This proposal is already tied to a different transaction.",
     });
+    expect(conflicted.calls).toEqual([]);
+
+    const missingVerifier = await confirmEconomyReceipt("proposal-1", TX, { call: mainnet().call, verifier: null });
+    expect(missingVerifier).toMatchObject({ ok: false, verified: true, reason: expect.stringMatching(/verifier is not configured/) });
   });
 });
 
@@ -1354,7 +1413,11 @@ describe("phase 8 reservation and trust regressions", () => {
       const client = fakeClient(() => {
         throw new Error(`${item.name} must not reach SQL`);
       });
-      const settled = await settleEconomyProposal(client.client, "proposal-1", item.hash ?? TX, item.call);
+      const settled = await settleEconomyProposal("proposal-1", item.hash ?? TX, {
+        call: item.call,
+        verifier: client.client,
+        reader: proposalReader({ status: "confirmed", tx_hash: TX }).client,
+      });
       expect(settled.ok, item.name).toBe(false);
       expect(settled.verified, item.name).toBe(item.verified);
       expect(client.calls, item.name).toEqual([]);
@@ -1805,8 +1868,43 @@ describe("phase 8 safety scans", () => {
     const confirm = db.slice(db.indexOf("function confirmEconomyReceipt"), db.indexOf("function settleEconomyProposal"));
     expect(confirm.indexOf("verifyMainnetReceipt")).toBeGreaterThanOrEqual(0);
     expect(confirm.indexOf("verifyMainnetReceipt")).toBeLessThan(confirm.indexOf("economy_note_receipt"));
-    const settleFn = db.slice(db.indexOf("function settleEconomyProposal"), db.indexOf("function economyRpc"));
-    expect(settleFn.indexOf("verifyMainnetReceipt")).toBeLessThan(settleFn.indexOf("economy_settle_proposal"));
+    expect(confirm).not.toContain("createServiceRoleClient");
+    expect(confirm).not.toContain("openEconomyClient");
+    const settleFn = db.slice(db.indexOf("function settleEconomyProposal"), db.indexOf("function verifierFrom"));
+    expect(settleFn.indexOf("verifyMainnetReceipt")).toBeLessThan(settleFn.indexOf("economy_append_journal"));
+    expect(settleFn.indexOf("economy_append_journal")).toBeLessThan(settleFn.indexOf("economy_settle_proposal"));
+    expect(settleFn).not.toContain("createServiceRoleClient");
+    expect(settleFn).not.toContain("openEconomyClient");
+    const verifierSql = readFileSync("supabase/migrations/20261021000000_phase8_economy_verifier.sql", "utf8").toLowerCase();
+    expect(verifierSql).toContain("create role chogos_economy_verifier noinherit nologin");
+    expect(verifierSql).toContain("grant chogos_economy_verifier to authenticator");
+    expect(verifierSql).toContain("security definer set search_path = public");
+    expect(verifierSql).toContain("revoke all on function economy_note_receipt(text, text, text, integer, numeric, text, text) from public, anon, authenticated, service_role");
+    expect(verifierSql).toContain("revoke all on function economy_settle_proposal(text, text) from public, anon, authenticated, service_role");
+    expect(verifierSql).toContain("revoke all on function economy_append_journal(jsonb) from public, anon, authenticated, service_role");
+    expect(verifierSql).toContain("revoke all on function economy_try_hold(text, uuid, numeric, text, text, numeric, numeric) from public, anon, authenticated, service_role");
+    expect(verifierSql).toContain("grant execute on function economy_note_receipt(text, text, text, integer, numeric, text, text) to chogos_economy_verifier");
+    expect(verifierSql).toContain("grant execute on function economy_settle_proposal(text, text) to chogos_economy_verifier");
+    expect(verifierSql).toContain("grant execute on function economy_append_journal(jsonb) to chogos_economy_verifier");
+    expect(verifierSql).toContain("revoke insert, update, delete, truncate on table economy_journal from service_role");
+    expect(verifierSql).toContain("revoke insert, update, delete, truncate on table economy_reservations from service_role");
+    expect(verifierSql).toContain("revoke insert, update, delete, truncate on table economy_proposals from service_role");
+    expect(verifierSql).toContain("grant select on table economy_proposals, economy_reservations, economy_journal, economy_proposal_audit to service_role");
+    expect(verifierSql).toContain("receipt_observed");
+    expect(verifierSql).not.toMatch(/\bdrop\s+table\b/);
+    expect(verifierSql).not.toMatch(/\btruncate\s+economy_/);
+    expect(verifierSql).not.toMatch(/\bdelete\s+from\s+economy_/);
+    expect(verifierSql).not.toContain("grant chogos_economy_verifier to service_role");
+    expect(verifierSql).not.toContain("private_key");
+    expect(verifierSql).not.toMatch(/0x[0-9a-f]{64}/);
+    expect(readFileSync("src/lib/db/client.ts", "utf8")).toContain('import "server-only"');
+    expect(readFileSync("src/lib/db/client.ts", "utf8")).toContain("SUPABASE_ECONOMY_VERIFIER_KEY");
+    const clientModules = walk("src").filter((file) => readFileSync(file, "utf8").startsWith('"use client"'));
+    for (const file of clientModules) {
+      const source = readFileSync(file, "utf8");
+      expect(source, file).not.toContain("SUPABASE_ECONOMY_VERIFIER_KEY");
+      expect(source, file).not.toContain("createEconomyVerifierClient");
+    }
     expect(readFileSync("src/lib/economy/verify-receipt.ts", "utf8")).not.toMatch(/sendTransaction|writeContract|signTransaction|walletClient|eth_sendRawTransaction/);
     expect(readFileSync("src/lib/economy/observe.ts", "utf8")).not.toMatch(/sendTransaction|writeContract|deployContract|signTransaction|walletClient/);
     expect(readFileSync("src/lib/economy/observe.ts", "utf8")).toContain("addresses.chogToken");

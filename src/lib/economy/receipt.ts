@@ -107,3 +107,50 @@ export function settleRpcArgs(
   }
   return { ok: true, args: { p_key: key, p_tx: evidence.txHash } };
 }
+
+/**
+ * Link a verified receipt to settlement.
+ * A receipt has no transfer amount. The amount is a linkage unit, the kind is
+ * receipt_observed, and both accounts are external, so counted treasury totals
+ * do not change. The evidence key is 143:<tx>:receipt.
+ */
+export function receiptJournalArgs(
+  evidence: unknown,
+): { ok: true; args: { p_lines: Array<Record<string, string>> } } | { ok: false; reason: string } {
+  if (!isRpcVerifiedReceipt(evidence) || evidence.status !== "success") {
+    return { ok: false, reason: "Settlement requires a successful mainnet receipt." };
+  }
+  const key = `143:${evidence.txHash}:receipt`;
+  const line = (side: "debit" | "credit"): Record<string, string> => ({
+    postingId: key,
+    account: "external",
+    asset: "MON",
+    amountRaw: "1",
+    side,
+    kind: "receipt_observed",
+    source: "chain",
+    ref: key,
+    status: "observed",
+    evidenceKey: key,
+  });
+  return { ok: true, args: { p_lines: [line("debit"), line("credit")] } };
+}
+
+/** Whether the stored proposal may receive a journal line for this verified transaction. */
+export function settlementReadiness(
+  row: { status: string; txHash: string | null } | null,
+  txHash: string,
+): { ok: true } | { ok: false; reason: string } {
+  if (!row) {
+    return { ok: false, reason: "No proposal exists for that key." };
+  }
+  const stored = row.txHash?.toLowerCase() ?? "";
+  const requested = txHash.toLowerCase();
+  if (stored && stored !== requested) {
+    return { ok: false, reason: "This proposal is already tied to a different transaction." };
+  }
+  if ((row.status === "confirmed" || row.status === "settled") && stored === requested) {
+    return { ok: true };
+  }
+  return { ok: false, reason: "Settlement requires a successful mainnet receipt." };
+}

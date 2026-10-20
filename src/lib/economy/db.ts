@@ -1,11 +1,11 @@
 import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { createServiceRoleClient } from "@/lib/db/client";
+import { createEconomyVerifierClient, createServiceRoleClient } from "@/lib/db/client";
 import { emptyLedger, interpretLedgerSnapshot, LEDGER_PENDING, LEDGER_UNREAD, utcDayStart, type EconomyLedger } from "@/lib/economy/ledger";
 import { readAppConfig } from "@/lib/config/env";
 import { persistEconomyDecision, type EconomyGateway, type PersistResult } from "@/lib/economy/persist";
 import type { EconomicProposal, EconomyDecision } from "@/lib/economy/proposal";
-import { receiptRpcArgs, settleRpcArgs } from "@/lib/economy/receipt";
+import { receiptJournalArgs, receiptRpcArgs, settlementReadiness, settleRpcArgs } from "@/lib/economy/receipt";
 import type { Hold } from "@/lib/economy/reserve";
 import type { TreasurySnapshot } from "@/lib/economy/observe";
 import { jsonRpcCaller, verifyMainnetReceipt, type RpcCaller } from "@/lib/economy/verify-receipt";
@@ -14,6 +14,8 @@ const LEDGER_TIMEOUT_MS = 4_000;
 
 type DbError = { code?: string; message?: string };
 
+const VERIFIER_UNSET = "The economy verifier is not configured. Set SUPABASE_ECONOMY_VERIFIER_KEY.";
+
 export function openEconomyClient(): SupabaseClient | null {
   try {
     return createServiceRoleClient();
@@ -21,6 +23,21 @@ export function openEconomyClient(): SupabaseClient | null {
     return null;
   }
 }
+
+/** Receipt, journal, and settlement client. Missing key returns null. It does not use the service role. */
+export function openEconomyVerifierClient(): SupabaseClient | null {
+  try {
+    return createEconomyVerifierClient();
+  } catch {
+    return null;
+  }
+}
+
+export type EconomyWriteOptions = {
+  call?: RpcCaller;
+  verifier?: SupabaseClient | null;
+  reader?: SupabaseClient | null;
+};
 
 export async function readEconomyLedger(client: SupabaseClient, nowMs: number): Promise<EconomyLedger> {
   const result = await callRpc(client, "economy_ledger_snapshot", { p_since: utcDayStart(nowMs) });
@@ -55,12 +72,11 @@ export type ChainWriteResult =
  * The transaction hash is the only caller input. Receipt fields come from verifyMainnetReceipt.
  */
 export async function confirmEconomyReceipt(
-  client: SupabaseClient,
   key: string,
   txHash: string,
-  call?: RpcCaller,
+  options?: EconomyWriteOptions,
 ): Promise<ChainWriteResult> {
-  const verified = await verifyMainnetReceipt({ txHash, call: call ?? economyRpc() });
+  const verified = await verifyMainnetReceipt({ txHash, call: options?.call ?? economyRpc() });
   if (!verified.ok) {
     return { ok: false, reason: verified.reason, verified: false };
   }
@@ -72,7 +88,11 @@ export async function confirmEconomyReceipt(
   if (!args.ok) {
     return { ok: false, reason: args.reason, verified: false };
   }
-  const result = await callRpc(client, "economy_note_receipt", args.args);
+  const verifier = verifierFrom(options);
+  if (!verifier) {
+    return { ok: false, reason: VERIFIER_UNSET, verified: true };
+  }
+  const result = await callRpc(verifier, "economy_note_receipt", args.args);
   if (!result.ok) {
     return { ok: false, reason: "The receipt could not be recorded.", verified: true };
   }
@@ -88,12 +108,11 @@ export async function confirmEconomyReceipt(
  * A reverted or unverified transaction never reaches economy_settle_proposal.
  */
 export async function settleEconomyProposal(
-  client: SupabaseClient,
   key: string,
   txHash: string,
-  call?: RpcCaller,
+  options?: EconomyWriteOptions,
 ): Promise<ChainWriteResult> {
-  const verified = await verifyMainnetReceipt({ txHash, call: call ?? economyRpc() });
+  const verified = await verifyMainnetReceipt({ txHash, call: options?.call ?? economyRpc() });
   if (!verified.ok) {
     return { ok: false, reason: verified.reason, verified: false };
   }
@@ -101,7 +120,35 @@ export async function settleEconomyProposal(
   if (!args.ok) {
     return { ok: false, reason: args.reason, verified: true };
   }
-  const result = await callRpc(client, "economy_settle_proposal", args.args);
+  const journal = receiptJournalArgs(verified.receipt);
+  if (!journal.ok) {
+    return { ok: false, reason: journal.reason, verified: true };
+  }
+  const verifier = verifierFrom(options);
+  if (!verifier) {
+    return { ok: false, reason: VERIFIER_UNSET, verified: true };
+  }
+  const reader = readerFrom(options);
+  if (!reader) {
+    return { ok: false, reason: "The proposal could not be read.", verified: true };
+  }
+  const current = await readSettlementRow(reader, key);
+  if (!current.ok) {
+    return { ok: false, reason: current.reason, verified: true };
+  }
+  const ready = settlementReadiness(current.row, verified.receipt.txHash);
+  if (!ready.ok) {
+    return { ok: false, reason: ready.reason, verified: true };
+  }
+  const posted = await callRpc(verifier, "economy_append_journal", journal.args);
+  if (!posted.ok) {
+    return { ok: false, reason: "The receipt journal could not be recorded.", verified: true };
+  }
+  const journalBody = record(posted.data);
+  if (!journalBody || journalBody.ok !== true) {
+    return { ok: false, reason: text(journalBody?.reason) || "The receipt journal could not be recorded.", verified: true };
+  }
+  const result = await callRpc(verifier, "economy_settle_proposal", args.args);
   if (!result.ok) {
     return { ok: false, reason: "The proposal could not be settled.", verified: true };
   }
@@ -110,6 +157,54 @@ export async function settleEconomyProposal(
     return { ok: false, reason: recorded.reason, verified: true };
   }
   return { ...recorded, verified: true };
+}
+
+function verifierFrom(options?: EconomyWriteOptions): SupabaseClient | null {
+  if (options) {
+    return options.verifier ?? null;
+  }
+  return openEconomyVerifierClient();
+}
+
+function readerFrom(options?: EconomyWriteOptions): SupabaseClient | null {
+  if (options) {
+    return options.reader ?? null;
+  }
+  return openEconomyClient();
+}
+
+async function readSettlementRow(
+  client: SupabaseClient,
+  key: string,
+): Promise<{ ok: true; row: { status: string; txHash: string | null } | null } | { ok: false; reason: string }> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), LEDGER_TIMEOUT_MS);
+  try {
+    const { data, error } = await client
+      .from("economy_proposals")
+      .select("status, tx_hash")
+      .eq("idempotency_key", key)
+      .abortSignal(controller.signal)
+      .maybeSingle();
+    if (error) {
+      return { ok: false, reason: "The proposal could not be read." };
+    }
+    if (!data) {
+      return { ok: true, row: null };
+    }
+    const body = data as { status?: unknown; tx_hash?: unknown };
+    return {
+      ok: true,
+      row: {
+        status: typeof body.status === "string" ? body.status : "",
+        txHash: typeof body.tx_hash === "string" ? body.tx_hash : null,
+      },
+    };
+  } catch {
+    return { ok: false, reason: "The proposal could not be read." };
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 function economyRpc(): RpcCaller {

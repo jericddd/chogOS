@@ -2,7 +2,7 @@
 
 Date: 20 October 2026.
 Base: `cursor/phase-1-genesis-world-155c` at `1984e5339693d9b5ae288bab6ba3dd4d2b218dda` (merge of Phase 7, pull request #35).
-Status: **review only**. No hosted SQL, no environment change, no watcher checkpoint change, no signature, and no broadcast.
+Status: **code-complete, operationally blocked**. The verifier migration and server path are in this branch. They are not applied to hosted Supabase. No environment change, no watcher checkpoint change, no signature, and no broadcast. Production permissions stay as they are until an operator applies the files and checks the queries in this document.
 
 ## What Phase 7 already enforced
 
@@ -80,14 +80,15 @@ The new migration replaces `economy_try_holds` and `economy_open_proposal` with 
 
 ## Migration review
 
-File: `supabase/migrations/20261020050000_phase8_receipt_verification.sql`.
+Files, in order:
 
-Apply manually, later, and only in this order:
-
-1. `supabase/migrations/20261019230000_phase7_economy.sql`
+1. `supabase/migrations/20261019230000_phase7_economy.sql` (merged Phase 7; do not edit)
 2. `supabase/migrations/20261020050000_phase8_receipt_verification.sql`
+3. `supabase/migrations/20261021000000_phase8_economy_verifier.sql`
 
-This change does not apply either file. It does not insert balances, change `economy_controls`, or mention watcher checkpoints. The replaced functions keep `security invoker`, `search_path = public`, and `FOR UPDATE` on `economy_lock`. SQL function signatures are unchanged, so this is `CREATE OR REPLACE` rather than a new argument list. `economy_release_operation(uuid, uuid)` is new. `economy_reservations.operation_id` is a new nullable uuid column.
+None of these files is applied to hosted Supabase by this change. The Phase 8 files do not insert balances, change `economy_controls`, or mention watcher checkpoints. The receipt file keeps `security invoker` on the functions it replaces. The verifier file switches the listed functions to `security definer` with `search_path = public`. `economy_release_operation(uuid, uuid)` is new. `economy_reservations.operation_id` is a new nullable uuid column. `economy_append_journal` is replaced in the verifier file because the Phase 7 body compares plpgsql variables named `kind`, `ref`, and `asset` with columns of the same names and fails when it is called. The replacement keeps the signature and the posting rules.
+
+Local proof applies every migration, in order, on an in-process Postgres (`openWorldDb` in `src/lib/world/test-db.ts`) and checks privileges by calling the functions as `service_role`, `chogos_economy_verifier`, and `anon`. That is not a hosted Supabase check. Production grants stay at whatever is already applied until an operator runs the files and the verification queries below.
 
 Safe retry of an identical proposal returns the existing row. A retry that changes proposal, asset, or amount fails closed. A retry of the same confirmed or settled transaction does not append another audit row. A live reservation is a replay: the server can approve it with `reserved: true` and does not restamp its operation id. A released reservation with the same identity is re-held under the new operation id when the observed balance covers the amount. It is not treated as a live hold. A reconciled reservation conflicts. `economy_proposal_status_guard` rejects an insert whose status is not `proposed`, so a direct insert cannot start as `confirmed`.
 
@@ -101,38 +102,25 @@ The trusted boundary is the server process. `src/lib/economy/db.ts` and `src/lib
 
 Phase 7 enables row level security on the economy tables and creates no permissive policy, so `anon` and `authenticated` receive no rows through the table API. It revokes table privileges from `public`, `anon`, and `authenticated`, and it grants `service_role` select, insert, and update on proposals and reservations. Journal and audit stay insert-only for that role. The service role bypasses row level security. That is why the application uses it only from server code.
 
-Phase 7 revokes function execute from `public` and grants it to `service_role`. Supabase default privileges can still leave execute with `anon` and `authenticated` after a revoke from `public`. The Phase 8 file revokes execute on the economy functions from `public`, `anon`, and `authenticated` when those roles exist, then grants execute back to `service_role` for the functions the server calls. Trigger functions are revoked and are not granted. The functions stay `security invoker`. Revoking `service_role` update, or moving the functions to `security definer` in this change, would break `release` and the verified confirm and settle path. This migration does not do that.
+Phase 7 revokes function execute from `public` and grants it to `service_role`. Supabase default privileges can still leave execute with `anon` and `authenticated` after a revoke from `public`. The Phase 8 receipt file revokes execute on the economy functions from `public`, `anon`, and `authenticated` when those roles exist, then grants execute back to `service_role` for the functions the server calls. Trigger functions are revoked and are not granted. In that file the functions stay `security invoker`. The verifier file is the one that switches the called functions to `security definer` and revokes `service_role` table writes. `economy_release_operation`, `economy_try_holds`, and the ordinary status functions stay executable by `service_role` after that switch, so reservation cleanup still has a path.
 
-Until an operator applies the Phase 8 file, hosted Postgres still has the Phase 7 `economy_try_holds` release and the Phase 7 function grants. The application in this change no longer sends that function a bare array, so the old release is not what a current reservation save executes. Applying the Phase 8 file is still required before a reservation save can succeed.
+Until an operator applies the Phase 8 receipt file, hosted Postgres still has the Phase 7 `economy_try_holds` release and the Phase 7 function grants. The application in this change no longer sends that function a bare array, so the old release is not what a current reservation save executes. Applying the Phase 8 receipt file is still required before a reservation save can succeed. Applying the verifier file is still required before `service_role` loses the receipt and journal writes.
 
-## Verifier role (specified, not applied)
+## Verifier role
 
-`service_role` bypasses row level security. After the Phase 8 file is applied it still can:
+`service_role` bypasses row level security. After only the Phase 8 receipt file, it can still call `economy_note_receipt` and `economy_settle_proposal`, update receipt columns, insert a journal line, and update `economy_reservations.state`. The verifier migration is what removes those grants. It is in the repository. It has not been applied to hosted Supabase, so those production grants are unchanged until an operator applies it and runs the queries below.
 
-- call `economy_note_receipt` and `economy_settle_proposal` with invented hashes, block numbers, and statuses;
-- `UPDATE` receipt columns on `economy_proposals`, subject only to the status guard's shape checks;
-- `INSERT` into `economy_journal`, which is the row settlement looks for;
-- `UPDATE economy_reservations.state` without calling `economy_release_operation`.
-
-It cannot insert a proposal that starts as `confirmed` once the Phase 8 status guard is applied. That guard raises `a proposal insert must start as proposed`. `economy_open_proposal` already inserts `proposed`. It cannot create an unowned reservation through `economy_try_hold`; that function returns `malformed` and its execute grant is revoked.
-
-Those remaining four writes cannot be revoked in this change. The receipt, journal, and reservation functions are `security invoker`, and the server still uses `service_role` to call them. Revoking the table grants now would break confirm, settle, and reservation cleanup. No verifier credential is created here. Closing the bypass needs the migration below plus an operator-minted key and a server deploy. This branch does not add that migration file, so a later schema push cannot apply it by accident.
-
-Apply the following only after the Phase 8 SQL and this application are both in place, and only in the same step as the server change that uses the verifier client. Suggested file name: `supabase/migrations/20261021000000_phase9_economy_verifier.sql`.
+The migration creates `chogos_economy_verifier` as `noinherit` and `nologin` when the role is missing. On a database that has `authenticator` (hosted Supabase does; the local test harness creates it too), it runs:
 
 ```sql
-create role chogos_economy_verifier noinherit nologin;
 grant chogos_economy_verifier to authenticator;
+```
 
-alter function economy_note_receipt(text, text, text, integer, numeric, text, text) security definer set search_path = public;
-alter function economy_settle_proposal(text, text) security definer set search_path = public;
-alter function economy_append_journal(jsonb) security definer set search_path = public;
-alter function economy_open_proposal(jsonb) security definer set search_path = public;
-alter function economy_apply_status(text, text, text, text) security definer set search_path = public;
-alter function economy_try_holds(jsonb) security definer set search_path = public;
-alter function economy_release_operation(uuid, uuid) security definer set search_path = public;
-alter function economy_ledger_snapshot(timestamp with time zone) security definer set search_path = public;
+It then marks these functions `security definer` with `search_path = public`: `economy_note_receipt`, `economy_settle_proposal`, `economy_append_journal`, `economy_open_proposal`, `economy_apply_status`, `economy_try_holds`, `economy_release_operation`, and `economy_ledger_snapshot`. They run as the table owner, which is the role that applies the migration. `economy_try_hold` stays an invoker function that inserts nothing.
 
+Grants after that file:
+
+```sql
 revoke all on function economy_note_receipt(text, text, text, integer, numeric, text, text) from public, anon, authenticated, service_role;
 revoke all on function economy_settle_proposal(text, text) from public, anon, authenticated, service_role;
 revoke all on function economy_append_journal(jsonb) from public, anon, authenticated, service_role;
@@ -155,54 +143,94 @@ revoke insert, update, delete, truncate on table economy_proposal_audit from ser
 grant select on table economy_proposals, economy_reservations, economy_journal, economy_proposal_audit to service_role;
 ```
 
-The function owner is the migration role that owns the tables. Do not grant `chogos_economy_verifier` to `service_role`, `anon`, or `authenticated`. Do not grant it table privileges or `BYPASSRLS`. Do not create a password in the migration.
+The file does not grant `chogos_economy_verifier` to `service_role`, `anon`, or `authenticated`. It does not grant the verifier table privileges. It does not create a password. The verifier role is not `BYPASSRLS`.
 
-Least privilege after that migration:
-
-| Capability | Who can do it |
+| Capability | Who can do it after the verifier file is applied |
 | --- | --- |
-| Insert a proposal as `proposed` | `service_role` through `economy_open_proposal` only. The insert guard still rejects any other status. |
-| Ordinary status (`approved`, `rejected`, `deferred`, `insufficient_funds`, and the retry back to `proposed`) | `service_role` through `economy_apply_status`. That function already rejects `confirmed`, `reverted`, and `settled`. |
-| Receipt confirmation, revert release, and settlement | `chogos_economy_verifier` through `economy_note_receipt` and `economy_settle_proposal` only. |
-| Chain journal line | `chogos_economy_verifier` through `economy_append_journal` only. `service_role` loses `INSERT` on `economy_journal`. |
-| Create, re-hold, or release a reservation | `service_role` through `economy_try_holds` and `economy_release_operation`. Direct `UPDATE` of `economy_reservations` is revoked. |
-| Legacy one-row hold | Nobody. `economy_try_hold` stays revoked. |
+| Insert a proposal as `proposed` | `service_role` through `economy_open_proposal`. The insert guard still rejects any other status. |
+| Ordinary status | `service_role` through `economy_apply_status`. That function rejects `confirmed`, `reverted`, and `settled`. |
+| Receipt confirmation, revert release, and settlement | `chogos_economy_verifier` through `economy_note_receipt` and `economy_settle_proposal`. |
+| Chain journal line | `chogos_economy_verifier` through `economy_append_journal`. |
+| Create, re-hold, or release a reservation | `service_role` through `economy_try_holds` and `economy_release_operation`. |
+| Legacy one-row hold | Nobody. `economy_try_hold` stays revoked and does not insert. |
 
-`economy_note_receipt` and `economy_settle_proposal` keep their internal reservation updates. Those run as the definer, so they still release or reconcile the reverted or settled proposal after the verifier calls them. `service_role` cannot call those functions and cannot update the rows itself.
+Receipt and settlement updates to reservations run inside the definer functions. `service_role` cannot call those functions and cannot update the rows itself after the revoke.
 
-Credential, created by an operator later:
+Settlement journal: a receipt has no transfer amount. After `verifyMainnetReceipt` returns a successful branded receipt, and after a service-role read shows the proposal is `confirmed` or `settled` on that same transaction, the server posts two `external` lines of kind `receipt_observed`, amount `1`, evidence key `143:<tx>:receipt`. That key satisfies the settlement check. It is a linkage, not a decoded transfer, and it is not a treasury account, so the ledger transfer query does not count it. A conflicting or unconfirmed proposal does not get this posting. A second call finds the evidence key and returns duplicate. The verifier migration adds `receipt_observed` to the journal kind check without rewriting existing lines.
+
+Application:
+
+- `createEconomyVerifierClient` lives in `src/lib/db/client.ts`, which imports `server-only`. It reads `SUPABASE_ECONOMY_VERIFIER_KEY` and throws when that value is empty. It does not read the service-role key.
+- `confirmEconomyReceipt` calls `verifyMainnetReceipt` first. Only a branded receipt is passed to `economy_note_receipt`, and only through the verifier client.
+- `settleEconomyProposal` uses the same verifier client for `economy_append_journal` and then `economy_settle_proposal`.
+- If the key is unset, both functions return a failure and do not call SQL with the service role.
+- `saveEconomyDecision` and `readEconomyLedger` stay on the service role.
+- No file under `src/app` imports these functions. Client components do not reference the verifier key.
+
+Credential, created by an operator. This change does not mint it:
 
 - Mint a Supabase JWT whose `role` claim is `chogos_economy_verifier`, signed with the existing project JWT secret.
-- Store it as `SUPABASE_ECONOMY_VERIFIER_KEY`.
-- Do not add that variable, a sample token, or the JWT secret to the repo.
-
-Application, deployed with the migration:
-
-- `confirmEconomyReceipt` calls `verifyMainnetReceipt` first.
-- Only a branded receipt may call `economy_note_receipt`, and only with the verifier client.
-- Settlement calls `economy_append_journal` with fields copied from that branded receipt, then `economy_settle_proposal`, both with the verifier client.
-- There is no fallback to `service_role` for those three calls.
-- `saveEconomyDecision` stays on `service_role`.
-
-Rollback:
-
-1. `GRANT EXECUTE` on `economy_note_receipt`, `economy_settle_proposal`, and `economy_append_journal` back to `service_role`.
-2. `GRANT INSERT, UPDATE` on `economy_proposals`, `economy_reservations`, and `economy_journal` back to `service_role`.
-3. Point confirm, journal append, and settle back at the service-role client.
-4. Leave `operation_id`, `economy_release_operation`, and the proposed-insert guard in place. Do not drop columns.
-5. Do not set `execution_enabled`, configure a signer, or enable a relayer.
-
-The table owner remains a break-glass path. `anon` and `service_role` cannot call the receipt or journal functions after the revoke.
+- Store it only as the server environment variable `SUPABASE_ECONOMY_VERIFIER_KEY`.
+- Do not put the token, a sample token, or the JWT secret in the repo or in a `NEXT_PUBLIC_` variable.
 
 ## Deployment order
 
-1. Apply `20261019230000_phase7_economy.sql` on any database that does not already have it. Do not edit that file.
-2. Apply `20261020050000_phase8_receipt_verification.sql`. This adds `operation_id`, replaces `economy_try_holds`, adds `economy_release_operation`, and revokes `anon` / `authenticated` execute. It does not create a verifier role and does not enable execution.
-3. Deploy the application commit that sends `{ operationId, holds }` and releases through `economy_release_operation`. If this deploy lands before step 2, reservation saves fail closed as described above. If step 2 lands while an older build still sends a bare array, the new function returns malformed before any insert. That older build records the failure as status `deferred`, which blocks a later `approved` on the same proposal. Apply the migration only together with this application.
-4. Apply the Phase 9 verifier migration. Confirm and settle through `service_role` start failing at this moment. Reservation saves still use `service_role`.
-5. Set `SUPABASE_ECONOMY_VERIFIER_KEY` in the host. This change does not do that.
-6. Deploy the server that uses the verifier client only after `verifyMainnetReceipt` succeeds.
-7. Do not enable execution, the watcher, a signer, or a relayer in any of these steps.
+Zero-downtime mixing is unsafe. Use a maintenance window and stop the running app before the SQL. Prerequisites: the migration role owns the economy tables; `anon`, `authenticated`, `service_role`, and `authenticator` exist; no watcher checkpoint is moved; execution stays disabled.
+
+1. If `economy_proposals` is missing, apply `20261019230000_phase7_economy.sql`. Do not edit that file. Skip this step when Phase 7 is already present.
+2. Apply `20261020050000_phase8_receipt_verification.sql`.
+3. Apply `20261021000000_phase8_economy_verifier.sql`.
+4. Run the verification queries in the next section on that database and keep the output. Until that output matches, production permissions are not fixed.
+5. Set `SUPABASE_ECONOMY_VERIFIER_KEY` on the server. This repository change does not do that.
+6. Deploy this application. Confirm and settle stay closed until both the migration and the key are present. They do not fall back to `service_role`.
+7. Do not enable execution, the watcher, a signer, or a relayer.
+
+Compatibility:
+
+| Database | Application | Result |
+| --- | --- | --- |
+| Phase 7 only | This commit | Reservation saves send `{ operationId, holds }`. Phase 7 expects an array, returns malformed before its insufficient-batch release, and the app records a deferred failure with no status write and no release. The proposal stays `proposed`. Confirm and settle fail closed because the verifier role does not exist. |
+| Phase 8 receipt file, no verifier file | An older build that sends a bare hold array | `economy_try_holds` returns malformed before any insert. That older build records status `deferred`, which blocks a later `approved`. Do not combine them. |
+| Phase 8 receipt file, no verifier file | This commit | Reservation saves can succeed. `service_role` can still write receipts, journal lines, and reservation state. Confirm and settle fail closed without the verifier role. |
+| Verifier file applied | An older build that confirms through `service_role` | Those calls fail. Reservation saves through `economy_try_holds` still work. |
+| Verifier file applied, key unset | This commit | Confirm and settle fail closed. Reservation saves still use `service_role`. |
+| Verifier file applied, key set | This commit | Confirm and settle use the verifier client only after `verifyMainnetReceipt` succeeds. |
+
+Both unapplied files are safe to run again. They use `create or replace`, `add column if not exists`, and conditional role and constraint changes. They do not delete economic rows, drop tables, or rewrite posted history. If a statement fails inside a transaction, the runner rolls that migration back. Run the same file again. Do not repair receipt columns by hand.
+
+Rollback, if the verifier file was applied and must be undone. This does not drop columns or delete rows:
+
+1. `GRANT EXECUTE` on `economy_note_receipt`, `economy_settle_proposal`, and `economy_append_journal` back to `service_role`.
+2. `GRANT INSERT, UPDATE` on `economy_proposals` and `economy_reservations` to `service_role`. `GRANT INSERT` on `economy_journal` and `economy_proposal_audit` to `service_role`.
+3. Deploy an application that sends confirm, journal append, and settle through the service role again.
+4. Leave `operation_id`, `economy_release_operation`, the proposed-insert guard, and `receipt_observed` in place.
+5. Do not set `execution_enabled`, configure a signer, or enable a relayer.
+
+The table owner remains a break-glass path.
+
+## Verification queries
+
+Run these on the database after step 3. Expected booleans are in the comments. The local PGlite test asserts the same predicates. Hosted output is still required before calling production permissions fixed.
+
+```sql
+select has_function_privilege('service_role', 'economy_note_receipt(text, text, text, integer, numeric, text, text)', 'execute'); -- false
+select has_function_privilege('service_role', 'economy_settle_proposal(text, text)', 'execute'); -- false
+select has_function_privilege('service_role', 'economy_append_journal(jsonb)', 'execute'); -- false
+select has_function_privilege('service_role', 'economy_try_hold(text, uuid, numeric, text, text, numeric, numeric)', 'execute'); -- false
+select has_function_privilege('service_role', 'economy_try_holds(jsonb)', 'execute'); -- true
+select has_function_privilege('chogos_economy_verifier', 'economy_note_receipt(text, text, text, integer, numeric, text, text)', 'execute'); -- true
+select has_function_privilege('chogos_economy_verifier', 'economy_try_holds(jsonb)', 'execute'); -- false
+select has_table_privilege('service_role', 'economy_proposals', 'update'); -- false
+select has_table_privilege('service_role', 'economy_reservations', 'update'); -- false
+select has_table_privilege('service_role', 'economy_journal', 'insert'); -- false
+select has_table_privilege('service_role', 'economy_proposals', 'select'); -- true
+select pg_has_role('service_role', 'chogos_economy_verifier', 'member'); -- false
+select pg_has_role('authenticator', 'chogos_economy_verifier', 'member'); -- true
+select rolbypassrls, rolcanlogin, rolinherit from pg_roles where rolname = 'chogos_economy_verifier'; -- false, false, false
+select execution_enabled from economy_controls; -- false
+```
+
+Local re-run: `src/lib/economy/phase8-verifier.test.ts` opens a database, applies every migration file, runs the reservation and settlement flow, repeats the verifier file, and checks that proposal, reservation, and journal counts stay the same. Reproduce it with `npx vitest run src/lib/economy/phase8-verifier.test.ts`. It does not connect to hosted Supabase.
 
 ## Observer
 
@@ -222,15 +250,15 @@ The table owner remains a break-glass path. `anon` and `service_role` cannot cal
 
 ## Residual risk
 
-Until the Phase 9 migration and the verifier credential are both in place, `service_role` can still call `economy_note_receipt` and `economy_settle_proposal`, update receipt columns, and insert a chain journal line. The status guard checks shape, chain 143, and a journal row. It does not see Monad. SQL does not verify a receipt. Direct `service_role` update of `economy_reservations.state` can still release a held row. Those four bypasses need the operator steps above. This change does not apply them and does not create `SUPABASE_ECONOMY_VERIFIER_KEY`.
+Hosted Supabase is unchanged. Until an operator applies the Phase 8 receipt file, the Phase 8 verifier file, and checks the queries above, production `service_role` can still call `economy_note_receipt` and `economy_settle_proposal`, update receipt columns, insert a journal line, and update reservation state. Hosted `economy_try_hold` can still insert a row with a null `operation_id`. The status guard checks shape, chain 143, and a journal row. It does not see Monad. SQL does not verify a receipt. This change does not apply the files and does not create `SUPABASE_ECONOMY_VERIFIER_KEY`.
 
-The hosted Phase 8 migration is not applied. This application will not successfully save a reservation until an operator applies the Phase 7 file, if needed, and then the Phase 8 file. Before that, the object payload is rejected before the Phase 7 insufficient-batch release, and the server returns a deferred failure without writing status or releasing holds. Hosted `economy_try_hold` can still insert a row with a null `operation_id` until that file is applied. After it is applied, that function inserts nothing. A `createdKeys` list is not the cleanup predicate. Cleanup releases rows whose `operation_id` and `proposal_id` match this attempt. Approval with a required reservation requires every required key to be `held`.
+After those files are applied, the table owner can still write directly. That break-glass path is outside the verifier role. `receipt_observed` is not a decoded transfer amount. A stored hash on the economy page stays unverified until some server call runs `verifyMainnetReceipt` for it. The page loader does not do that.
 
-`interpretLedgerSnapshot` leaves `chainVerified` false. `presentEconomy` builds an explorer link only when `applyRpcVerification` has already marked that row from a branded receipt in the same call. The page loader does not call the verifier, so a stored hash is shown without a verified label and without an explorer link. A passing test is not a claim that a particular production transaction was verified.
+`interpretLedgerSnapshot` leaves `chainVerified` false. `presentEconomy` builds an explorer link only when `applyRpcVerification` has already marked that row from a branded receipt in the same call. A passing test is not a claim that a particular production transaction was verified.
 
 The civilization treasury query on `/economy` can still hold the document open. That behavior is unchanged.
 
-No test in this phase calls a live RPC endpoint or hosted Supabase. The signer stays unset, the relayer stays disabled, the economic treasury stays unconfigured, and `executionEnabled` stays false. `/api/transactions` still returns 403.
+No test in this phase calls a live RPC endpoint or hosted Supabase. The signer stays unset, the relayer stays disabled, the economic treasury stays unconfigured, and `executionEnabled` stays false. `/api/transactions` still returns 403. Mainnet settlement is not production-ready.
 
 ## Production state
 
