@@ -1,5 +1,5 @@
 import { parseRawAmount } from "@/lib/economy/amounts";
-import type { EconomyActivityView, EconomyTransferView } from "@/lib/economy/present";
+import type { EconomyActivityView, EconomyTransferView, StoredReceiptRecord } from "@/lib/economy/present";
 import type { Hold, HoldBucket } from "@/lib/economy/reserve";
 import { isRpcVerifiedReceipt, type RpcVerifiedReceipt } from "@/lib/economy/verify-receipt";
 
@@ -137,6 +137,29 @@ function bucketOf(value: unknown): HoldBucket | null {
   return value === "gas" || value === "deployment" || value === "business_capital" ? value : null;
 }
 
+function storedReceiptOf(row: Record<string, unknown>): StoredReceiptRecord | null {
+  const chainRaw = row.receiptChainId;
+  const chainId =
+    typeof chainRaw === "number" && Number.isInteger(chainRaw)
+      ? chainRaw
+      : typeof chainRaw === "string" && /^[0-9]+$/.test(chainRaw)
+        ? Number(chainRaw)
+        : null;
+  const status = text(row.receiptStatus) || null;
+  const blockNumber = text(row.receiptBlockNumber);
+  const blockHash = text(row.receiptBlockHash);
+  const stored = {
+    chainId,
+    status: status && status.length <= 32 ? status : null,
+    blockNumber: /^[0-9]+$/.test(blockNumber) ? blockNumber : null,
+    blockHash: /^0x[0-9a-fA-F]{64}$/.test(blockHash) ? blockHash.toLowerCase() : null,
+  };
+  if (stored.chainId === null && !stored.status && !stored.blockNumber && !stored.blockHash) {
+    return null;
+  }
+  return stored;
+}
+
 function interpretActivities(value: unknown): EconomyActivityView[] {
   if (!Array.isArray(value)) {
     return [];
@@ -162,6 +185,7 @@ function interpretActivities(value: unknown): EconomyActivityView[] {
       simulated: true,
       txHash,
       chainVerified: false,
+      storedReceipt: storedReceiptOf(row),
     });
   }
   return activities;
@@ -181,6 +205,9 @@ function interpretTransfers(value: unknown): EconomyTransferView[] {
     const asset = row.asset === "MON" || row.asset === "CHOG" ? row.asset : null;
     const status = text(row.status);
     if (!asset || amountRaw === null || (status !== "observed" && status !== "realized")) {
+      continue;
+    }
+    if (row.kind === "receipt_observed") {
       continue;
     }
     const evidenceKey = text(row.evidenceKey);

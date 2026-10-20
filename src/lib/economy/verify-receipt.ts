@@ -2,6 +2,8 @@ import { publicRpcError } from "@/lib/verify/anchor";
 
 const HASH = /^0x[0-9a-fA-F]{64}$/i;
 const QUANTITY = /^0x[0-9a-fA-F]+$/;
+const ADDRESS = /^0x[0-9a-fA-F]{40}$/i;
+const DATA = /^0x(?:[0-9a-fA-F]{2})*$/i;
 const READ_METHODS = new Set(["eth_chainId", "eth_getTransactionReceipt", "eth_getBlockByNumber"]);
 const RPC_TIMEOUT_MS = 4_000;
 
@@ -13,6 +15,13 @@ const rpcVerifiedBrand: unique symbol = Symbol("chogos.rpc-verified-mainnet-rece
 
 export type RpcCaller = (method: string, params: unknown[]) => Promise<unknown>;
 
+export type RpcReceiptLog = {
+  readonly index: number;
+  readonly address: `0x${string}`;
+  readonly topics: readonly `0x${string}`[];
+  readonly data: `0x${string}`;
+};
+
 export type RpcVerifiedReceipt = {
   readonly [rpcVerifiedBrand]: true;
   readonly source: "monad-mainnet-rpc";
@@ -21,6 +30,9 @@ export type RpcVerifiedReceipt = {
   readonly status: "success" | "reverted";
   readonly blockNumber: bigint;
   readonly blockHash: `0x${string}`;
+  /** True only when this receipt object included a logs array. An empty array was read. */
+  readonly logsRead: boolean;
+  readonly logs: readonly RpcReceiptLog[];
 };
 
 export type ReceiptVerifyFailure = "malformed" | "wrong_chain" | "missing" | "mismatch" | "rpc_failure";
@@ -46,7 +58,9 @@ export function isRpcVerifiedReceipt(value: unknown): value is RpcVerifiedReceip
     HASH.test(row.blockHash) &&
     row.blockHash === row.blockHash.toLowerCase() &&
     typeof row.blockNumber === "bigint" &&
-    row.blockNumber >= 0n
+    row.blockNumber >= 0n &&
+    (row.logsRead === true || row.logsRead === false) &&
+    Array.isArray(row.logs)
   );
 }
 
@@ -119,6 +133,11 @@ export async function verifyMainnetReceipt(input: {
     return { ok: false, outcome: "mismatch", reason: "The block hash does not correspond to the receipt's block." };
   }
 
+  const logs = parseReceiptLogs(receipt.logs, txHash, blockHash);
+  if (!logs.ok) {
+    return { ok: false, outcome: "malformed", reason: logs.reason };
+  }
+
   const sealed = {
     source: "monad-mainnet-rpc" as const,
     chainId: 143 as const,
@@ -126,9 +145,11 @@ export async function verifyMainnetReceipt(input: {
     status,
     blockNumber,
     blockHash,
+    logsRead: logs.logsRead,
+    logs: logs.logs,
   };
   Object.defineProperty(sealed, rpcVerifiedBrand, { value: true });
-  return { ok: true, receipt: sealed as RpcVerifiedReceipt };
+  return { ok: true, receipt: Object.freeze(sealed) as RpcVerifiedReceipt };
 }
 
 /** POST JSON-RPC for the three read methods. An unset URL fails closed and is not a verification. */
@@ -227,4 +248,78 @@ function receiptStatus(value: unknown): "success" | "reverted" | null {
 
 function record(value: unknown): Record<string, unknown> | null {
   return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
+}
+
+/**
+ * Logs are optional for callers that predate this field. When the field is present
+ * it must be a consistent array from the same receipt. A removed log, a repeated
+ * index, or a hash that disagrees with the receipt fails the whole check.
+ */
+function parseReceiptLogs(
+  value: unknown,
+  txHash: `0x${string}`,
+  blockHash: `0x${string}`,
+): { ok: true; logsRead: boolean; logs: readonly RpcReceiptLog[] } | { ok: false; reason: string } {
+  if (value === undefined) {
+    return { ok: true, logsRead: false, logs: Object.freeze([]) };
+  }
+  if (!Array.isArray(value)) {
+    return { ok: false, reason: "The receipt logs were malformed." };
+  }
+  const logs: RpcReceiptLog[] = [];
+  const seen = new Set<number>();
+  for (const item of value) {
+    const row = record(item);
+    if (!row || row.removed === true) {
+      return { ok: false, reason: "The receipt logs were malformed." };
+    }
+    const index = parseQuantity(row.logIndex);
+    const address = addressOf(row.address);
+    const topics = topicsOf(row.topics);
+    const data = dataOf(row.data);
+    if (index === null || index < 0n || index > BigInt(Number.MAX_SAFE_INTEGER) || !address || !topics || data === null) {
+      return { ok: false, reason: "The receipt logs were malformed." };
+    }
+    const logIndex = Number(index);
+    if (seen.has(logIndex)) {
+      return { ok: false, reason: "The receipt logs were malformed." };
+    }
+    seen.add(logIndex);
+    const logTx = row.transactionHash === undefined ? txHash : hashOf(row.transactionHash);
+    const logBlock = row.blockHash === undefined ? blockHash : hashOf(row.blockHash);
+    if (logTx !== txHash || logBlock !== blockHash) {
+      return { ok: false, reason: "The receipt logs were malformed." };
+    }
+    logs.push(Object.freeze({ index: logIndex, address, topics, data }));
+  }
+  return { ok: true, logsRead: true, logs: Object.freeze(logs) };
+}
+
+function addressOf(value: unknown): `0x${string}` | null {
+  if (typeof value !== "string" || !ADDRESS.test(value)) {
+    return null;
+  }
+  return value.toLowerCase() as `0x${string}`;
+}
+
+function topicsOf(value: unknown): readonly `0x${string}`[] | null {
+  if (!Array.isArray(value)) {
+    return null;
+  }
+  const topics: `0x${string}`[] = [];
+  for (const topic of value) {
+    const hash = hashOf(topic);
+    if (!hash) {
+      return null;
+    }
+    topics.push(hash);
+  }
+  return Object.freeze(topics);
+}
+
+function dataOf(value: unknown): `0x${string}` | null {
+  if (typeof value !== "string" || !DATA.test(value)) {
+    return null;
+  }
+  return value.toLowerCase() as `0x${string}`;
 }

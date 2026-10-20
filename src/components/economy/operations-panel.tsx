@@ -57,6 +57,40 @@ export function EconomicOperationsPanel({ view }: { view: EconomyOperationsView 
           </ul>
         ) : null}
       </div>
+      <div className="mt-5" data-testid="receipt-checks">
+        <h3 className="font-serif text-xl">Mainnet receipt checks</h3>
+        <p className="mt-2 text-sm leading-6 text-muted">{view.receiptNote}</p>
+        {view.receiptFocusNote ? <p className="mt-2 text-sm leading-6 text-muted">{view.receiptFocusNote}</p> : null}
+        {view.receiptChecks.length > 0 ? (
+          <ul className="mt-3 divide-y divide-line border-y border-line">
+            {view.receiptChecks.map((check) => (
+              <li key={check.txHash} className="py-3">
+                <p className="text-sm">{check.headline}</p>
+                <dl className="mt-3 grid gap-3 sm:grid-cols-2">
+                  <Fact label="Receipt status" value={check.receiptStatus ?? "Not confirmed"} />
+                  <Fact label="Block" value={check.blockNumber ?? "Not confirmed"} mono={Boolean(check.blockNumber)} />
+                  <Fact label="Checked" value={check.checkedAt} />
+                  <Fact label="Settlement" value={check.settlementNote} />
+                </dl>
+                <p className="mt-2 font-mono text-xs break-all text-muted">{check.txHash}</p>
+                <p className="mt-2 text-sm leading-6 text-muted">{check.reason}</p>
+                {check.discrepancy ? <p className="mt-2 text-sm leading-6 text-muted">{check.discrepancy}</p> : null}
+                <p className="mt-2 text-sm leading-6 text-muted">{check.transferNote}</p>
+                {check.transfers.map((transfer) => (
+                  <p key={transfer.logIndex} className="mt-2 text-sm leading-6">
+                    {transfer.amountText}. {transfer.directionNote} Log {transfer.logIndex}. From {transfer.from} to {transfer.to}.
+                  </p>
+                ))}
+                {check.explorerHref ? (
+                  <a className="mt-2 inline-block text-sm text-accent" href={check.explorerHref} rel="noopener noreferrer" target="_blank">
+                    View transaction
+                  </a>
+                ) : null}
+              </li>
+            ))}
+          </ul>
+        ) : null}
+      </div>
       <div className="mt-5">
         <h3 className="font-serif text-xl">Realized transfers</h3>
         <p className="mt-2 text-sm leading-6 text-muted">{view.transferNote}</p>

@@ -1455,7 +1455,13 @@ describe("phase 8 reservation and trust regressions", () => {
       }
     }
     expect(readFileSync("src/lib/economy/db.ts", "utf8").startsWith('import "server-only"')).toBe(true);
-    expect(readFileSync("src/lib/economy/load.ts", "utf8")).not.toContain("verifyMainnetReceipt");
+    const loadSource = readFileSync("src/lib/economy/load.ts", "utf8");
+    expect(loadSource.startsWith('import "server-only"')).toBe(true);
+    expect(loadSource).not.toContain("confirmEconomyReceipt");
+    expect(loadSource).not.toContain("settleEconomyProposal");
+    expect(loadSource).not.toContain("economy_note_receipt");
+    expect(loadSource).not.toContain("economy_settle_proposal");
+    expect(loadSource).toContain("recheckRecordedReceipts");
     const sql = readFileSync("supabase/migrations/20261020050000_phase8_receipt_verification.sql", "utf8").toLowerCase();
     expect(sql).toContain("revoke all on function %s from %i");
     expect(sql).not.toContain("grant execute on function %s to anon");

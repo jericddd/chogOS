@@ -15,16 +15,18 @@ export const metadata: Metadata = {
   title: "Economy",
 };
 
-export default function EconomyPage() {
+type Search = Promise<Record<string, string | string[] | undefined>>;
+
+export default function EconomyPage({ searchParams }: { searchParams: Search }) {
   return (
     <div>
       <PageHeader
         title="Economy"
-        lede="The economic treasury is an operator-configured public address on Monad mainnet. The Civilization Treasury record and the ChogTreasury NFT wallet are different addresses. Execution is disabled."
+        lede="The economic treasury is an operator-configured public address on Monad mainnet. The Civilization Treasury record and the ChogTreasury NFT wallet are different addresses. Execution is disabled. A stored hash is not a fresh mainnet verification, and opening this page does not settle a proposal."
       />
       <div className="space-y-6">
         <Suspense fallback={<p className="text-sm text-muted">Reading the economic treasury…</p>}>
-          <EconomicOperationsLive />
+          <EconomicOperationsLive searchParams={searchParams} />
         </Suspense>
         <Suspense fallback={<p className="text-sm text-muted">Reading the civilization treasury…</p>}>
           <CivilizationTreasuryLive />
@@ -51,8 +53,10 @@ export default function EconomyPage() {
   );
 }
 
-async function EconomicOperationsLive() {
-  const view = await loadEconomicOperations();
+async function EconomicOperationsLive({ searchParams }: { searchParams: Search }) {
+  const params = await searchParams;
+  const focus = typeof params.tx === "string" ? params.tx : null;
+  const view = await loadEconomicOperations(focus);
   return <EconomicOperationsPanel view={view} />;
 }
 

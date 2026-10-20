@@ -1,7 +1,15 @@
 import { explorerTxUrl } from "@/lib/blockchain/explorer";
 import type { ProductionExecution } from "@/lib/economy/execution";
 import type { TreasurySnapshot, TreasuryStatus } from "@/lib/economy/observe";
+import type { PublicReceiptCheck } from "@/lib/economy/public-verification";
 import { formatTokenAmount } from "@/lib/wallets/present";
+
+export type StoredReceiptRecord = {
+  chainId: number | null;
+  status: string | null;
+  blockNumber: string | null;
+  blockHash: string | null;
+};
 
 export type EconomyActivityView = {
   id: string;
@@ -11,6 +19,8 @@ export type EconomyActivityView = {
   simulated: boolean;
   txHash: string | null;
   chainVerified: boolean;
+  /** Stored columns. They are not a fresh mainnet check. */
+  storedReceipt?: StoredReceiptRecord | null;
 };
 
 export type EconomyTransferView = {
@@ -50,6 +60,9 @@ export type EconomyOperationsView = {
   activityNote: string;
   transfers: Array<EconomyTransferView & { amountText: string; href: string | null }>;
   transferNote: string;
+  receiptChecks: PublicReceiptCheck[];
+  receiptNote: string;
+  receiptFocusNote: string | null;
   blocked: string[];
   ledgerNote: string;
 };
@@ -78,6 +91,9 @@ export function presentEconomy(input: {
   dailyGasLimitRaw?: string | null;
   activities?: EconomyActivityView[];
   transfers?: EconomyTransferView[];
+  receiptChecks?: PublicReceiptCheck[];
+  receiptNote?: string;
+  receiptFocusNote?: string | null;
 }): EconomyOperationsView {
   const snapshot = input.snapshot;
   const monDecimals = snapshot.mon.decimals;
@@ -131,8 +147,11 @@ export function presentEconomy(input: {
       : "Proposals stay separate from confirmed transfers.",
     transfers,
     transferNote: transfers.length === 0
-      ? "No realized incoming or outgoing transfer is loaded. An unread ledger is not a zero balance."
-      : "Explorer links appear only for transfers with verified mainnet evidence.",
+      ? "No realized incoming or outgoing transfer is loaded. An unread ledger is not a zero balance. A receipt_observed journal link is not a transfer."
+      : "Counted journal lines stay separate from a fresh receipt check. Explorer links appear only for transfers with verified mainnet evidence.",
+    receiptChecks: input.receiptChecks ?? [],
+    receiptNote: input.receiptNote ?? "No recorded economy receipt is loaded. This page does not invent a transaction.",
+    receiptFocusNote: input.receiptFocusNote ?? null,
     blocked,
     ledgerNote: input.ledgerLoaded
       ? "Reservation totals come from the loaded ledger. A reservation is not a payment, and it is not a broadcast."
