@@ -1,16 +1,20 @@
 @import "tailwindcss";
 
 :root {
-  --background: #070b10;
-  --foreground: #e8f7f0;
-  --muted: #93a89f;
-  --line: #1b2c2a;
-  --card: #0d1419;
-  --accent: #3dffb0;
-  --accent-soft: #10261c;
-  --violet: #a78bfa;
-  --warning: #e6b089;
-  --warning-soft: #2a2118;
+  --shell-header: 4.25rem;
+  --background: #12182b;
+  --foreground: #f6e7c1;
+  --muted: #b7c4a8;
+  --line: #6b4e2e;
+  --card: #1b2438;
+  --accent: #f0c14a;
+  --accent-soft: #3a2e14;
+  --violet: #d7b3ff;
+  --warning: #ffb15a;
+  --warning-soft: #3a2614;
+  --pixel-ink: #070b14;
+  --pixel-gold: #e6c36a;
+  --pixel-soil: #1a120c;
   color-scheme: dark;
 }
 
@@ -25,9 +29,10 @@
   --color-violet: var(--violet);
   --color-warning: var(--warning);
   --color-warning-soft: var(--warning-soft);
-  --font-sans: var(--font-geist-sans);
-  --font-serif: var(--font-newsreader);
-  --font-mono: var(--font-geist-mono);
+  --font-sans: var(--font-silk);
+  --font-serif: var(--font-press);
+  --font-mono: var(--font-silk);
+  --font-display: var(--font-press);
 }
 
 html {
@@ -35,16 +40,72 @@ html {
 }
 
 body {
-  background:
-    radial-gradient(900px 480px at 8% -10%, rgb(61 255 176 / 8%), transparent 55%),
-    radial-gradient(700px 420px at 100% 0%, rgb(167 139 250 / 10%), transparent 50%),
-    var(--background);
+  background-color: var(--background);
+  background-image:
+    linear-gradient(rgb(240 193 74 / 5%) 1px, transparent 1px),
+    linear-gradient(90deg, rgb(240 193 74 / 5%) 1px, transparent 1px);
+  background-size: 8px 8px;
   color: var(--foreground);
-  font-family: var(--font-geist-sans), sans-serif;
+  font-family: var(--font-silk), ui-monospace, monospace;
+  -webkit-font-smoothing: none;
+  -moz-osx-font-smoothing: unset;
+}
+
+.font-serif {
+  font-family: var(--font-press), ui-monospace, monospace;
+  letter-spacing: 0.02em;
+  line-height: 1.45;
+}
+
+.font-display {
+  font-family: var(--font-press), ui-monospace, monospace;
+  letter-spacing: 0.04em;
+}
+
+h1.font-serif {
+  font-size: 1.15rem;
+  line-height: 1.5;
+}
+
+h2.font-serif {
+  font-size: 0.85rem;
+  line-height: 1.45;
+}
+
+/* Square frames. Pixel UI does not use soft corners. */
+.rounded-2xl,
+.rounded-xl,
+.rounded-lg,
+.rounded-full {
+  border-radius: 0;
+}
+
+.pixel-panel {
+  background: color-mix(in srgb, var(--card) 94%, transparent);
+  border: 3px solid var(--pixel-gold);
+  box-shadow: 4px 4px 0 var(--pixel-ink);
+}
+
+.world-hud .font-serif {
+  font-size: 0.72rem;
+  line-height: 1.45;
+}
+
+.world-hud .world-clock {
+  font-size: 0.64rem;
+  line-height: 1.45;
+}
+
+.world-hud {
+  container-type: inline-size;
+}
+
+.stat-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(6.25rem, 1fr));
 }
 
 .portrait-frame {
   background:
-    radial-gradient(120px 80px at 50% 20%, rgb(61 255 176 / 16%), transparent 70%),
-    linear-gradient(180deg, #10181c, #070b10);
+    linear-gradient(180deg, #243044, #12182b);
 }

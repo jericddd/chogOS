@@ -78,7 +78,7 @@ export function WorldStatus({
   return (
     <div className="rounded-xl border border-line bg-card px-4 py-3">
       <div className="flex items-center justify-between gap-3">
-        <p className="font-serif text-2xl tracking-tight tabular-nums" aria-live="off">
+        <p className="world-clock font-serif text-2xl tracking-tight whitespace-nowrap tabular-nums" aria-live="off">
           {formatWorldTime(worldS)}
         </p>
         <span className="inline-flex items-center gap-1.5 rounded-full border border-line px-2.5 py-1 text-xs" title={info.detail}>
@@ -107,7 +107,7 @@ function TownNeedsLine({ snapshot }: { snapshot: WorldSnapshot }) {
   const tone =
     banner.tone === "need" ? "text-warning" : banner.tone === "blocked" ? "text-warning" : "text-muted";
   return (
-    <p className={`mt-2 text-xs leading-5 ${tone}`} title={banner.detail}>
+    <p className={`mt-2 text-xs leading-5 max-md:hidden ${tone}`} title={banner.detail}>
       {banner.title}
     </p>
   );
@@ -116,7 +116,7 @@ function TownNeedsLine({ snapshot }: { snapshot: WorldSnapshot }) {
 function RoadsLine({ snapshot }: { snapshot: WorldSnapshot }) {
   const banner = describeRoadsBanner(snapshot.roads ?? [], snapshot.roadsReady ?? false);
   return (
-    <p className="mt-1 text-xs leading-5 text-muted" title={banner.detail}>
+    <p className="mt-1 text-xs leading-5 text-muted max-md:hidden" title={banner.detail}>
       {banner.title}
     </p>
   );
@@ -126,7 +126,7 @@ function TownProjectsLine({ snapshot }: { snapshot: WorldSnapshot }) {
   const banner = describeTownProjectsBanner(snapshot.townProjects ?? [], snapshot.townProjectsReady ?? false);
   const tone = banner.tone === "need" || banner.tone === "blocked" ? "text-warning" : "text-muted";
   return (
-    <p className={`mt-1 text-xs leading-5 ${tone}`} title={banner.detail}>
+    <p className={`mt-1 text-xs leading-5 max-md:hidden ${tone}`} title={banner.detail}>
       {banner.title}
     </p>
   );
@@ -833,11 +833,11 @@ function WorldOverview({ snapshot, onPick }: { snapshot: WorldSnapshot; onPick: 
       <p className="mt-1 text-sm text-muted">
         {present.length} citizens in the world · {founding} founding · {present.length - founding} community
       </p>
-      <ul className="mt-3 grid grid-cols-3 gap-2 text-center">
+      <ul className="stat-grid mt-3 gap-2 text-center">
         {ACTIVITY_ORDER.filter((a) => (counts.get(a) ?? 0) > 0).map((activity) => (
-          <li key={activity} className="rounded-lg border border-line px-2 py-2">
-            <p className="font-serif text-xl tabular-nums">{counts.get(activity)}</p>
-            <p className="text-[0.68rem] text-muted">{ACTIVITY_LABEL[activity]}</p>
+          <li key={activity} className="min-w-0 border border-line px-1 py-1">
+            <p className="font-serif text-xl leading-none tabular-nums">{counts.get(activity)}</p>
+            <p className="mt-1 text-[0.62rem] leading-4 break-words text-muted">{ACTIVITY_LABEL[activity]}</p>
           </li>
         ))}
       </ul>

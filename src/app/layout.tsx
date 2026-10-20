@@ -1,22 +1,20 @@
 import type { Metadata } from "next";
-import { Geist, Geist_Mono, Newsreader } from "next/font/google";
+import { Press_Start_2P, Silkscreen } from "next/font/google";
 import { AppShell } from "@/components/shell/app-shell";
 import "./globals.css";
 
-const geistSans = Geist({
-  variable: "--font-geist-sans",
+const pressStart = Press_Start_2P({
+  weight: "400",
   subsets: ["latin"],
+  variable: "--font-press",
+  display: "swap",
 });
 
-const geistMono = Geist_Mono({
-  variable: "--font-geist-mono",
+const silkscreen = Silkscreen({
+  weight: ["400", "700"],
   subsets: ["latin"],
-});
-
-const newsreader = Newsreader({
-  variable: "--font-newsreader",
-  subsets: ["latin"],
-  style: ["normal", "italic"],
+  variable: "--font-silk",
+  display: "swap",
 });
 
 export const metadata: Metadata = {
@@ -36,7 +34,7 @@ export default function RootLayout({
   return (
     <html
       lang="en"
-      className={`${geistSans.variable} ${geistMono.variable} ${newsreader.variable} h-full antialiased`}
+      className={`${pressStart.variable} ${silkscreen.variable} h-full`}
     >
       <body className="min-h-full">
         <AppShell>{children}</AppShell>

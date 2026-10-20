@@ -8,10 +8,10 @@ import {
   WORLD_PX_H,
   WORLD_PX_W,
   clampCamera,
-  fitCamera,
   focusOn,
   hitTest,
   minScale,
+  openingCamera,
   panBy,
   placeCitizens,
   screenToTile,
@@ -152,7 +152,7 @@ export function WorldCanvas({ snapshot, skewMs, selection, follow, onSelect, onU
     },
     reset() {
       userMoved.current = false;
-      target.current = fitCamera(view.current);
+      target.current = openingCamera(view.current);
     },
     focus(next) {
       focusSelection(next);
@@ -184,7 +184,7 @@ export function WorldCanvas({ snapshot, skewMs, selection, follow, onSelect, onU
       view.current = { width: box.width, height: box.height };
       camera.current =
         !camera.current || !userMoved.current
-          ? fitCamera(view.current)
+          ? openingCamera(view.current)
           : clampCamera(camera.current, view.current);
       target.current = null;
       last = 0;
@@ -210,7 +210,7 @@ export function WorldCanvas({ snapshot, skewMs, selection, follow, onSelect, onU
       const placed = placeCitizens(snap.citizens, byId, worldS, overlay);
       placements.current = placed;
 
-      let cam = camera.current ?? fitCamera(view.current);
+      let cam = camera.current ?? openingCamera(view.current);
       if (following && sel?.type === "citizen") {
         const me = placed.find((p) => p.tokenId === sel.tokenId);
         if (me) {
@@ -511,7 +511,7 @@ export function WorldCanvas({ snapshot, skewMs, selection, follow, onSelect, onU
     } else if (event.key === "0") {
       event.preventDefault();
       userMoved.current = false;
-      target.current = fitCamera(view.current);
+      target.current = openingCamera(view.current);
     } else if (event.key === "Escape") {
       live.current.onSelect(null);
     }
@@ -523,7 +523,7 @@ export function WorldCanvas({ snapshot, skewMs, selection, follow, onSelect, onU
       tabIndex={0}
       onKeyDown={onKeyDown}
       role="application"
-      aria-label="Map of chogOS. Arrow keys pan, plus and minus zoom, 0 resets the view, Escape clears the selection. Use the lists beside the map to find citizens and places."
+      aria-label="Map of chogOS. Arrow keys pan, plus and minus zoom, 0 resets the view, Escape clears the selection. The day and civilization details are in the panel inside the map."
       className="relative h-full w-full overflow-hidden outline-none focus-visible:ring-2 focus-visible:ring-accent"
     >
       <canvas ref={canvasRef} className="block touch-none select-none" style={{ cursor: "grab", imageRendering: "pixelated" }} />
