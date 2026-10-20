@@ -7,9 +7,10 @@
 -- Postgres cannot see Monad RPC. economy_note_receipt stores caller-supplied
 -- fields. It does not query Monad and does not verify a receipt.
 -- The server calls verifyMainnetReceipt before those arguments are built.
--- economy_try_holds stamps a server-generated operation_id on rows it inserts.
+-- economy_try_holds stamps a server-generated operation_id on rows it inserts
+-- and on released rows it re-holds. A row that is already held keeps its id.
 -- economy_release_operation releases only rows with that id. A returned key list
--- is not ownership. Existing rows keep their original operation_id.
+-- is not ownership. economy_try_hold does not insert.
 
 alter table economy_reservations
   add column if not exists operation_id uuid;
@@ -32,13 +33,24 @@ begin
      or new.bucket is distinct from old.bucket
      or new.idempotency_key is distinct from old.idempotency_key
      or new.proposal_id is distinct from old.proposal_id
-     or new.token_id is distinct from old.token_id
-     or new.observed_raw is distinct from old.observed_raw
+     or new.token_id is distinct from old.token_id then
+    raise exception 'reservation identity is immutable';
+  end if;
+  if old.state = 'released' and new.state = 'held' then
+    if new.operation_id is null then
+      raise exception 'a re-held reservation needs an operation id';
+    end if;
+    return new;
+  end if;
+  if new.observed_raw is distinct from old.observed_raw
      or new.operation_id is distinct from old.operation_id then
     raise exception 'reservation identity is immutable';
   end if;
-  if old.state <> 'held' and new.state is distinct from old.state then
+  if old.state = 'reconciled' and new.state is distinct from old.state then
     raise exception 'a settled reservation cannot change state';
+  end if;
+  if old.state = 'released' and new.state is distinct from old.state then
+    raise exception 'a released reservation cannot change state';
   end if;
   if old.state = 'held' and new.state not in ('held', 'reconciled', 'released') then
     raise exception 'reservation state is invalid';
@@ -48,7 +60,7 @@ end;
 $$;
 
 comment on function economy_reservation_immutable() is
-  'Identity columns and operation_id cannot change. A held row may move to reconciled or released.';
+  'Identity columns cannot change. operation_id and observed_raw can change only when a released row is re-held. A held row may move to reconciled or released. A reconciled row is terminal.';
 
 create or replace function economy_try_hold(
   p_key text,
@@ -64,65 +76,17 @@ language plpgsql
 security invoker
 set search_path = public
 as $$
-declare
-  existing economy_reservations%rowtype;
-  used numeric(78, 0);
-  new_id uuid;
 begin
-  perform 1 from economy_lock where id = 1 for update;
-
-  if p_key is null or length(btrim(p_key)) < 1 or p_amount is null or p_amount <= 0 or p_observed is null or p_observed < 0 then
-    return jsonb_build_object('ok', false, 'outcome', 'malformed', 'reason', 'A reservation needs a positive amount and an observed balance.');
-  end if;
-  if p_asset not in ('MON', 'CHOG') or p_bucket not in ('gas', 'deployment', 'business_capital') then
-    return jsonb_build_object('ok', false, 'outcome', 'malformed', 'reason', 'The reservation asset or bucket is not supported.');
-  end if;
-  if p_bucket in ('gas', 'deployment') and p_asset <> 'MON' then
-    return jsonb_build_object('ok', false, 'outcome', 'malformed', 'reason', 'Gas and deployment reservations are native MON.');
-  end if;
-
-  select * into existing from economy_reservations where idempotency_key = p_key;
-  if found then
-    if existing.proposal_id is distinct from p_proposal
-       or existing.token_id is distinct from p_token
-       or existing.asset is distinct from p_asset
-       or existing.bucket is distinct from p_bucket
-       or existing.amount_raw is distinct from p_amount
-       or existing.chain_id is distinct from 143 then
-      return jsonb_build_object(
-        'ok', false,
-        'outcome', 'conflict',
-        'reason', 'This idempotency key is already used for a different reservation.'
-      );
-    end if;
-    return jsonb_build_object('ok', true, 'created', false, 'id', existing.id, 'state', existing.state);
-  end if;
-
-  select coalesce(sum(amount_raw), 0) into used
-    from economy_reservations
-    where state = 'held' and asset = p_asset;
-
-  if used + p_amount > p_observed then
-    return jsonb_build_object(
-      'ok', false,
-      'outcome', 'insufficient_funds',
-      'reason', 'The remaining observed balance cannot cover another reservation.'
-    );
-  end if;
-
-  insert into economy_reservations (
-    proposal_id, idempotency_key, chain_id, token_id, asset, bucket, amount_raw, observed_raw, state
-  ) values (
-    p_proposal, p_key, 143, p_token, p_asset, p_bucket, p_amount, p_observed, 'held'
-  )
-  returning id into new_id;
-
-  return jsonb_build_object('ok', true, 'created', true, 'id', new_id, 'state', 'held');
+  return jsonb_build_object(
+    'ok', false,
+    'outcome', 'malformed',
+    'reason', 'A reservation needs economy_try_holds and an operation id.'
+  );
 end;
 $$;
 
 comment on function economy_try_hold(text, uuid, numeric, text, text, numeric, numeric) is
-  'Serializes one offchain hold and leaves operation_id null. economy_release_operation does not match that row. The server uses economy_try_holds. A reused key with a different proposal, asset, amount, bucket, or token fails closed and does not release the existing row.';
+  'Rejects the legacy one-row path. It does not insert a reservation and cannot bypass operation_id. The server uses economy_try_holds.';
 
 create or replace function economy_open_proposal(p_row jsonb)
 returns jsonb
@@ -247,7 +211,7 @@ declare
   batch jsonb;
   idx integer;
   n integer;
-  all_exist boolean := true;
+  all_held boolean := true;
   existing economy_reservations%rowtype;
   hold_asset text;
   observed numeric(78, 0);
@@ -255,8 +219,10 @@ declare
   needed numeric(78, 0);
   operation uuid;
   new_id uuid;
+  reheld integer := 0;
   created_any boolean := false;
   created_keys jsonb := '[]'::jsonb;
+  held_keys jsonb := '[]'::jsonb;
 begin
   perform 1 from economy_lock where id = 1 for update;
 
@@ -308,13 +274,37 @@ begin
           'reason', 'This idempotency key is already used for a different reservation.'
         );
       end if;
+      if existing.state = 'reconciled' then
+        return jsonb_build_object(
+          'ok', false,
+          'outcome', 'conflict',
+          'reason', 'This reservation was already reconciled.'
+        );
+      end if;
+      if existing.state = 'held' then
+        null;
+      elsif existing.state = 'released' then
+        all_held := false;
+      else
+        return jsonb_build_object('ok', false, 'outcome', 'malformed', 'reason', 'A reservation needs a positive amount and an observed balance.');
+      end if;
     else
-      all_exist := false;
+      all_held := false;
     end if;
   end loop;
 
-  if all_exist then
-    return jsonb_build_object('ok', true, 'created', false, 'createdKeys', '[]'::jsonb, 'operationId', operation);
+  select coalesce(jsonb_agg(element.value->>'key' order by element.ordinality), '[]'::jsonb)
+    into held_keys
+    from jsonb_array_elements(batch) with ordinality as element;
+
+  if all_held then
+    return jsonb_build_object(
+      'ok', true,
+      'created', false,
+      'createdKeys', '[]'::jsonb,
+      'heldKeys', held_keys,
+      'operationId', operation
+    );
   end if;
 
   for hold_asset in
@@ -343,6 +333,7 @@ begin
         and not exists (
           select 1 from economy_reservations
           where idempotency_key = request.value->>'key'
+            and state = 'held'
         );
 
     if used + needed > observed then
@@ -356,7 +347,28 @@ begin
 
   for idx in 0 .. n - 1 loop
     item := batch->idx;
-    if exists (select 1 from economy_reservations where idempotency_key = item->>'key') then
+    if exists (
+      select 1 from economy_reservations
+      where idempotency_key = item->>'key' and state = 'held'
+    ) then
+      continue;
+    end if;
+    if exists (
+      select 1 from economy_reservations
+      where idempotency_key = item->>'key' and state = 'released'
+    ) then
+      update economy_reservations
+         set state = 'held',
+             operation_id = operation,
+             observed_raw = (item->>'observedRaw')::numeric(78, 0)
+       where idempotency_key = item->>'key'
+         and state = 'released';
+      get diagnostics reheld = row_count;
+      if reheld <> 1 then
+        raise exception 'reservation re-hold did not match one released row';
+      end if;
+      created_any := true;
+      created_keys := created_keys || jsonb_build_array(item->>'key');
       continue;
     end if;
     insert into economy_reservations (
@@ -378,12 +390,18 @@ begin
     created_keys := created_keys || jsonb_build_array(item->>'key');
   end loop;
 
-  return jsonb_build_object('ok', true, 'created', created_any, 'createdKeys', created_keys, 'operationId', operation);
+  return jsonb_build_object(
+    'ok', true,
+    'created', created_any,
+    'createdKeys', created_keys,
+    'heldKeys', held_keys,
+    'operationId', operation
+  );
 end;
 $$;
 
 comment on function economy_try_holds(jsonb) is
-  'Validates an offchain batch under economy_lock before inserting. New rows receive the caller operation_id. Existing rows are not restamped. A conflict or an insufficient balance returns without changing existing reservations. authorizes_execution stays false.';
+  'Validates an offchain batch under economy_lock before writing. New rows and re-held released rows receive the caller operation_id. A live hold is not restamped. A reconciled key conflicts. An insufficient balance returns without changing existing reservations. authorizes_execution stays false.';
 
 create or replace function economy_release_operation(p_operation uuid, p_proposal uuid)
 returns jsonb
@@ -479,7 +497,7 @@ end;
 $$;
 
 comment on function economy_note_receipt(text, text, text, integer, numeric, text, text) is
-  'Stores receipt fields supplied by the caller. This function does not query Monad and does not verify a receipt. Duplicate notes return before update, so the audit trigger does not append. A different transaction conflicts and does not rewrite history. A reverted status releases held reservations for that proposal id. It does not take a key list and it is not the operation-id cleanup path.';
+  'Stores receipt fields supplied by the caller. This function does not query Monad and does not verify a receipt. Duplicate notes return before update, so the audit trigger does not append. A different transaction conflicts and does not rewrite history. A reverted status releases every held reservation for that proposal id, including rows from earlier operations on that proposal. It does not release another proposal. It does not take a key list and it is not the operation-id cleanup path.';
 
 create or replace function economy_settle_proposal(p_key text, p_tx text)
 returns jsonb
@@ -550,6 +568,9 @@ language plpgsql
 set search_path = public
 as $$
 begin
+  if tg_op = 'INSERT' and new.status is distinct from 'proposed' then
+    raise exception 'a proposal insert must start as proposed';
+  end if;
   if new.status in ('confirmed', 'reverted', 'settled') then
     if new.tx_hash is null
        or new.tx_hash !~ '^0x[0-9a-fA-F]{64}$'
@@ -579,7 +600,7 @@ end;
 $$;
 
 comment on function economy_proposal_status_guard() is
-  'Checks stored receipt columns and a journal row. It does not query Monad and does not verify a receipt.';
+  'A proposal insert must start as proposed. Later receipt statuses check stored columns and a journal row. This function does not query Monad and does not verify a receipt.';
 
 revoke all on function economy_try_hold(text, uuid, numeric, text, text, numeric, numeric) from public;
 revoke all on function economy_proposal_status_guard() from public;
@@ -620,6 +641,7 @@ begin
     end loop;
     if exists (select 1 from pg_roles where rolname = 'service_role')
        and fn not in (
+         'economy_try_hold(text, uuid, numeric, text, text, numeric, numeric)',
          'economy_proposal_status_guard()',
          'economy_proposal_write_audit()',
          'economy_reject_mutation()',
@@ -627,6 +649,10 @@ begin
          'economy_proposal_immutable()'
        ) then
       execute format('grant execute on function %s to service_role', fn);
+    end if;
+    if fn = 'economy_try_hold(text, uuid, numeric, text, text, numeric, numeric)'
+       and exists (select 1 from pg_roles where rolname = 'service_role') then
+      execute 'revoke all on function economy_try_hold(text, uuid, numeric, text, text, numeric, numeric) from service_role';
     end if;
   end loop;
 end $$;

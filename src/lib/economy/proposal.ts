@@ -69,7 +69,7 @@ export type EconomyDecision = {
   outcome: EconomyOutcome;
   reason: string;
   hold: Hold | null;
-  /** True only when a hold was created. Production execution never sets this by itself. */
+  /** True when every required reservation is held. Production execution never sets this by itself. */
   reserved: boolean;
   executed: false;
 };
@@ -278,9 +278,9 @@ export function decideEconomicProposal(input: {
     ...reserved,
     decision: {
       ...reserved.decision,
-      reason: reserved.decision.reserved
-        ? "Offchain reservation recorded against the observed balance. Production execution is disabled, so nothing was signed or broadcast."
-        : "The offchain reservation already exists. Production execution is disabled, so nothing was signed or broadcast.",
+      reason: reserved.decision.reason.includes("already exists")
+        ? "The offchain reservation already exists. Production execution is disabled, so nothing was signed or broadcast."
+        : "Offchain reservation recorded against the observed balance. Production execution is disabled, so nothing was signed or broadcast.",
     },
   };
 }
@@ -352,7 +352,9 @@ function reserveApproved(
         ? "Reserved against the observed balance. This approval does not broadcast a transaction."
         : "The reservation already exists. This approval does not broadcast a transaction.",
       hold: primary,
-      reserved: batch.created,
+      reserved: requests.every((request) =>
+        batch.holds.some((hold) => hold.key === request.key && hold.state === "held"),
+      ),
       executed: false,
     },
     holds: batch.holds,

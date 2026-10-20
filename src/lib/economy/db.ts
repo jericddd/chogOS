@@ -161,6 +161,7 @@ function supabaseGateway(client: SupabaseClient): EconomyGateway {
         ok: true,
         created: body.created === true,
         createdKeys: body.createdKeys,
+        heldKeys: body.heldKeys,
         operationId: body.operationId,
       };
     },

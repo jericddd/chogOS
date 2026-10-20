@@ -60,8 +60,9 @@ export function holdSequentially(
 }
 
 /**
- * Validate a whole batch, then insert only the new keys.
- * A conflict, a malformed request, or an insufficient balance returns the original holds unchanged.
+ * Validate a whole batch, then insert missing keys and re-hold released keys.
+ * A live hold is left unchanged. A conflict, a malformed request, or an insufficient
+ * balance returns the original holds unchanged. A reconciled key is not re-held.
  */
 export function tryHoldBatch(holds: readonly Hold[], requests: readonly HoldRequest[]): HoldBatchResult {
   if (requests.length < 1 || requests.length > 3) {
@@ -83,9 +84,15 @@ export function tryHoldBatch(holds: readonly Hold[], requests: readonly HoldRequ
     if (existing && !sameHoldIdentity(existing, request)) {
       return batchFailure(holds, "conflict", "This idempotency key is already used for a different reservation.");
     }
+    if (existing?.state === "reconciled") {
+      return batchFailure(holds, "conflict", "This reservation was already reconciled.");
+    }
   }
-  const pending = requests.filter((request) => !holds.some((hold) => hold.key === request.key));
-  if (pending.length === 0) {
+  const changing = requests.filter((request) => {
+    const existing = holds.find((hold) => hold.key === request.key);
+    return !existing || existing.state !== "held";
+  });
+  if (changing.length === 0) {
     return { ok: true, holds: [...holds], created: false };
   }
   for (const asset of new Set(requests.map((request) => request.asset))) {
@@ -94,12 +101,14 @@ export function tryHoldBatch(holds: readonly Hold[], requests: readonly HoldRequ
     if (observed === null || observations.some((value) => value !== observed)) {
       return batchFailure(holds, "malformed", "A reservation needs a positive amount and an observed balance.");
     }
-    const needed = sum(pending.filter((request) => request.asset === asset).map((request) => request.amountRaw));
+    const needed = sum(changing.filter((request) => request.asset === asset).map((request) => request.amountRaw));
     if (heldRaw(holds, asset) + needed > observed) {
       return batchFailure(holds, "insufficient_funds", "The remaining observed balance cannot cover another reservation.");
     }
   }
-  const added = pending.map((request): Hold => ({
+  const reheld = new Set(changing.filter((request) => holds.some((hold) => hold.key === request.key)).map((request) => request.key));
+  const next = holds.map((hold) => (reheld.has(hold.key) ? { ...hold, state: "held" as const } : hold));
+  const added = changing.filter((request) => !reheld.has(request.key)).map((request): Hold => ({
     id: request.id,
     key: request.key,
     proposalId: request.proposalId,
@@ -109,7 +118,7 @@ export function tryHoldBatch(holds: readonly Hold[], requests: readonly HoldRequ
     amountRaw: request.amountRaw,
     state: "held",
   }));
-  return { ok: true, holds: [...holds, ...added], created: true };
+  return { ok: true, holds: [...next, ...added], created: true };
 }
 
 function batchFailure(
@@ -132,6 +141,40 @@ export function tryHold(
         outcome: "conflict",
         reason: "This idempotency key is already used for a different reservation.",
         holds: [...holds],
+      };
+    }
+    if (existing.state === "reconciled") {
+      return {
+        ok: false,
+        outcome: "conflict",
+        reason: "This reservation was already reconciled.",
+        holds: [...holds],
+      };
+    }
+    if (existing.state === "released") {
+      if (request.observedRaw === null || request.observedRaw < 0n) {
+        return {
+          ok: false,
+          outcome: "malformed",
+          reason: "A reservation needs a positive amount and an observed balance.",
+          holds: [...holds],
+        };
+      }
+      const used = heldRaw(holds, request.asset);
+      if (used + request.amountRaw > request.observedRaw) {
+        return {
+          ok: false,
+          outcome: "insufficient_funds",
+          reason: "The remaining observed balance cannot cover another reservation.",
+          holds: [...holds],
+        };
+      }
+      const reheld: Hold = { ...existing, state: "held" };
+      return {
+        ok: true,
+        holds: holds.map((hold) => (hold.key === request.key ? reheld : hold)),
+        hold: reheld,
+        created: true,
       };
     }
     return { ok: true, holds: [...holds], hold: existing, created: false };

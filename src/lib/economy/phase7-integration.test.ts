@@ -73,6 +73,7 @@ function gateway(
     ok: true,
     created: true,
     createdKeys: rows.map((row) => row.key),
+    heldKeys: rows.map((row) => row.key),
     operationId,
   }),
 ): EconomyGateway {
