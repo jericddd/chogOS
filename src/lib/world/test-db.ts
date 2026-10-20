@@ -24,6 +24,7 @@ export async function openWorldDb(options: { before?: (db: PGlite) => Promise<vo
   await db.exec(`
     create role anon nologin;
     create role authenticated nologin;
+    create role authenticator nologin;
     create role service_role nologin bypassrls;
   `);
   let seeded = false;

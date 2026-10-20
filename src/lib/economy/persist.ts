@@ -6,7 +6,54 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-
 
 export type OpenResult = { ok: true; id: string; created: boolean } | { ok: false; reason: string };
 export type StatusResult = { ok: true; status: string; duplicate: boolean } | { ok: false; reason: string };
-export type HoldsResult = { ok: true; created: boolean } | { ok: false; outcome: string; reason: string };
+export type HoldsResult =
+  | { ok: true; created: boolean; createdKeys?: unknown; heldKeys?: unknown; operationId?: unknown }
+  | { ok: false; outcome: string; reason: string };
+
+const UNRESOLVED_HOLD_REASON =
+  "The reservation response did not identify the new holds. Existing reservations were left unchanged. Retry the same proposal; nothing was released.";
+const UNCOVERED_HOLD_REASON =
+  "A required reservation is not held. The proposal was not approved and nothing was released.";
+
+export type CreatedKeySelection =
+  | { ok: true; keys: readonly string[] }
+  | { ok: false; code: "missing" | "malformed"; reason: string };
+
+/**
+ * Keys this call may release are the ones the database listed and this call submitted.
+ * A missing or malformed list is not evidence that every submitted key is new.
+ */
+export function selectCreatedKeys(
+  held: { created: boolean; createdKeys?: unknown },
+  submittedKeys: readonly string[],
+): CreatedKeySelection {
+  const submitted = new Set(submittedKeys.filter((key) => key.length > 0 && key.length <= 120));
+  if (held.createdKeys === undefined) {
+    if (held.created) {
+      return { ok: false, code: "missing", reason: UNRESOLVED_HOLD_REASON };
+    }
+    return { ok: true, keys: [] };
+  }
+  if (!Array.isArray(held.createdKeys)) {
+    return { ok: false, code: "malformed", reason: UNRESOLVED_HOLD_REASON };
+  }
+  const keys: string[] = [];
+  const seen = new Set<string>();
+  for (const item of held.createdKeys) {
+    if (typeof item !== "string" || item.length === 0 || item.length > 120 || !submitted.has(item) || seen.has(item)) {
+      return { ok: false, code: "malformed", reason: UNRESOLVED_HOLD_REASON };
+    }
+    seen.add(item);
+    keys.push(item);
+  }
+  if (held.created && keys.length === 0) {
+    return { ok: false, code: "missing", reason: UNRESOLVED_HOLD_REASON };
+  }
+  if (!held.created && keys.length > 0) {
+    return { ok: false, code: "malformed", reason: UNRESOLVED_HOLD_REASON };
+  }
+  return { ok: true, keys };
+}
 
 export type HoldInsert = {
   key: string;
@@ -21,13 +68,79 @@ export type HoldInsert = {
 export type EconomyGateway = {
   openProposal(row: Record<string, string>): Promise<OpenResult>;
   applyStatus(input: { key: string; status: string; reason: string }): Promise<StatusResult>;
-  tryHolds(holds: readonly HoldInsert[]): Promise<HoldsResult>;
-  release(proposalId: string): Promise<{ ok: boolean }>;
+  tryHolds(holds: readonly HoldInsert[], operationId: string): Promise<HoldsResult>;
+  /** Releases rows stamped with this operation. It does not take a key list. */
+  release(proposalId: string, operationId: string): Promise<{ ok: boolean }>;
 };
+
+export type HoldCoverage =
+  | { ok: true; createdKeys: readonly string[]; heldKeys: readonly string[] }
+  | { ok: false; code: "missing" | "malformed"; reason: string };
+
+/**
+ * A response may approve only when it echoes this attempt's operation id,
+ * its created-key list is well formed, and every submitted key is held.
+ * Cleanup does not use either key list.
+ */
+export function proveHoldOperation(
+  held: { created: boolean; createdKeys?: unknown; heldKeys?: unknown; operationId?: unknown },
+  submittedKeys: readonly string[],
+  operationId: string,
+): HoldCoverage {
+  if (typeof held.operationId !== "string" || held.operationId.toLowerCase() !== operationId.toLowerCase()) {
+    return { ok: false, code: "malformed", reason: UNRESOLVED_HOLD_REASON };
+  }
+  const created = selectCreatedKeys(held, submittedKeys);
+  if (!created.ok) {
+    return created;
+  }
+  const live = selectHeldKeys(held.heldKeys, submittedKeys);
+  if (!live.ok) {
+    return live;
+  }
+  if (created.keys.some((key) => !live.keys.includes(key))) {
+    return { ok: false, code: "malformed", reason: UNRESOLVED_HOLD_REASON };
+  }
+  return { ok: true, createdKeys: created.keys, heldKeys: live.keys };
+}
+
+function selectHeldKeys(value: unknown, submittedKeys: readonly string[]): CreatedKeySelection {
+  const submitted = submittedKeys.filter((key) => key.length > 0 && key.length <= 120);
+  if (value === undefined) {
+    return { ok: false, code: "missing", reason: UNRESOLVED_HOLD_REASON };
+  }
+  if (!Array.isArray(value)) {
+    return { ok: false, code: "malformed", reason: UNRESOLVED_HOLD_REASON };
+  }
+  const keys: string[] = [];
+  const seen = new Set<string>();
+  for (const item of value) {
+    if (typeof item !== "string" || item.length === 0 || item.length > 120 || !submitted.includes(item) || seen.has(item)) {
+      return { ok: false, code: "malformed", reason: UNRESOLVED_HOLD_REASON };
+    }
+    seen.add(item);
+    keys.push(item);
+  }
+  if (submitted.some((key) => !seen.has(key))) {
+    return { ok: false, code: "malformed", reason: UNRESOLVED_HOLD_REASON };
+  }
+  return { ok: true, keys };
+}
 
 export type PersistResult =
   | { ok: true; proposalId: string; status: string; reserved: boolean }
-  | { ok: false; reason: string; reserved: false };
+  | { ok: false; reason: string; reserved: false; outcome?: "deferred" };
+
+/** Conflict is terminal for this key. Other hold failures stay retryable. */
+export function holdFailureStatus(outcome: string): "insufficient_funds" | "rejected" | "deferred" {
+  if (outcome === "insufficient_funds") {
+    return "insufficient_funds";
+  }
+  if (outcome === "conflict") {
+    return "rejected";
+  }
+  return "deferred";
+}
 
 export function proposalRow(proposal: EconomicProposal): Record<string, string> | { error: string } {
   if (!UUID.test(proposal.citizenId)) {
@@ -79,35 +192,148 @@ export async function persistEconomyDecision(
 
   let status = input.decision.outcome;
   let reason = input.decision.reason;
-  let createdHold = false;
-  if (input.decision.reserved) {
+  let operationId: string | null = null;
+  let created = false;
+  const reservationRequired =
+    input.decision.outcome === "approved" &&
+    (input.proposal.fundingRequestRaw > 0n || input.proposal.estimatedGasWei > 0n);
+  let covered = !reservationRequired;
+  if (input.decision.reserved || reservationRequired) {
     const inserts = holdInserts(input.proposal, input.holds, input.observation, opened.id);
     if ("error" in inserts) {
       return { ok: false, reason: inserts.error, reserved: false };
     }
-    if (inserts.length > 0) {
-      const held = await gateway.tryHolds(inserts);
+    if (inserts.length === 0) {
+      if (reservationRequired) {
+        return { ok: false, reason: UNCOVERED_HOLD_REASON, reserved: false, outcome: "deferred" };
+      }
+    } else {
+      operationId = crypto.randomUUID();
+      const held = await gateway.tryHolds(inserts, operationId);
       if (!held.ok) {
-        status = held.outcome === "insufficient_funds" ? "insufficient_funds" : "deferred";
-        reason = held.reason;
+        if (held.outcome === "insufficient_funds" || held.outcome === "conflict") {
+          status = holdFailureStatus(held.outcome);
+          reason = held.reason;
+          operationId = null;
+          covered = false;
+        } else {
+          logEconomyPersist({
+            event: "hold_ownership_unresolved",
+            code: "missing",
+            idempotencyKey: input.proposal.idempotencyKey,
+            proposalId: opened.id,
+            operationId,
+            submittedCount: inserts.length,
+            created: false,
+            releaseCount: 0,
+          });
+          return { ok: false, reason: held.reason, reserved: false, outcome: "deferred" };
+        }
       } else {
-        createdHold = held.created;
+        const proof = proveHoldOperation(held, inserts.map((row) => row.key), operationId);
+        if (!proof.ok) {
+          logEconomyPersist({
+            event: "hold_ownership_unresolved",
+            code: proof.code,
+            idempotencyKey: input.proposal.idempotencyKey,
+            proposalId: opened.id,
+            operationId,
+            submittedCount: inserts.length,
+            created: held.created,
+            releaseCount: 0,
+          });
+          return { ok: false, reason: proof.reason, reserved: false, outcome: "deferred" };
+        }
+        created = held.created && proof.createdKeys.length > 0;
+        covered = true;
       }
     }
   }
 
-  const applied = await gateway.applyStatus({
+  if (reservationRequired && status === "approved" && !covered) {
+    return { ok: false, reason: UNCOVERED_HOLD_REASON, reserved: false, outcome: "deferred" };
+  }
+
+  let applied = await gateway.applyStatus({
     key: input.proposal.idempotencyKey,
     status,
     reason: reason.slice(0, 500),
   });
-  if (!applied.ok) {
-    if (createdHold) {
-      await gateway.release(opened.id);
+  if (!applied.ok && status === "approved" && covered && /not allowed/i.test(applied.reason)) {
+    const reopened = await gateway.applyStatus({
+      key: input.proposal.idempotencyKey,
+      status: "proposed",
+      reason: "The reservation is held, so the proposal can be approved again.",
+    });
+    if (reopened.ok) {
+      applied = await gateway.applyStatus({
+        key: input.proposal.idempotencyKey,
+        status: "approved",
+        reason: reason.slice(0, 500),
+      });
     }
-    return { ok: false, reason: applied.reason, reserved: false };
   }
-  return { ok: true, proposalId: opened.id, status: applied.status, reserved: createdHold && status === "approved" };
+  if (!applied.ok) {
+    let releaseOk: boolean | null = null;
+    if (created && operationId) {
+      const released = await gateway.release(opened.id, operationId);
+      releaseOk = released.ok;
+    }
+    logEconomyPersist({
+      event: "hold_status_unapplied",
+      idempotencyKey: input.proposal.idempotencyKey,
+      proposalId: opened.id,
+      operationId,
+      submittedCount: created ? 1 : 0,
+      created,
+      releaseCount: created ? 1 : 0,
+      releaseOk,
+    });
+    const failure = releaseOk === false
+      ? `${applied.reason} The operation's new reservations could not be released.`
+      : applied.reason;
+    return { ok: false, reason: failure, reserved: false };
+  }
+  return {
+    ok: true,
+    proposalId: opened.id,
+    status: applied.status,
+    reserved: applied.status === "approved" && reservationRequired && covered,
+  };
+}
+
+function logEconomyPersist(input: {
+  event: "hold_ownership_unresolved" | "hold_status_unapplied";
+  code?: "missing" | "malformed";
+  idempotencyKey: string;
+  proposalId: string;
+  operationId?: string | null;
+  submittedCount: number;
+  created: boolean;
+  releaseCount: number;
+  releaseOk?: boolean | null;
+}): void {
+  console.warn(
+    JSON.stringify({
+      source: "economy.persist",
+      event: input.event,
+      code: input.code ?? null,
+      idempotencyKey: safeDiagnosticId(input.idempotencyKey),
+      proposalId: safeDiagnosticId(input.proposalId),
+      operationId: input.operationId ? safeDiagnosticId(input.operationId) : null,
+      submittedCount: input.submittedCount,
+      created: input.created,
+      releaseCount: input.releaseCount,
+      releaseOk: input.releaseOk ?? null,
+    }),
+  );
+}
+
+function safeDiagnosticId(value: string): string {
+  if (/https?:|bearer|private|secret|token=|service_role/i.test(value)) {
+    return "[redacted]";
+  }
+  return value.slice(0, 120);
 }
 
 function holdInserts(

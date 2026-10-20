@@ -36,6 +36,26 @@ export function createServiceRoleClient(): SupabaseClient {
 }
 
 /**
+ * Server-only client for receipt confirmation, the receipt journal line, and settlement.
+ * The key is a JWT whose role claim is chogos_economy_verifier. It is not the service role.
+ * Browser code must never import this function. There is no fallback credential.
+ */
+export function createEconomyVerifierClient(): SupabaseClient {
+  const { url } = requireSupabaseUrl();
+  const verifierKey = process.env.SUPABASE_ECONOMY_VERIFIER_KEY?.trim();
+  if (!verifierKey) {
+    throw new Error("The economy verifier is not configured. Set SUPABASE_ECONOMY_VERIFIER_KEY.");
+  }
+
+  return createClient(url, verifierKey, {
+    auth: {
+      persistSession: false,
+      autoRefreshToken: false,
+    },
+  });
+}
+
+/**
  * Cookie-backed anon client for a later authenticated enrollment flow.
  * Phase 0 pages do not call it. The anon role has no table grants.
  */

@@ -1,0 +1,1921 @@
+import { readdirSync, readFileSync, statSync } from "node:fs";
+import path from "node:path";
+import type { SupabaseClient } from "@supabase/supabase-js";
+import { getAddress, type Hex } from "viem";
+import { describe, expect, it, vi } from "vitest";
+
+vi.mock("server-only", () => ({}));
+
+import { addresses } from "@/lib/blockchain/addresses";
+import { POST as postTransaction } from "@/app/api/transactions/route";
+import { confirmEconomyReceipt, saveEconomyDecision, settleEconomyProposal } from "@/lib/economy/db";
+import { productionExecutionStatus } from "@/lib/economy/execution";
+import { reconcileChainTransfer, type ChainTransferEvidence } from "@/lib/economy/journal";
+import { applyRpcVerification, interpretLedgerSnapshot } from "@/lib/economy/ledger";
+import { assessTreasuryRead, emptySnapshot, readEconomicTreasury, type TreasuryReader, type TreasurySnapshot } from "@/lib/economy/observe";
+import { presentEconomy } from "@/lib/economy/present";
+import { holdFailureStatus, persistEconomyDecision, proveHoldOperation, selectCreatedKeys, type EconomyGateway } from "@/lib/economy/persist";
+import { decideEconomicProposal, type EconomicProposal, type EconomyLimits } from "@/lib/economy/proposal";
+import { assessReceiptEvidence, receiptJournalArgs, settlementReadiness, settleRpcArgs } from "@/lib/economy/receipt";
+import { holdSequentially, tryHold, tryHoldBatch, type Hold, type HoldRequest } from "@/lib/economy/reserve";
+import { isRpcVerifiedReceipt, jsonRpcCaller, verifyMainnetReceipt, type RpcCaller, type RpcVerifiedReceipt } from "@/lib/economy/verify-receipt";
+import { noteReceipt, noteSubmission, openProposal, planConfirmation, planSettlement, settleProposal } from "@/lib/economy/workflow";
+
+const NOW = Date.parse("2026-10-20T00:00:00.000Z");
+const TX = `0x${"ab".repeat(32)}` as Hex;
+const OTHER_TX = `0x${"ef".repeat(32)}` as Hex;
+const BLOCK = `0x${"cd".repeat(32)}` as Hex;
+const OTHER_BLOCK = `0x${"12".repeat(32)}` as Hex;
+const TREASURY = getAddress("0x1111111111111111111111111111111111111111");
+const TARGET = getAddress("0x3333333333333333333333333333333333333333");
+const OTHER = getAddress("0x4444444444444444444444444444444444444444");
+const SELECTOR = "0xa9059cbb" as Hex;
+const CITIZEN = "11111111-1111-4111-8111-111111111111";
+const PROPOSAL_ID = "22222222-2222-4222-8222-222222222222";
+
+const LIMITS: EconomyLimits = {
+  maxCitizenCapitalWei: 1_000_000_000_000_000_000n,
+  maxBusinessAllocationWei: 2_000_000_000_000_000_000n,
+  maxTxWei: 100_000_000_000_000_000n,
+  maxDailyGasWei: 1_000_000_000_000_000_000n,
+  maxTreasuryExposureWei: 5_000_000_000_000_000_000n,
+  maxChogPerTxRaw: 1_000_000n,
+  maxCitizenChogRaw: 5_000_000n,
+  maxBusinessChogRaw: 2_000_000n,
+};
+
+function mainnet(options: {
+  chain?: unknown;
+  receipt?: unknown;
+  block?: unknown;
+  throwOn?: string;
+  hangOn?: string;
+} = {}): { call: RpcCaller; methods: string[]; params: unknown[][] } {
+  const methods: string[] = [];
+  const params: unknown[][] = [];
+  const call: RpcCaller = (method, next) => {
+    methods.push(method);
+    params.push(next);
+    if (options.throwOn === method) {
+      return Promise.reject(new Error("connect failed https://rpc.example/secret?token=abc"));
+    }
+    if (options.hangOn === method) {
+      return new Promise(() => undefined);
+    }
+    if (method === "eth_chainId") {
+      return Promise.resolve(options.chain === undefined ? "0x8f" : options.chain);
+    }
+    if (method === "eth_getTransactionReceipt") {
+      return Promise.resolve(
+        options.receipt === undefined
+          ? { transactionHash: next[0], status: "0x1", blockNumber: "0xa", blockHash: BLOCK.toUpperCase() }
+          : options.receipt,
+      );
+    }
+    if (method === "eth_getBlockByNumber") {
+      return Promise.resolve(options.block === undefined ? { number: "0xa", hash: BLOCK } : options.block);
+    }
+    return Promise.reject(new Error(method));
+  };
+  return { call, methods, params };
+}
+
+function evidence(txHash: Hex = TX): ChainTransferEvidence {
+  return {
+    chainId: 143,
+    txHash,
+    logIndex: null,
+    status: "success",
+    asset: "MON",
+    amountRaw: 1_000n,
+    direction: "in",
+    treasury: TREASURY,
+    counterparty: OTHER,
+    blockNumber: 10n,
+  };
+}
+
+function fresh(): TreasurySnapshot {
+  return assessTreasuryRead({
+    address: TREASURY,
+    read: {
+      chainId: 143,
+      blockNumber: 10n,
+      observedAt: new Date(NOW).toISOString(),
+      nativeRaw: 10_000n,
+      tokenRaw: 0n,
+      tokenDecimals: 6,
+    },
+    nowMs: NOW,
+    maxAgeMs: 60_000,
+  });
+}
+
+function proposal(overrides: Partial<EconomicProposal> = {}): EconomicProposal {
+  return {
+    id: "proposal-1",
+    idempotencyKey: "proposal-1",
+    citizenId: CITIZEN,
+    tokenId: "104",
+    nftContract: addresses.chogGenesis,
+    objective: "Buy timber for the workshop",
+    rationale: "The listed goal needs a payment for timber.",
+    operation: "payment",
+    target: TARGET,
+    selector: SELECTOR,
+    asset: "MON",
+    amountRaw: 11n,
+    estimatedGasWei: 0n,
+    fundingRequestRaw: 11n,
+    expectedOutcome: "Timber is delivered if a later receipt succeeds.",
+    quotePriceRaw: null,
+    slippageBps: null,
+    expiresAtMs: NOW + 60_000,
+    ...overrides,
+  };
+}
+
+function reader(partial: Partial<TreasuryReader> & Pick<TreasuryReader, "getChainId">): TreasuryReader {
+  return {
+    getBlockNumber: async () => 10n,
+    getNativeBalance: async () => 0n,
+    getTokenBalance: async () => 0n,
+    getTokenDecimals: async () => 18,
+    ...partial,
+  };
+}
+
+function fakeClient(onRpc: (fn: string, args: Record<string, unknown>) => unknown) {
+  const calls: Array<{ fn: string; args: Record<string, unknown> }> = [];
+  const client = {
+    rpc(fn: string, args: Record<string, unknown>) {
+      calls.push({ fn, args });
+      const promise = Promise.resolve({ data: onRpc(fn, args), error: null });
+      return Object.assign(promise, { abortSignal: () => promise });
+    },
+  };
+  return { client: client as unknown as SupabaseClient, calls };
+}
+
+function proposalReader(row: { status: string; tx_hash: string | null } | null) {
+  const calls: string[] = [];
+  const client = {
+    from(table: string) {
+      calls.push(table);
+      const query = {
+        select() {
+          return query;
+        },
+        eq() {
+          return query;
+        },
+        abortSignal() {
+          return query;
+        },
+        maybeSingle() {
+          return Promise.resolve({ data: row, error: null });
+        },
+      };
+      return query;
+    },
+  };
+  return { client: client as unknown as SupabaseClient, calls };
+}
+
+async function verifiedReceipt(tx: Hex = TX, status: "0x1" | "0x0" = "0x1"): Promise<RpcVerifiedReceipt> {
+  const result = await verifyMainnetReceipt({
+    txHash: tx,
+    call: mainnet({
+      receipt: { transactionHash: tx, status, blockNumber: "0xa", blockHash: BLOCK },
+    }).call,
+  });
+  if (!result.ok) {
+    throw new Error(result.reason);
+  }
+  return result.receipt;
+}
+
+describe("mainnet receipt verification", () => {
+  it("accepts a receipt only when chain 143, the hash, the status, and the block all match", async () => {
+    const script = mainnet();
+    const result = await verifyMainnetReceipt({ txHash: TX.toUpperCase(), call: script.call });
+    expect(result.ok).toBe(true);
+    if (!result.ok) {
+      return;
+    }
+    expect(isRpcVerifiedReceipt(result.receipt)).toBe(true);
+    expect(result.receipt.source).toBe("monad-mainnet-rpc");
+    expect(result.receipt.chainId).toBe(143);
+    expect(result.receipt.txHash).toBe(TX);
+    expect(result.receipt.status).toBe("success");
+    expect(result.receipt.blockNumber).toBe(10n);
+    expect(result.receipt.blockHash).toBe(BLOCK);
+    expect(script.methods).toEqual(["eth_chainId", "eth_getTransactionReceipt", "eth_getBlockByNumber"]);
+    expect(script.params[2]).toEqual(["0xa", false]);
+    expect(JSON.parse(JSON.stringify({ status: result.receipt.status }))).toEqual({ status: "success" });
+    expect(isRpcVerifiedReceipt(JSON.parse(JSON.stringify({ chainId: 143, txHash: TX })))).toBe(false);
+  });
+
+  it("rejects fabricated receipts, typed casts, wrong chains, and mismatched blocks", async () => {
+    const shaped = assessReceiptEvidence({
+      chainId: 143,
+      observedChainId: 143,
+      txHash: TX,
+      status: "success",
+      blockNumber: 10n,
+      blockHash: BLOCK,
+    });
+    expect(shaped.ok).toBe(true);
+    const forged = {
+      source: "monad-mainnet-rpc",
+      chainId: 143,
+      txHash: TX,
+      status: "success",
+      blockNumber: 10n,
+      blockHash: BLOCK,
+    } as RpcVerifiedReceipt;
+    expect(isRpcVerifiedReceipt(shaped.ok ? shaped.evidence : null)).toBe(false);
+    expect(isRpcVerifiedReceipt(forged)).toBe(false);
+    expect(settleRpcArgs("proposal-1", forged).ok).toBe(false);
+    expect(settleRpcArgs("proposal-1", shaped.ok ? shaped.evidence : null).ok).toBe(false);
+    expect(receiptJournalArgs(forged).ok).toBe(false);
+    expect(receiptJournalArgs(shaped.ok ? shaped.evidence : null).ok).toBe(false);
+    expect(settlementReadiness({ status: "confirmed", txHash: OTHER_TX }, TX).ok).toBe(false);
+    expect(settlementReadiness({ status: "submitted", txHash: TX }, TX).ok).toBe(false);
+    expect(settlementReadiness({ status: "confirmed", txHash: TX }, TX).ok).toBe(true);
+
+    const wrongChain = mainnet({ chain: "0x27a7" });
+    const wrong = await verifyMainnetReceipt({ txHash: TX, call: wrongChain.call });
+    expect(wrong).toMatchObject({ ok: false, outcome: "wrong_chain" });
+    expect(wrongChain.methods).toEqual(["eth_chainId"]);
+
+    const numericChain = mainnet({ chain: 143 });
+    const numeric = await verifyMainnetReceipt({ txHash: TX, call: numericChain.call });
+    expect(numeric).toMatchObject({ ok: false, outcome: "malformed" });
+    expect(numericChain.methods).toEqual(["eth_chainId"]);
+
+    const worded = mainnet({
+      receipt: { transactionHash: TX, status: "success", blockNumber: "0xa", blockHash: BLOCK },
+    });
+    expect(await verifyMainnetReceipt({ txHash: TX, call: worded.call })).toMatchObject({ ok: false, outcome: "malformed" });
+
+    const hashMismatch = mainnet({
+      receipt: { transactionHash: OTHER_TX, status: "0x1", blockNumber: "0xa", blockHash: BLOCK },
+    });
+    expect(await verifyMainnetReceipt({ txHash: TX, call: hashMismatch.call })).toMatchObject({ ok: false, outcome: "mismatch" });
+    expect(hashMismatch.methods).not.toContain("eth_getBlockByNumber");
+
+    const blockMismatch = mainnet({ block: { number: "0xa", hash: OTHER_BLOCK } });
+    const mismatched = await verifyMainnetReceipt({ txHash: TX, call: blockMismatch.call });
+    expect(mismatched).toMatchObject({ ok: false, outcome: "mismatch" });
+    expect(isRpcVerifiedReceipt(mismatched.ok ? mismatched.receipt : null)).toBe(false);
+
+    const numberMismatch = mainnet({ block: { number: "0xb", hash: BLOCK } });
+    expect(await verifyMainnetReceipt({ txHash: TX, call: numberMismatch.call })).toMatchObject({ ok: false, outcome: "mismatch" });
+
+    let calls = 0;
+    const malformedHash = await verifyMainnetReceipt({
+      txHash: "0x123",
+      call: async () => {
+        calls += 1;
+        return "0x8f";
+      },
+    });
+    expect(malformedHash).toMatchObject({ ok: false, outcome: "malformed" });
+    expect(calls).toBe(0);
+  });
+
+  it("treats a reverted receipt as reverted and refuses to settle it", async () => {
+    const script = mainnet({
+      receipt: { transactionHash: TX, status: "0x0", blockNumber: "0xa", blockHash: BLOCK },
+    });
+    const result = await verifyMainnetReceipt({ txHash: TX, call: script.call });
+    expect(result.ok).toBe(true);
+    if (!result.ok) {
+      return;
+    }
+    expect(result.receipt.status).toBe("reverted");
+    expect(settleRpcArgs("proposal-1", result.receipt).ok).toBe(false);
+    const opened = openProposal([], { id: "1", idempotencyKey: "tools-104", tokenId: "104", expiresAtMs: NOW + 1_000, at: "t0" });
+    const submitted = noteSubmission([{ ...opened.record, status: "approved", reason: "reserved" }], "tools-104", "t1");
+    const noted = noteReceipt(submitted, "tools-104", result.receipt, "t2");
+    expect(noted[0]?.status).toBe("reverted");
+    expect(noted[0]?.executed).toBe(false);
+    const posted = reconcileChainTransfer([], { ...evidence(), status: "reverted" }, "t2");
+    expect(posted.ok).toBe(true);
+    const settled = settleProposal(noted, "tools-104", result.receipt, posted.ok ? posted.lines : [], "t3");
+    expect(settled.ok).toBe(false);
+    if (!settled.ok) {
+      expect(settled.outcome).toBe("refused");
+    }
+    expect(settled.records[0]?.status).toBe("reverted");
+    expect(planSettlement(noted[0], result.receipt, []).action).toBe("refuse");
+  });
+
+  it("fails closed on a missing receipt, a malformed response, and an RPC outage", async () => {
+    const missing = mainnet({ receipt: null });
+    expect(await verifyMainnetReceipt({ txHash: TX, call: missing.call })).toMatchObject({ ok: false, outcome: "missing" });
+
+    const broken = mainnet({ receipt: ["not", "a", "receipt"] });
+    expect(await verifyMainnetReceipt({ txHash: TX, call: broken.call })).toMatchObject({ ok: false, outcome: "malformed" });
+
+    const outage = mainnet({ throwOn: "eth_chainId" });
+    const failed = await verifyMainnetReceipt({ txHash: TX, call: outage.call });
+    expect(failed.ok).toBe(false);
+    if (!failed.ok) {
+      expect(failed.outcome).toBe("rpc_failure");
+      expect(failed.reason).toContain("[redacted-url]");
+      expect(failed.reason).not.toContain("secret");
+      expect(failed.reason).not.toContain("https://");
+    }
+
+    const hung = mainnet({ hangOn: "eth_getTransactionReceipt" });
+    const timed = await verifyMainnetReceipt({ txHash: TX, call: hung.call, timeoutMs: 20 });
+    expect(timed).toMatchObject({ ok: false, outcome: "rpc_failure" });
+    if (!timed.ok) {
+      expect(timed.reason).toMatch(/did not respond/);
+    }
+
+    const unconfigured = await verifyMainnetReceipt({ txHash: TX, call: jsonRpcCaller(undefined) });
+    expect(unconfigured).toMatchObject({ ok: false, outcome: "rpc_failure" });
+    if (!unconfigured.ok) {
+      expect(unconfigured.reason).toMatch(/not configured/i);
+    }
+
+    const original = globalThis.fetch;
+    let posted = "";
+    globalThis.fetch = async (_input, init) => {
+      posted = String(init?.body);
+      throw new Error("connect https://rpc.example/secret failed");
+    };
+    try {
+      const fetched = await verifyMainnetReceipt({ txHash: TX, call: jsonRpcCaller("https://rpc.example/secret") });
+      expect(fetched.ok).toBe(false);
+      if (!fetched.ok) {
+        expect(fetched.outcome).toBe("rpc_failure");
+        expect(fetched.reason).toContain("[redacted-url]");
+        expect(fetched.reason).not.toContain("secret");
+      }
+      expect(posted).toContain('"method":"eth_chainId"');
+      expect(posted).not.toContain("eth_sendRawTransaction");
+      await expect(jsonRpcCaller("https://rpc.example/secret")("eth_sendRawTransaction", ["0x00"])).rejects.toThrow(/read-only/);
+    } finally {
+      globalThis.fetch = original;
+    }
+
+    globalThis.fetch = async () => ({ ok: true, json: async () => "not-json" }) as Response;
+    try {
+      const malformed = await verifyMainnetReceipt({ txHash: TX, call: jsonRpcCaller("https://rpc.example/node") });
+      expect(malformed).toMatchObject({ ok: false, outcome: "rpc_failure" });
+    } finally {
+      globalThis.fetch = original;
+    }
+  });
+});
+
+describe("confirmation and settlement", () => {
+  it("does not append history for a duplicate settlement and refuses a conflicting transaction", async () => {
+    const receipt = await verifiedReceipt();
+    const opened = openProposal([], { id: "1", idempotencyKey: "tools-104", tokenId: "104", expiresAtMs: NOW + 1_000, at: "t0" });
+    const submitted = noteSubmission([{ ...opened.record, status: "approved", reason: "reserved" }], "tools-104", "t1");
+    expect(noteReceipt(submitted, "tools-104", { ...receipt }, "t1b")[0]?.status).toBe("submitted");
+    const confirmed = noteReceipt(submitted, "tools-104", receipt, "t2");
+    expect(confirmed[0]?.status).toBe("confirmed");
+    const historyAfterConfirm = confirmed[0]?.history.length ?? 0;
+    const repeated = noteReceipt(confirmed, "tools-104", receipt, "t2b");
+    expect(planConfirmation(confirmed[0], receipt).action).toBe("duplicate");
+    expect(repeated[0]?.history).toHaveLength(historyAfterConfirm);
+    expect(repeated[0]?.status).toBe("confirmed");
+
+    const posted = reconcileChainTransfer([], evidence(), "t3");
+    expect(posted.ok).toBe(true);
+    const lines = posted.ok ? posted.lines : [];
+    const settled = settleProposal(confirmed, "tools-104", receipt, lines, "t4");
+    expect(settled.ok).toBe(true);
+    if (!settled.ok) {
+      return;
+    }
+    expect(settled.duplicate).toBe(false);
+    expect(settled.records[0]?.status).toBe("settled");
+    const historyAfterSettle = settled.records[0]?.history.length ?? 0;
+    const again = settleProposal(settled.records, "tools-104", receipt, lines, "t5");
+    expect(again.ok && again.duplicate).toBe(true);
+    expect(again.records[0]?.history).toHaveLength(historyAfterSettle);
+    expect(again.records[0]?.status).toBe("settled");
+
+    const other = await verifiedReceipt(OTHER_TX);
+    const conflict = settleProposal(confirmed, "tools-104", other, lines, "t6");
+    expect(conflict.ok).toBe(false);
+    if (!conflict.ok) {
+      expect(conflict.outcome).toBe("conflict");
+    }
+    expect(conflict.records[0]?.status).toBe("confirmed");
+    expect(conflict.records[0]?.txHash).toBe(TX);
+    expect(conflict.records[0]?.history).toHaveLength(historyAfterConfirm);
+  });
+
+  it("writes SQL only with fields taken from the RPC verifier", async () => {
+    const script = mainnet();
+    const saved = fakeClient(() => ({ ok: true, status: "confirmed", duplicate: false }));
+    const confirmed = await confirmEconomyReceipt("proposal-1", TX.toUpperCase(), { call: script.call, verifier: saved.client });
+    expect(confirmed).toEqual({ ok: true, status: "confirmed", duplicate: false, verified: true });
+    expect(saved.calls).toHaveLength(1);
+    expect(saved.calls[0]).toEqual({
+      fn: "economy_note_receipt",
+      args: {
+        p_key: "proposal-1",
+        p_reason: "The mainnet receipt succeeded. Settlement still requires a counted journal posting.",
+        p_tx: TX,
+        p_chain: 143,
+        p_block: "10",
+        p_block_hash: BLOCK,
+        p_receipt_status: "success",
+      },
+    });
+
+    const mismatched = mainnet({ block: { number: "0xa", hash: OTHER_BLOCK } });
+    const refused = fakeClient(() => {
+      throw new Error("SQL must not run");
+    });
+    const unverified = await confirmEconomyReceipt("proposal-1", TX, { call: mismatched.call, verifier: refused.client });
+    expect(unverified).toMatchObject({ ok: false, verified: false });
+    expect(refused.calls).toEqual([]);
+
+    const reverted = mainnet({
+      receipt: { transactionHash: TX, status: "0x0", blockNumber: "0xa", blockHash: BLOCK },
+    });
+    const notSettled = fakeClient(() => {
+      throw new Error("SQL must not run");
+    });
+    const revertedSettle = await settleEconomyProposal("proposal-1", TX, { call: reverted.call, verifier: notSettled.client });
+    expect(revertedSettle).toMatchObject({ ok: false, verified: true });
+    expect(notSettled.calls).toEqual([]);
+
+    const duplicate = fakeClient((fn) =>
+      fn === "economy_append_journal"
+        ? { ok: true, duplicate: false }
+        : { ok: true, status: "settled", duplicate: true },
+    );
+    const reader = proposalReader({ status: "confirmed", tx_hash: TX });
+    const settled = await settleEconomyProposal("proposal-1", TX, {
+      call: mainnet().call,
+      verifier: duplicate.client,
+      reader: reader.client,
+    });
+    expect(settled).toEqual({ ok: true, status: "settled", duplicate: true, verified: true });
+    expect(duplicate.calls.map((call) => call.fn)).toEqual(["economy_append_journal", "economy_settle_proposal"]);
+    expect(duplicate.calls[0]?.args).toMatchObject({
+      p_lines: [
+        expect.objectContaining({ kind: "receipt_observed", evidenceKey: `143:${TX}:receipt`, account: "external", side: "debit" }),
+        expect.objectContaining({ kind: "receipt_observed", evidenceKey: `143:${TX}:receipt`, account: "external", side: "credit" }),
+      ],
+    });
+    expect(duplicate.calls[1]?.args).toEqual({ p_key: "proposal-1", p_tx: TX });
+    expect(reader.calls).toEqual(["economy_proposals"]);
+
+    const unset = await settleEconomyProposal("proposal-1", TX, {
+      call: mainnet().call,
+      verifier: null,
+      reader: proposalReader({ status: "confirmed", tx_hash: TX }).client,
+    });
+    expect(unset).toMatchObject({ ok: false, verified: true, reason: expect.stringMatching(/verifier is not configured/) });
+
+    const conflicted = fakeClient(() => {
+      throw new Error("SQL must not run");
+    });
+    const conflict = await settleEconomyProposal("proposal-1", TX, {
+      call: mainnet().call,
+      verifier: conflicted.client,
+      reader: proposalReader({ status: "confirmed", tx_hash: OTHER_TX }).client,
+    });
+    expect(conflict).toMatchObject({
+      ok: false,
+      verified: true,
+      reason: "This proposal is already tied to a different transaction.",
+    });
+    expect(conflicted.calls).toEqual([]);
+
+    const missingVerifier = await confirmEconomyReceipt("proposal-1", TX, { call: mainnet().call, verifier: null });
+    expect(missingVerifier).toMatchObject({ ok: false, verified: true, reason: expect.stringMatching(/verifier is not configured/) });
+  });
+});
+
+describe("reservation idempotency", () => {
+  it("fails closed when an idempotency key is reused with different terms and leaves the original hold", () => {
+    const request = {
+      id: "hold-1",
+      key: "key-1",
+      proposalId: "citizen:104:proposal-1",
+      tokenId: "104",
+      asset: "MON" as const,
+      bucket: "business_capital" as const,
+      amountRaw: 40n,
+      observedRaw: 100n,
+    };
+    const first = tryHold([], request);
+    expect(first.ok).toBe(true);
+    if (!first.ok) {
+      return;
+    }
+    const conflict = tryHold(first.holds, { ...request, id: "hold-2", amountRaw: 41n });
+    expect(conflict.ok).toBe(false);
+    if (!conflict.ok) {
+      expect(conflict.outcome).toBe("conflict");
+      expect(conflict.holds).toEqual(first.holds);
+    }
+    expect(first.holds[0]?.state).toBe("held");
+    expect(first.holds[0]?.amountRaw).toBe(40n);
+    const otherAsset = tryHold(first.holds, { ...request, asset: "CHOG" });
+    expect(otherAsset.ok).toBe(false);
+    const otherProposal = tryHold(first.holds, { ...request, proposalId: "citizen:104:proposal-2" });
+    expect(otherProposal.ok).toBe(false);
+    const replay = tryHold(first.holds, request);
+    expect(replay.ok && replay.created).toBe(false);
+    if (replay.ok) {
+      expect(replay.hold.amountRaw).toBe(40n);
+    }
+
+    const existing = tryHold([], {
+      id: "old",
+      key: proposal().idempotencyKey,
+      proposalId: `${CITIZEN}:104:proposal-1`,
+      tokenId: "104",
+      asset: "MON",
+      bucket: "business_capital",
+      amountRaw: 10n,
+      observedRaw: 10_000n,
+    });
+    expect(existing.ok).toBe(true);
+    const decided = decideEconomicProposal({
+      proposal: proposal(),
+      observation: fresh(),
+      holds: existing.ok ? existing.holds : [],
+      limits: LIMITS,
+      dailyGasWei: 0n,
+      dailyGasKnown: true,
+      allowlist: [{ chainId: 143, target: TARGET, selectors: [SELECTOR], assets: ["MON"], label: "fixture" }],
+      factoryDeployed: false,
+      nowMs: NOW,
+      executionEnabled: false,
+    });
+    expect(decided.decision.outcome).toBe("rejected");
+    expect(decided.decision.reserved).toBe(false);
+    expect(decided.holds[0]?.amountRaw).toBe(10n);
+    expect(decided.holds[0]?.state).toBe("held");
+    expect(holdFailureStatus("conflict")).toBe("rejected");
+    expect(holdFailureStatus("insufficient_funds")).toBe("insufficient_funds");
+    expect(holdFailureStatus("malformed")).toBe("deferred");
+  });
+
+  it("shows the unlocked race and lets a serialized pair keep one hold", async () => {
+    const requests = [0, 1].map((index) => ({
+      id: `hold-${index}`,
+      key: `key-${index}`,
+      proposalId: `citizen:104:proposal-${index}`,
+      tokenId: "104",
+      asset: "MON" as const,
+      bucket: "business_capital" as const,
+      amountRaw: 60n,
+      observedRaw: 100n,
+    }));
+    const raced = [tryHold([], requests[0]!), tryHold([], requests[1]!)];
+    expect(raced.every((result) => result.ok)).toBe(true);
+
+    const serial = holdSequentially([], requests);
+    expect(serial.results[0]?.ok).toBe(true);
+    expect(serial.results[1]?.ok).toBe(false);
+    expect(serial.holds).toHaveLength(1);
+
+    let current: Hold[] = [];
+    let chain = Promise.resolve();
+    const locked = requests.map((request) => {
+      const run = chain.then(() => {
+        const result = tryHold(current, request);
+        current = result.holds;
+        return result;
+      });
+      chain = run.then(() => undefined);
+      return run;
+    });
+    const results = await Promise.all(locked);
+    expect(results[0]?.ok).toBe(true);
+    expect(results[1]?.ok).toBe(false);
+    expect(current).toHaveLength(1);
+  });
+
+  it("records a conflicting hold as rejected and does not release it", async () => {
+    const calls: string[] = [];
+    const gateway: EconomyGateway = {
+      async openProposal() {
+        calls.push("open");
+        return { ok: true, id: PROPOSAL_ID, created: true };
+      },
+      async applyStatus(input) {
+        calls.push(`status:${input.status}`);
+        return { ok: true, status: input.status, duplicate: false };
+      },
+      async tryHolds() {
+        calls.push("holds");
+        return { ok: false, outcome: "conflict", reason: "This idempotency key is already used for a different reservation." };
+      },
+      async release(proposalId) {
+        calls.push(`release:${proposalId}`);
+        return { ok: true };
+      },
+    };
+    const decided = decideEconomicProposal({
+      proposal: proposal({ fundingRequestRaw: 20n, amountRaw: 20n }),
+      observation: fresh(),
+      holds: [],
+      limits: LIMITS,
+      dailyGasWei: 0n,
+      dailyGasKnown: true,
+      allowlist: [{ chainId: 143, target: TARGET, selectors: [SELECTOR], assets: ["MON"], label: "fixture" }],
+      factoryDeployed: false,
+      nowMs: NOW,
+      executionEnabled: false,
+    });
+    const saved = await persistEconomyDecision(gateway, {
+      proposal: proposal({ fundingRequestRaw: 20n, amountRaw: 20n }),
+      decision: decided.decision,
+      holds: decided.holds,
+      observation: fresh(),
+    });
+    expect(saved).toMatchObject({ ok: true, status: "rejected", reserved: false });
+    expect(calls).toEqual(["open", "holds", "status:rejected"]);
+  });
+});
+
+describe("read-only treasury observer", () => {
+  it("keeps native MON and canonical $CHOG explicit when the read is missing, stale, or on the wrong chain", async () => {
+    const unset = await readEconomicTreasury({ address: null, nowMs: NOW, maxAgeMs: 60_000 });
+    expect(unset.status).toBe("not_configured");
+    expect(unset.mon.raw).toBeNull();
+    expect(unset.chog.raw).toBeNull();
+    expect(unset.unallocatedMon).toBeNull();
+
+    const stale = assessTreasuryRead({
+      address: TREASURY,
+      read: {
+        chainId: 143,
+        blockNumber: 4n,
+        observedAt: new Date(NOW - 120_000).toISOString(),
+        nativeRaw: 5n,
+        tokenRaw: 6n,
+        tokenDecimals: 6,
+      },
+      nowMs: NOW,
+      maxAgeMs: 1_000,
+    });
+    expect(stale.status).toBe("stale");
+    expect(stale.mon).toEqual({ symbol: "MON", raw: 5n, decimals: 18 });
+    expect(stale.chog).toEqual({ symbol: "CHOG", raw: 6n, decimals: 6 });
+    expect(stale.unallocatedMon).toBeNull();
+    expect(stale.unallocatedChog).toBeNull();
+
+    let balances = 0;
+    const wrong = await readEconomicTreasury({
+      address: TREASURY,
+      nowMs: NOW,
+      maxAgeMs: 60_000,
+      reader: reader({
+        getChainId: async () => 10143,
+        getNativeBalance: async () => {
+          balances += 1;
+          return 9n;
+        },
+        getTokenBalance: async () => {
+          balances += 1;
+          return 9n;
+        },
+      }),
+    });
+    expect(wrong.status).toBe("wrong_chain");
+    expect(wrong.observedChainId).toBe(10143);
+    expect(wrong.chainId).toBe(143);
+    expect(wrong.mon.raw).toBeNull();
+    expect(wrong.chog.raw).toBeNull();
+    expect(wrong.unallocatedMon).toBeNull();
+    expect(balances).toBe(0);
+
+    const unavailable = await readEconomicTreasury({
+      address: TREASURY,
+      nowMs: NOW,
+      maxAgeMs: 60_000,
+      reader: reader({ getChainId: async () => Promise.reject(new Error("failed https://rpc.example/secret")) }),
+    });
+    expect(unavailable.status).toBe("unavailable");
+    expect(unavailable.reason).toContain("[redacted-url]");
+    expect(unavailable.reason).not.toContain("https://");
+    expect(unavailable.mon.raw).toBeNull();
+    expect(unavailable.chog.raw).toBeNull();
+
+    const noRpc = await readEconomicTreasury({ address: TREASURY, nowMs: NOW, maxAgeMs: 60_000 });
+    expect(noRpc.status).toBe("unavailable");
+
+    const wrongToken = await readEconomicTreasury({
+      address: TREASURY,
+      token: addresses.wrappedMon,
+      nowMs: NOW,
+      maxAgeMs: 60_000,
+      reader: reader({ getChainId: async () => 143 }),
+    });
+    expect(wrongToken.status).toBe("malformed");
+    expect(wrongToken.reason).toMatch(/canonical/);
+
+    const observed = await readEconomicTreasury({
+      address: TREASURY,
+      nowMs: NOW,
+      maxAgeMs: 60_000,
+      reader: reader({
+        getChainId: async () => 143,
+        getNativeBalance: async () => 10n ** 18n + 1n,
+        getTokenBalance: async () => 1_500_000n,
+        getTokenDecimals: async () => 6,
+      }),
+    });
+    expect(observed.status).toBe("observed");
+    expect(observed.mon.decimals).toBe(18);
+    expect(observed.chog.decimals).toBe(6);
+    expect(observed.chog.raw).toBe(1_500_000n);
+    expect(observed.mon.raw).not.toBe(observed.chog.raw);
+  });
+});
+
+describe("phase 8 reservation and trust regressions", () => {
+  function held(overrides: Partial<Hold> & Pick<Hold, "key" | "amountRaw">): Hold {
+    return {
+      id: overrides.key,
+      proposalId: "citizen:104:existing",
+      tokenId: "104",
+      asset: "MON",
+      bucket: "business_capital",
+      state: "held",
+      ...overrides,
+    };
+  }
+
+  function request(overrides: Partial<HoldRequest> & Pick<HoldRequest, "key" | "amountRaw">): HoldRequest {
+    return {
+      id: overrides.key,
+      proposalId: "citizen:104:existing",
+      tokenId: "104",
+      asset: "MON",
+      bucket: "business_capital",
+      observedRaw: 100n,
+      ...overrides,
+    };
+  }
+
+  it("leaves an existing hold unchanged when the rest of the batch does not fit", () => {
+    const existing = held({ key: "existing", amountRaw: 60n });
+    const before = [existing];
+    const mixed = tryHoldBatch(before, [
+      request({ key: "existing", amountRaw: 60n }),
+      request({ key: "extra", id: "extra", proposalId: "citizen:104:extra", amountRaw: 50n }),
+    ]);
+    expect(mixed.ok).toBe(false);
+    if (!mixed.ok) {
+      expect(mixed.outcome).toBe("insufficient_funds");
+      expect(mixed.holds).toEqual(before);
+    }
+    expect(existing.state).toBe("held");
+    expect(existing.amountRaw).toBe(60n);
+    expect(before).toHaveLength(1);
+
+    const empty = tryHoldBatch([], [
+      request({ key: "one", amountRaw: 60n }),
+      request({ key: "two", amountRaw: 50n }),
+    ]);
+    expect(empty.ok).toBe(false);
+    if (!empty.ok) {
+      expect(empty.holds).toEqual([]);
+    }
+
+    const replay = tryHoldBatch(
+      [held({ key: "existing", amountRaw: 60n }), held({ key: "second", amountRaw: 50n })],
+      [request({ key: "existing", amountRaw: 60n, observedRaw: 100n }), request({ key: "second", amountRaw: 50n, observedRaw: 100n })],
+    );
+    expect(replay.ok && replay.created).toBe(false);
+    if (replay.ok) {
+      expect(replay.holds.map((item) => item.state)).toEqual(["held", "held"]);
+    }
+
+    const serial = holdSequentially(before, [
+      request({ key: "existing", amountRaw: 60n }),
+      request({ key: "extra", id: "extra", proposalId: "citizen:104:extra", amountRaw: 50n }),
+    ]);
+    expect(serial.holds).toEqual(before);
+    expect(serial.holds[0]?.state).toBe("held");
+  });
+
+  it("rejects a conflicting idempotency key without adding or editing reservations", () => {
+    const existing = held({ key: "existing", amountRaw: 40n });
+    const conflict = tryHoldBatch([existing], [
+      request({ key: "existing", amountRaw: 41n }),
+      request({ key: "extra", id: "extra", proposalId: "citizen:104:extra", amountRaw: 1n }),
+    ]);
+    expect(conflict.ok).toBe(false);
+    if (!conflict.ok) {
+      expect(conflict.outcome).toBe("conflict");
+      expect(conflict.holds).toEqual([existing]);
+      expect(conflict.holds.some((item) => item.key === "extra")).toBe(false);
+    }
+    expect(existing).toMatchObject({ state: "held", amountRaw: 40n });
+
+    const live = held({ key: "live", amountRaw: 40n });
+    const released = held({ key: "old", amountRaw: 30n, state: "released" });
+    const reconciled = held({ key: "done", amountRaw: 10n, state: "reconciled" });
+    const reheld = tryHoldBatch([live, released], [
+      request({ key: "live", amountRaw: 40n, observedRaw: 100n }),
+      request({ key: "old", amountRaw: 30n, observedRaw: 100n }),
+    ]);
+    expect(reheld.ok && reheld.created).toBe(true);
+    if (reheld.ok) {
+      expect(reheld.holds.find((item) => item.key === "live")).toMatchObject({ state: "held", amountRaw: 40n });
+      expect(reheld.holds.find((item) => item.key === "old")?.state).toBe("held");
+    }
+    expect(released.state).toBe("released");
+    const tightReleased = tryHoldBatch([live, released], [
+      request({ key: "live", amountRaw: 40n, observedRaw: 50n }),
+      request({ key: "old", amountRaw: 30n, observedRaw: 50n }),
+    ]);
+    expect(tightReleased.ok).toBe(false);
+    if (!tightReleased.ok) {
+      expect(tightReleased.outcome).toBe("insufficient_funds");
+      expect(tightReleased.holds.find((item) => item.key === "old")?.state).toBe("released");
+      expect(tightReleased.holds.find((item) => item.key === "live")?.state).toBe("held");
+    }
+    const settled = tryHoldBatch([reconciled], [request({ key: "done", amountRaw: 10n })]);
+    expect(settled.ok).toBe(false);
+    if (!settled.ok) {
+      expect(settled.outcome).toBe("conflict");
+      expect(settled.holds[0]?.state).toBe("reconciled");
+    }
+
+    const tight = assessTreasuryRead({
+      address: TREASURY,
+      read: {
+        chainId: 143,
+        blockNumber: 10n,
+        observedAt: new Date(NOW).toISOString(),
+        nativeRaw: 100n,
+        tokenRaw: 0n,
+        tokenDecimals: 6,
+      },
+      nowMs: NOW,
+      maxAgeMs: 60_000,
+    });
+    const prior = held({ key: "other-proposal", amountRaw: 60n });
+    const decided = decideEconomicProposal({
+      proposal: proposal({ fundingRequestRaw: 50n, amountRaw: 50n, estimatedGasWei: 0n }),
+      observation: tight,
+      holds: [prior],
+      limits: LIMITS,
+      dailyGasWei: 0n,
+      dailyGasKnown: true,
+      allowlist: [{ chainId: 143, target: TARGET, selectors: [SELECTOR], assets: ["MON"], label: "fixture" }],
+      factoryDeployed: false,
+      nowMs: NOW,
+      executionEnabled: false,
+    });
+    expect(decided.decision.outcome).toBe("insufficient_funds");
+    expect(decided.decision.reserved).toBe(false);
+    expect(decided.holds).toEqual([prior]);
+    expect(prior.state).toBe("held");
+  });
+
+  it("does not release a pre-existing hold when createdKeys falsely lists it", async () => {
+    const existing = "proposal-1";
+    const createdKey = "proposal-1:gas";
+    const earlier = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+    const store = new Map<string, { operationId: string; state: "held" | "released"; proposalId: string }>([
+      [existing, { operationId: earlier, state: "held", proposalId: PROPOSAL_ID }],
+    ]);
+    const releasedOperations: string[] = [];
+    const gateway: EconomyGateway = {
+      async openProposal() {
+        return { ok: true, id: PROPOSAL_ID, created: false };
+      },
+      async applyStatus() {
+        return { ok: false, reason: "The proposal status could not be saved." };
+      },
+      async tryHolds(rows, operationId) {
+        const inserted: string[] = [];
+        for (const row of rows) {
+          if (store.has(row.key)) {
+            continue;
+          }
+          store.set(row.key, { operationId, state: "held", proposalId: row.proposalId });
+          inserted.push(row.key);
+        }
+        return {
+          ok: true,
+          created: inserted.length > 0,
+          createdKeys: rows.map((row) => row.key),
+          heldKeys: rows.map((row) => row.key),
+          operationId,
+        };
+      },
+      async release(proposalId, operationId) {
+        releasedOperations.push(operationId);
+        for (const row of store.values()) {
+          if (row.proposalId === proposalId && row.operationId === operationId && row.state === "held") {
+            row.state = "released";
+          }
+        }
+        return { ok: true };
+      },
+    };
+    const item = proposal({ fundingRequestRaw: 20n, amountRaw: 20n, estimatedGasWei: 1n });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      const saved = await persistEconomyDecision(gateway, {
+        proposal: item,
+        decision: { outcome: "approved", reason: "reserved", hold: null, reserved: true, executed: false },
+        holds: [
+          held({ key: existing, proposalId: PROPOSAL_ID, amountRaw: 20n }),
+          held({ key: createdKey, proposalId: PROPOSAL_ID, bucket: "gas", amountRaw: 1n }),
+        ],
+        observation: fresh(),
+      });
+      expect(saved).toMatchObject({ ok: false, reserved: false });
+      expect(store.get(existing)).toMatchObject({ state: "held", operationId: earlier });
+      expect(store.get(createdKey)?.state).toBe("released");
+      expect(releasedOperations).toHaveLength(1);
+      expect(releasedOperations[0]).toMatch(/^[0-9a-f-]{36}$/);
+      expect(releasedOperations.join(" ")).not.toContain(existing);
+      expect(proveHoldOperation(
+        { created: true, createdKeys: [existing, createdKey], heldKeys: [existing, createdKey], operationId: releasedOperations[0] },
+        [existing, createdKey],
+        releasedOperations[0] ?? "",
+      ).ok).toBe(true);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("does not release when the response echoes another attempt's operation id", async () => {
+    const existing = "proposal-1";
+    const createdKey = "proposal-1:gas";
+    const earlier = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+    const store = new Map<string, { operationId: string; state: "held" | "released" }>([
+      [existing, { operationId: earlier, state: "held" }],
+    ]);
+    let released = false;
+    const gateway: EconomyGateway = {
+      async openProposal() {
+        return { ok: true, id: PROPOSAL_ID, created: false };
+      },
+      async applyStatus() {
+        return { ok: true, status: "approved", duplicate: false };
+      },
+      async tryHolds(rows, operationId) {
+        for (const row of rows) {
+          if (!store.has(row.key)) {
+            store.set(row.key, { operationId, state: "held" });
+          }
+        }
+        return {
+          ok: true,
+          created: true,
+          createdKeys: [existing, createdKey],
+          operationId: earlier,
+        };
+      },
+      async release() {
+        released = true;
+        return { ok: true };
+      },
+    };
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      const saved = await persistEconomyDecision(gateway, {
+        proposal: proposal({ fundingRequestRaw: 20n, amountRaw: 20n, estimatedGasWei: 1n }),
+        decision: { outcome: "approved", reason: "reserved", hold: null, reserved: true, executed: false },
+        holds: [
+          held({ key: existing, proposalId: PROPOSAL_ID, amountRaw: 20n }),
+          held({ key: createdKey, proposalId: PROPOSAL_ID, bucket: "gas", amountRaw: 1n }),
+        ],
+        observation: fresh(),
+      });
+      expect(saved).toMatchObject({ ok: false, reserved: false, outcome: "deferred" });
+      expect(released).toBe(false);
+      expect(store.get(existing)).toEqual({ operationId: earlier, state: "held" });
+      expect(store.get(createdKey)).toMatchObject({ state: "held" });
+      expect(store.get(createdKey)?.operationId).not.toBe(earlier);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("does not release submitted keys when createdKeys is missing or malformed", async () => {
+    expect(selectCreatedKeys({ created: true }, ["proposal-1"])).toMatchObject({ ok: false, code: "missing" });
+    expect(selectCreatedKeys({ created: false }, ["proposal-1"])).toEqual({ ok: true, keys: [] });
+    const identified = selectCreatedKeys({ created: true, createdKeys: ["proposal-1:gas"] }, ["proposal-1", "proposal-1:gas"]);
+    expect(identified).toEqual({ ok: true, keys: ["proposal-1:gas"] });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      const item = proposal({ fundingRequestRaw: 20n, amountRaw: 20n, estimatedGasWei: 1n });
+      const holds = [
+        held({ key: item.idempotencyKey, proposalId: PROPOSAL_ID, amountRaw: 20n }),
+        held({ key: `${item.idempotencyKey}:gas`, proposalId: PROPOSAL_ID, bucket: "gas", amountRaw: 1n }),
+      ];
+      const decision = { outcome: "approved" as const, reason: "reserved", hold: null, reserved: true, executed: false as const };
+      const responses: Array<{ created: boolean; createdKeys?: unknown; operationId?: string }> = [
+        { created: true },
+        { created: true, createdKeys: ["proposal-1", "https://rpc.example/secret?token=abc"] },
+        { created: true, createdKeys: ["proposal-1", 1] },
+        { created: true, createdKeys: "proposal-1" },
+        { created: true, createdKeys: [] },
+        { created: true, createdKeys: ["proposal-1", "proposal-1"] },
+        { created: false, createdKeys: ["proposal-1:gas"] },
+        { created: true, createdKeys: ["proposal-1:gas"], operationId: "33333333-3333-4333-8333-333333333333" },
+      ];
+      for (const response of responses) {
+        const calls: string[] = [];
+        const saved = await persistEconomyDecision(
+          {
+            async openProposal() {
+              calls.push("open");
+              return { ok: true, id: PROPOSAL_ID, created: false };
+            },
+            async applyStatus() {
+              calls.push("status");
+              return { ok: true, status: "approved", duplicate: false };
+            },
+            async tryHolds(_rows, operationId) {
+              calls.push("holds");
+              return {
+                ok: true,
+                created: response.created,
+                createdKeys: response.createdKeys,
+                operationId: "operationId" in response ? response.operationId : operationId,
+              };
+            },
+            async release() {
+              calls.push("release");
+              return { ok: true };
+            },
+          },
+          { proposal: item, decision, holds, observation: fresh() },
+        );
+        expect(saved).toMatchObject({ ok: false, reserved: false, outcome: "deferred" });
+        expect(saved.ok ? "" : saved.reason).toMatch(/left unchanged/);
+        expect(calls).toEqual(["open", "holds"]);
+      }
+      const logged = warn.mock.calls.map((call) => String(call[0])).join("\n");
+      expect(logged).toContain("hold_ownership_unresolved");
+      expect(logged).toContain("\"code\":\"missing\"");
+      expect(logged).toContain("\"code\":\"malformed\"");
+      expect(logged).not.toContain("https://");
+      expect(logged).not.toContain("token=abc");
+      expect(logged).not.toContain("service_role");
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("keeps an existing hold when a later retry follows a status-write failure", async () => {
+    const existing = "proposal-1";
+    const created = "proposal-1:gas";
+    const earlier = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+    const store = new Map<string, { operationId: string; state: "held" | "released" }>([
+      [existing, { operationId: earlier, state: "held" }],
+    ]);
+    const released: string[] = [];
+    const statuses: string[] = [];
+    let failStatus = true;
+    const gateway: EconomyGateway = {
+      async openProposal() {
+        return { ok: true, id: PROPOSAL_ID, created: false };
+      },
+      async applyStatus(input) {
+        statuses.push(input.status);
+        if (failStatus) {
+          return { ok: false, reason: "The proposal status could not be saved." };
+        }
+        return { ok: true, status: input.status, duplicate: statuses.filter((status) => status === input.status).length > 1 };
+      },
+      async tryHolds(rows, operationId) {
+        const createdKeys: string[] = [];
+        for (const row of rows) {
+          const current = store.get(row.key);
+          if (current?.state === "held") {
+            continue;
+          }
+          if (current?.state === "released") {
+            current.state = "held";
+            current.operationId = operationId;
+            createdKeys.push(row.key);
+            continue;
+          }
+          store.set(row.key, { operationId, state: "held" });
+          createdKeys.push(row.key);
+        }
+        return {
+          ok: true,
+          created: createdKeys.length > 0,
+          createdKeys,
+          heldKeys: rows.map((row) => row.key),
+          operationId,
+        };
+      },
+      async release(proposalId, operationId) {
+        released.push(operationId);
+        void proposalId;
+        for (const row of store.values()) {
+          if (row.operationId === operationId && row.state === "held") {
+            row.state = "released";
+          }
+        }
+        return { ok: true };
+      },
+    };
+    const item = proposal({ fundingRequestRaw: 20n, amountRaw: 20n, estimatedGasWei: 1n });
+    const input = {
+      proposal: item,
+      decision: { outcome: "approved" as const, reason: "reserved", hold: null, reserved: true, executed: false as const },
+      holds: [
+        held({ key: existing, proposalId: PROPOSAL_ID, amountRaw: 20n }),
+        held({ key: created, proposalId: PROPOSAL_ID, bucket: "gas", amountRaw: 1n }),
+      ],
+      observation: fresh(),
+    };
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      const failed = await persistEconomyDecision(gateway, input);
+      expect(failed).toMatchObject({ ok: false, reserved: false });
+      expect(store.get(existing)).toMatchObject({ state: "held", operationId: earlier });
+      expect(store.get(created)?.state).toBe("released");
+      expect(released).toHaveLength(1);
+
+      failStatus = false;
+      const retried = await persistEconomyDecision(gateway, input);
+      expect(retried).toMatchObject({ ok: true, status: "approved", reserved: true });
+      expect(store.get(existing)).toMatchObject({ state: "held", operationId: earlier });
+      expect(store.get(created)).toMatchObject({ state: "held" });
+      expect(store.get(created)?.operationId).not.toBe(earlier);
+      expect(released).toHaveLength(1);
+
+      const again = await persistEconomyDecision(gateway, input);
+      expect(again).toMatchObject({ ok: true, status: "approved", reserved: true });
+      expect(store.get(existing)?.state).toBe("held");
+      expect(store.get(created)?.state).toBe("held");
+      expect(released).toHaveLength(1);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("does not approve when a released key cannot be re-held or the response omits live holds", async () => {
+    const existing = "proposal-1";
+    const releasedKey = "proposal-1:gas";
+    const earlier = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+    const store = new Map<string, { operationId: string; state: "held" | "released" | "reconciled" }>([
+      [existing, { operationId: earlier, state: "held" }],
+      [releasedKey, { operationId: earlier, state: "released" }],
+    ]);
+    const calls: string[] = [];
+    const gateway: EconomyGateway = {
+      async openProposal() {
+        calls.push("open");
+        return { ok: true, id: PROPOSAL_ID, created: false };
+      },
+      async applyStatus(input) {
+        calls.push(`status:${input.status}`);
+        return { ok: true, status: input.status, duplicate: false };
+      },
+      async tryHolds() {
+        calls.push("holds");
+        return {
+          ok: false,
+          outcome: "insufficient_funds",
+          reason: "The remaining observed balance cannot cover another reservation.",
+        };
+      },
+      async release() {
+        calls.push("release");
+        return { ok: true };
+      },
+    };
+    const input = {
+      proposal: proposal({ fundingRequestRaw: 20n, amountRaw: 20n, estimatedGasWei: 1n }),
+      decision: { outcome: "approved" as const, reason: "reserved", hold: null, reserved: false, executed: false as const },
+      holds: [
+        held({ key: existing, proposalId: PROPOSAL_ID, amountRaw: 20n }),
+        held({ key: releasedKey, proposalId: PROPOSAL_ID, bucket: "gas", amountRaw: 1n }),
+      ],
+      observation: fresh(),
+    };
+    const short = await persistEconomyDecision(gateway, input);
+    expect(short).toMatchObject({ ok: true, status: "insufficient_funds", reserved: false });
+    expect(calls).toEqual(["open", "holds", "status:insufficient_funds"]);
+    expect(store.get(existing)?.state).toBe("held");
+    expect(store.get(releasedKey)?.state).toBe("released");
+
+    calls.length = 0;
+    const missing = await persistEconomyDecision(
+      {
+        ...gateway,
+        async tryHolds(_rows, operationId) {
+          calls.push("holds");
+          return { ok: true, created: false, createdKeys: [], operationId };
+        },
+      },
+      input,
+    );
+    expect(missing).toMatchObject({ ok: false, reserved: false, outcome: "deferred" });
+    expect(calls).toEqual(["open", "holds"]);
+
+    calls.length = 0;
+    store.set(releasedKey, { operationId: earlier, state: "reconciled" });
+    const reconciled = await persistEconomyDecision(
+      {
+        ...gateway,
+        async tryHolds() {
+          calls.push("holds");
+          return { ok: false, outcome: "conflict", reason: "This reservation was already reconciled." };
+        },
+      },
+      input,
+    );
+    expect(reconciled).toMatchObject({ ok: true, status: "rejected", reserved: false });
+    expect(calls).toEqual(["open", "holds", "status:rejected"]);
+    expect(store.get(existing)?.state).toBe("held");
+    expect(store.get(releasedKey)?.state).toBe("reconciled");
+
+    const uncovered = await persistEconomyDecision(gateway, {
+      ...input,
+      holds: [
+        held({ key: existing, proposalId: PROPOSAL_ID, amountRaw: 20n, state: "released" }),
+        held({ key: releasedKey, proposalId: PROPOSAL_ID, bucket: "gas", amountRaw: 1n, state: "released" }),
+      ],
+    });
+    expect(uncovered).toMatchObject({ ok: false, reserved: false, outcome: "deferred" });
+    expect(uncovered.ok ? "" : uncovered.reason).toMatch(/not held/);
+  });
+
+  it("approves a live replay and retries an insufficient proposal only after the holds are covered", async () => {
+    const calls: string[] = [];
+    let approvedAttempts = 0;
+    const gateway: EconomyGateway = {
+      async openProposal() {
+        calls.push("open");
+        return { ok: true, id: PROPOSAL_ID, created: false };
+      },
+      async applyStatus(input) {
+        calls.push(`status:${input.status}`);
+        if (input.status === "approved") {
+          approvedAttempts += 1;
+          if (approvedAttempts === 1) {
+            return { ok: false, reason: "That status change is not allowed." };
+          }
+        }
+        return { ok: true, status: input.status, duplicate: false };
+      },
+      async tryHolds(rows, operationId) {
+        calls.push("holds");
+        return {
+          ok: true,
+          created: false,
+          createdKeys: [],
+          heldKeys: rows.map((row) => row.key),
+          operationId,
+        };
+      },
+      async release() {
+        calls.push("release");
+        return { ok: true };
+      },
+    };
+    const item = proposal({ fundingRequestRaw: 20n, amountRaw: 20n, estimatedGasWei: 0n });
+    const saved = await persistEconomyDecision(gateway, {
+      proposal: item,
+      decision: { outcome: "approved", reason: "The reservation already exists.", hold: null, reserved: false, executed: false },
+      holds: [held({ key: item.idempotencyKey, proposalId: PROPOSAL_ID, amountRaw: 20n })],
+      observation: fresh(),
+    });
+    expect(saved).toMatchObject({ ok: true, status: "approved", reserved: true });
+    expect(calls).toEqual(["open", "holds", "status:approved", "status:proposed", "status:approved"]);
+    expect(calls).not.toContain("release");
+
+    calls.length = 0;
+    const direct = await persistEconomyDecision(gateway, {
+      proposal: item,
+      decision: { outcome: "approved", reason: "The reservation already exists.", hold: null, reserved: false, executed: false },
+      holds: [held({ key: item.idempotencyKey, proposalId: PROPOSAL_ID, amountRaw: 20n })],
+      observation: fresh(),
+    });
+    expect(direct).toMatchObject({ ok: true, status: "approved", reserved: true });
+    expect(calls).toEqual(["open", "holds", "status:approved"]);
+  });
+
+  it("releases every held row of a reverted proposal and leaves another proposal held", () => {
+    const rows = [
+      { proposalId: PROPOSAL_ID, operationId: "op-a", state: "held" as const },
+      { proposalId: PROPOSAL_ID, operationId: "op-b", state: "held" as const },
+      { proposalId: PROPOSAL_ID, operationId: "op-a", state: "released" as const },
+      { proposalId: "33333333-3333-4333-8333-333333333333", operationId: "op-a", state: "held" as const },
+    ];
+    const next = rows.map((row) =>
+      row.proposalId === PROPOSAL_ID && row.state === "held" ? { ...row, state: "released" as const } : row,
+    );
+    expect(next[0]?.state).toBe("released");
+    expect(next[1]?.state).toBe("released");
+    expect(next[2]?.state).toBe("released");
+    expect(next[3]).toEqual(rows[3]);
+  });
+
+  it("releases one attempt without touching a concurrent attempt", async () => {
+    const store = new Map<string, { operationId: string; state: "held" | "released"; proposalId: string }>();
+    const releaseCalls: string[] = [];
+    const gatewayFor = (idempotencyKey: string, proposalId: string, fail: boolean): EconomyGateway => ({
+      async openProposal() {
+        return { ok: true, id: proposalId, created: true };
+      },
+      async applyStatus() {
+        return fail
+          ? { ok: false, reason: "The proposal status could not be saved." }
+          : { ok: true, status: "approved", duplicate: false };
+      },
+      async tryHolds(rows, operationId) {
+        for (const row of rows) {
+          if (!store.has(row.key)) {
+            store.set(row.key, { operationId, state: "held", proposalId: row.proposalId });
+          }
+        }
+        return {
+          ok: true,
+          created: true,
+          createdKeys: rows.map((row) => row.key),
+          heldKeys: rows.map((row) => row.key),
+          operationId,
+        };
+      },
+      async release(proposalId, operationId) {
+        releaseCalls.push(operationId);
+        for (const row of store.values()) {
+          if (row.proposalId === proposalId && row.operationId === operationId && row.state === "held") {
+            row.state = "released";
+          }
+        }
+        return { ok: true };
+      },
+    });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      const firstId = "22222222-2222-4222-8222-222222222221";
+      const secondId = "22222222-2222-4222-8222-222222222223";
+      const [failed, kept] = await Promise.all([
+        persistEconomyDecision(gatewayFor("attempt-a", firstId, true), {
+          proposal: proposal({ id: "attempt-a", idempotencyKey: "attempt-a", fundingRequestRaw: 20n, amountRaw: 20n, estimatedGasWei: 0n }),
+          decision: { outcome: "approved", reason: "reserved", hold: null, reserved: true, executed: false },
+          holds: [held({ key: "attempt-a", proposalId: firstId, amountRaw: 20n })],
+          observation: fresh(),
+        }),
+        persistEconomyDecision(gatewayFor("attempt-b", secondId, false), {
+          proposal: proposal({ id: "attempt-b", idempotencyKey: "attempt-b", fundingRequestRaw: 20n, amountRaw: 20n, estimatedGasWei: 0n }),
+          decision: { outcome: "approved", reason: "reserved", hold: null, reserved: true, executed: false },
+          holds: [held({ key: "attempt-b", proposalId: secondId, amountRaw: 20n })],
+          observation: fresh(),
+        }),
+      ]);
+      expect(failed.ok).toBe(false);
+      expect(kept).toMatchObject({ ok: true, reserved: true });
+      expect(store.get("attempt-a")?.state).toBe("released");
+      expect(store.get("attempt-b")?.state).toBe("held");
+      expect(store.get("attempt-a")?.operationId).not.toBe(store.get("attempt-b")?.operationId);
+      expect(releaseCalls).toHaveLength(1);
+      expect(releaseCalls[0]).toBe(store.get("attempt-a")?.operationId);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("does not settle invalid, fabricated, reverted, mismatched, or unavailable receipts", async () => {
+    const cases: Array<{ name: string; call: RpcCaller; hash?: string; verified: boolean }> = [
+      { name: "invalid", call: mainnet().call, hash: "0x123", verified: false },
+      {
+        name: "fabricated",
+        call: mainnet({ receipt: { transactionHash: TX, status: "success", blockNumber: "0xa", blockHash: BLOCK } }).call,
+        verified: false,
+      },
+      {
+        name: "reverted",
+        call: mainnet({ receipt: { transactionHash: TX, status: "0x0", blockNumber: "0xa", blockHash: BLOCK } }).call,
+        verified: true,
+      },
+      { name: "mismatched", call: mainnet({ block: { number: "0xa", hash: OTHER_BLOCK } }).call, verified: false },
+      { name: "unavailable", call: mainnet({ throwOn: "eth_getTransactionReceipt" }).call, verified: false },
+    ];
+    for (const item of cases) {
+      const client = fakeClient(() => {
+        throw new Error(`${item.name} must not reach SQL`);
+      });
+      const settled = await settleEconomyProposal("proposal-1", item.hash ?? TX, {
+        call: item.call,
+        verifier: client.client,
+        reader: proposalReader({ status: "confirmed", tx_hash: TX }).client,
+      });
+      expect(settled.ok, item.name).toBe(false);
+      expect(settled.verified, item.name).toBe(item.verified);
+      expect(client.calls, item.name).toEqual([]);
+    }
+
+    const opened = openProposal([], { id: "1", idempotencyKey: "tools-104", tokenId: "104", expiresAtMs: NOW + 1_000, at: "t0" });
+    const receipt = await verifiedReceipt();
+    const submitted = noteSubmission([{ ...opened.record, status: "approved", reason: "reserved" }], "tools-104", "t1");
+    const confirmed = noteReceipt(submitted, "tools-104", receipt, "t2");
+    const lines = reconcileChainTransfer([], evidence(), "t3");
+    expect(lines.ok).toBe(true);
+    const journal = lines.ok ? lines.lines : [];
+    const first = settleProposal(confirmed, "tools-104", receipt, journal, "t4");
+    expect(first.ok && first.duplicate).toBe(false);
+    const second = settleProposal(first.records, "tools-104", receipt, journal, "t5");
+    expect(second.ok && second.duplicate).toBe(true);
+    expect(second.records[0]?.history).toHaveLength(first.records[0]?.history.length ?? 0);
+    const other = await verifiedReceipt(OTHER_TX);
+    const conflict = settleProposal(first.records, "tools-104", other, journal, "t6");
+    expect(conflict.ok).toBe(false);
+    if (!conflict.ok) {
+      expect(conflict.outcome).toBe("conflict");
+    }
+    expect(conflict.records[0]?.txHash).toBe(TX);
+    expect(conflict.records[0]?.status).toBe("settled");
+  });
+
+  it("keeps confirmation and settlement off untrusted clients and keeps execution closed", async () => {
+    const forbidden = ["confirmEconomyReceipt", "settleEconomyProposal", "economy_note_receipt", "economy_settle_proposal"];
+    const appFiles = walk("src/app").filter((file) => file.endsWith(".ts") || file.endsWith(".tsx"));
+    for (const file of appFiles) {
+      const source = readFileSync(file, "utf8");
+      for (const name of forbidden) {
+        expect(source, file).not.toContain(name);
+      }
+    }
+    expect(readFileSync("src/lib/economy/db.ts", "utf8").startsWith('import "server-only"')).toBe(true);
+    expect(readFileSync("src/lib/economy/load.ts", "utf8")).not.toContain("verifyMainnetReceipt");
+    const sql = readFileSync("supabase/migrations/20261020050000_phase8_receipt_verification.sql", "utf8").toLowerCase();
+    expect(sql).toContain("revoke all on function %s from %i");
+    expect(sql).not.toContain("grant execute on function %s to anon");
+    expect(sql).not.toContain("grant execute on function %s to authenticated");
+
+    const response = await postTransaction();
+    expect(response.status).toBe(403);
+    expect(await response.json()).toMatchObject({ ok: false });
+    const execution = productionExecutionStatus({});
+    expect(execution.enabled).toBe(false);
+    expect(execution.signerKind).toBe("none");
+    expect(execution.relayerEnabled).toBe(false);
+    expect(execution.transactionsRoute).toBe("closed");
+
+    const ledger = interpretLedgerSnapshot({
+      ok: true,
+      complete: true,
+      reservedGas: "0",
+      reservedDeployment: "0",
+      allocatedMon: "0",
+      allocatedChog: "0",
+      dailyGas: "0",
+      holds: [],
+      proposals: [{ id: "stored", status: "confirmed", objective: "Pay timber", txHash: TX, receiptStatus: "success" }],
+      transfers: [{ id: "seen", asset: "MON", amountRaw: "1000", side: "debit", status: "observed", evidenceKey: `143:${TX}:native:MON:in` }],
+    });
+    const view = presentEconomy({
+      snapshot: emptySnapshot("not_configured", "Economic treasury address is not configured."),
+      execution,
+      allowlistReason: "No protocol allowlist is configured.",
+      ledgerLoaded: true,
+      activities: ledger.activities,
+      transfers: ledger.transfers,
+    });
+    expect(view.execution).toBe("Disabled");
+    expect(view.statusLabel).toBe("Not configured");
+    expect(view.activities[0]?.chainVerified).toBe(false);
+    expect(view.activities[0]?.href).toBeNull();
+    expect(view.transfers[0]?.chainVerified).toBe(false);
+    expect(view.transfers[0]?.href).toBeNull();
+    const linked = presentEconomy({
+      snapshot: emptySnapshot("not_configured", "Economic treasury address is not configured."),
+      execution,
+      allowlistReason: "No protocol allowlist is configured.",
+      ledgerLoaded: true,
+      activities: applyRpcVerification(ledger, await verifiedReceipt()).activities,
+    });
+    expect(linked.activities[0]?.href).toBe(`https://monadscan.com/tx/${TX}`);
+  });
+
+  it("releases by server operation id when createdKeys falsely includes a pre-existing hold", async () => {
+    const tableCalls: string[] = [];
+    const rpcCalls: Array<{ fn: string; args: Record<string, unknown> }> = [];
+    const client = rpcClient((fn, args) => {
+      rpcCalls.push({ fn, args });
+      if (fn === "economy_open_proposal") {
+        return { ok: true, id: PROPOSAL_ID, created: true };
+      }
+      if (fn === "economy_try_holds") {
+        const payload = args.p_holds as { operationId?: string; holds?: unknown[] };
+        return {
+          ok: true,
+          created: true,
+          createdKeys: ["proposal-1", "proposal-1:gas", "other-attempt"],
+          operationId: payload.operationId,
+        };
+      }
+      if (fn === "economy_apply_status") {
+        return { ok: false, reason: "The proposal status could not be saved." };
+      }
+      if (fn === "economy_release_operation") {
+        return { ok: true, released: 1 };
+      }
+      return { ok: false, reason: "unexpected" };
+    }, tableCalls);
+    const item = proposal({ fundingRequestRaw: 20n, amountRaw: 20n, estimatedGasWei: 1n });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      const forgedList = await saveEconomyDecision(client, {
+        proposal: item,
+        decision: { outcome: "approved", reason: "reserved", hold: null, reserved: true, executed: false },
+        holds: [
+          held({ key: item.idempotencyKey, amountRaw: 20n }),
+          held({ key: `${item.idempotencyKey}:gas`, bucket: "gas", amountRaw: 1n }),
+        ],
+        observation: fresh(),
+      });
+      expect(forgedList).toMatchObject({ ok: false, reserved: false, outcome: "deferred" });
+      expect(rpcCalls.map((call) => call.fn)).toEqual(["economy_open_proposal", "economy_try_holds"]);
+      expect(tableCalls).toEqual([]);
+
+      rpcCalls.length = 0;
+      const owned = rpcClient((fn, args) => {
+        rpcCalls.push({ fn, args });
+        if (fn === "economy_open_proposal") {
+          return { ok: true, id: PROPOSAL_ID, created: true };
+        }
+        if (fn === "economy_try_holds") {
+          const payload = args.p_holds as { operationId?: string; holds?: unknown[] };
+          return {
+            ok: true,
+            created: true,
+            createdKeys: ["proposal-1", "proposal-1:gas"],
+            heldKeys: ["proposal-1", "proposal-1:gas"],
+            operationId: payload.operationId,
+          };
+        }
+        if (fn === "economy_apply_status") {
+          return { ok: false, reason: "The proposal status could not be saved." };
+        }
+        if (fn === "economy_release_operation") {
+          return { ok: true, released: 1 };
+        }
+        return { ok: false, reason: "unexpected" };
+      }, tableCalls);
+      const saved = await saveEconomyDecision(owned, {
+        proposal: item,
+        decision: { outcome: "approved", reason: "reserved", hold: null, reserved: true, executed: false },
+        holds: [
+          held({ key: item.idempotencyKey, amountRaw: 20n }),
+          held({ key: `${item.idempotencyKey}:gas`, bucket: "gas", amountRaw: 1n }),
+        ],
+        observation: fresh(),
+      });
+      expect(saved.ok).toBe(false);
+      expect(saved.ok ? "" : saved.reason).not.toMatch(/could not be released/);
+      const holdsCall = rpcCalls.find((call) => call.fn === "economy_try_holds");
+      const payload = holdsCall?.args.p_holds as { operationId: string; holds: unknown[] };
+      expect(payload.operationId).toMatch(/^[0-9a-f-]{36}$/i);
+      expect(payload.holds).toHaveLength(2);
+      expect(Array.isArray(holdsCall?.args.p_holds)).toBe(false);
+      const releaseCall = rpcCalls.find((call) => call.fn === "economy_release_operation");
+      expect(releaseCall?.args).toEqual({ p_operation: payload.operationId, p_proposal: PROPOSAL_ID });
+      expect(JSON.stringify(releaseCall?.args)).not.toContain("proposal-1");
+      expect(rpcCalls.map((call) => call.fn)).toEqual([
+        "economy_open_proposal",
+        "economy_try_holds",
+        "economy_apply_status",
+        "economy_release_operation",
+      ]);
+      expect(tableCalls).toEqual([]);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("does not release or approve when the reservation response is unproven or rejected by older SQL", async () => {
+    const item = proposal({ fundingRequestRaw: 20n, amountRaw: 20n, estimatedGasWei: 1n });
+    const input = {
+      proposal: item,
+      decision: { outcome: "approved" as const, reason: "reserved", hold: null, reserved: true, executed: false as const },
+      holds: [
+        held({ key: item.idempotencyKey, amountRaw: 20n }),
+        held({ key: `${item.idempotencyKey}:gas`, bucket: "gas", amountRaw: 1n }),
+      ],
+      observation: fresh(),
+    };
+    const responses: unknown[] = [
+      { ok: true, created: true, createdKeys: { secret: "service_role-key" } },
+      { ok: true, created: true },
+      { ok: true, created: true, createdKeys: ["proposal-1:gas"], operationId: "33333333-3333-4333-8333-333333333333" },
+      { ok: true, created: true, createdKeys: ["proposal-1", "https://rpc.example/secret?token=abc"] },
+      { ok: false, outcome: "malformed", reason: "A reservation needs a positive amount and an observed balance." },
+    ];
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      for (const response of responses) {
+        const calls: string[] = [];
+        const tableCalls: string[] = [];
+        const saved = await saveEconomyDecision(
+          rpcClient((fn, args) => {
+            calls.push(fn);
+            if (fn === "economy_open_proposal") {
+              return { ok: true, id: PROPOSAL_ID, created: false };
+            }
+            if (fn === "economy_try_holds") {
+              const payload = args.p_holds as { operationId?: string };
+              const body = response as { operationId?: string };
+              return body.operationId === undefined && (response as { ok?: boolean }).ok === true
+                ? { ...(response as Record<string, unknown>), operationId: payload.operationId }
+                : response;
+            }
+            return { ok: true, status: "approved", duplicate: false };
+          }, tableCalls),
+          input,
+        );
+        expect(saved).toMatchObject({ ok: false, reserved: false, outcome: "deferred" });
+        expect(calls).toEqual(["economy_open_proposal", "economy_try_holds"]);
+        expect(tableCalls).toEqual([]);
+      }
+      const logged = warn.mock.calls.map((call) => String(call[0])).join("\n");
+      expect(logged).not.toContain("service_role");
+      expect(logged).not.toContain("https://");
+      expect(logged).not.toContain("token=abc");
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("writes insufficient funds without releasing, and reports a failed operation release", async () => {
+    const item = proposal({ fundingRequestRaw: 20n, amountRaw: 20n, estimatedGasWei: 1n });
+    const input = {
+      proposal: item,
+      decision: { outcome: "approved" as const, reason: "reserved", hold: null, reserved: true, executed: false as const },
+      holds: [
+        held({ key: item.idempotencyKey, amountRaw: 20n }),
+        held({ key: `${item.idempotencyKey}:gas`, bucket: "gas", amountRaw: 1n }),
+      ],
+      observation: fresh(),
+    };
+    const shortCalls: string[] = [];
+    const short = await saveEconomyDecision(
+      rpcClient((fn) => {
+        shortCalls.push(fn);
+        if (fn === "economy_open_proposal") {
+          return { ok: true, id: PROPOSAL_ID, created: true };
+        }
+        if (fn === "economy_try_holds") {
+          return { ok: false, outcome: "insufficient_funds", reason: "The remaining observed balance cannot cover another reservation." };
+        }
+        if (fn === "economy_apply_status") {
+          return { ok: true, status: "insufficient_funds", duplicate: false };
+        }
+        return { ok: true, released: 1 };
+      }),
+      input,
+    );
+    expect(short).toMatchObject({ ok: true, status: "insufficient_funds", reserved: false });
+    expect(shortCalls).toEqual(["economy_open_proposal", "economy_try_holds", "economy_apply_status"]);
+
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      const failedRelease = await saveEconomyDecision(
+        rpcClient((fn, args) => {
+          if (fn === "economy_open_proposal") {
+            return { ok: true, id: PROPOSAL_ID, created: true };
+          }
+          if (fn === "economy_try_holds") {
+            const payload = args.p_holds as { operationId?: string };
+            return {
+              ok: true,
+              created: true,
+              createdKeys: ["proposal-1", "proposal-1:gas"],
+              heldKeys: ["proposal-1", "proposal-1:gas"],
+              operationId: payload.operationId,
+            };
+          }
+          if (fn === "economy_release_operation") {
+            return { ok: false, reason: "The reservation release failed." };
+          }
+          return { ok: false, reason: "The proposal status could not be saved." };
+        }),
+        input,
+      );
+      expect(failedRelease.ok).toBe(false);
+      expect(failedRelease.ok ? "" : failedRelease.reason).toMatch(/could not be released/);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+});
+
+function rpcClient(
+  handler: (fn: string, args: Record<string, unknown>) => unknown,
+  tableCalls: string[] = [],
+): SupabaseClient {
+  return {
+    rpc(fn: string, args: Record<string, unknown> = {}) {
+      const data = handler(fn, args);
+      const promise = Promise.resolve({ data, error: null });
+      return Object.assign(promise, { abortSignal: () => promise });
+    },
+    from() {
+      tableCalls.push("from");
+      const query = {
+        eq() {
+          return query;
+        },
+        in() {
+          tableCalls.push("in");
+          return query;
+        },
+        abortSignal() {
+          return Promise.resolve({ error: null });
+        },
+      };
+      return { update: () => query };
+    },
+  } as unknown as SupabaseClient;
+}
+
+function walk(dir: string): string[] {
+  return readdirSync(dir).flatMap((entry) => {
+    const full = path.join(dir, entry);
+    return statSync(full).isDirectory() ? walk(full) : [full];
+  });
+}
+
+describe("phase 8 safety scans", () => {
+  it("keeps stored ledger rows unverified until this call checked the receipt", async () => {
+    const ledger = interpretLedgerSnapshot({
+      ok: true,
+      complete: true,
+      reservedGas: "0",
+      reservedDeployment: "0",
+      allocatedMon: "0",
+      allocatedChog: "0",
+      dailyGas: "0",
+      holds: [],
+      proposals: [
+        {
+          id: "stored",
+          status: "confirmed",
+          objective: "Pay timber",
+          txHash: TX,
+          receiptChainId: 143,
+          receiptStatus: "success",
+          receiptBlockNumber: "10",
+          receiptBlockHash: BLOCK,
+        },
+      ],
+      transfers: [{ id: "seen", asset: "MON", amountRaw: "1000", side: "debit", status: "observed", evidenceKey: `143:${TX}:native:MON:in` }],
+    });
+    expect(ledger.activities[0]?.chainVerified).toBe(false);
+    expect(ledger.transfers[0]?.chainVerified).toBe(false);
+    const forged = assessReceiptEvidence({
+      chainId: 143,
+      observedChainId: 143,
+      txHash: TX,
+      status: "success",
+      blockNumber: 10n,
+      blockHash: BLOCK,
+    });
+    expect(applyRpcVerification(ledger, forged.ok ? (forged.evidence as unknown as RpcVerifiedReceipt) : null).activities[0]?.chainVerified).toBe(false);
+    const receipt = await verifiedReceipt();
+    const linked = applyRpcVerification(ledger, receipt);
+    expect(linked.activities[0]?.chainVerified).toBe(true);
+    expect(linked.transfers[0]?.chainVerified).toBe(true);
+    expect(linked.activities[0]?.simulated).toBe(false);
+  });
+
+  it("reviews the new migration and leaves execution disabled", () => {
+    const sql = readFileSync("supabase/migrations/20261020050000_phase8_receipt_verification.sql", "utf8").toLowerCase();
+    expect(sql).toContain("for update");
+    expect(sql).toContain("this idempotency key is already used for a different reservation.");
+    expect(sql).toContain("this idempotency key is already used for a different proposal.");
+    expect(sql).toContain("existing.proposal_id is distinct from (item->>'proposalid')::uuid");
+    expect(sql).toContain("existing.asset is distinct from item->>'asset'");
+    expect(sql).toContain("existing.amount_raw is distinct from (item->>'amountraw')::numeric(78, 0)");
+    const legacy = sql.slice(sql.indexOf("function economy_try_hold("), sql.indexOf("function economy_open_proposal"));
+    expect(legacy).toContain("needs economy_try_holds and an operation id");
+    expect(legacy).not.toContain("insert into economy_reservations");
+    expect(sql).toContain("revoke all on function economy_try_hold(text, uuid, numeric, text, text, numeric, numeric) from service_role");
+    expect(sql).toContain("a proposal insert must start as proposed");
+    const review = readFileSync("docs/phase-8-receipt-verification.md", "utf8");
+    expect(review).toContain("revoke insert, update, delete, truncate on table economy_journal from service_role");
+    expect(review).toContain("revoke insert, update, delete, truncate on table economy_reservations from service_role");
+    expect(review).toContain("revoke all on function economy_note_receipt(text, text, text, integer, numeric, text, text) from public, anon, authenticated, service_role");
+    expect(review).toContain("revoke all on function economy_append_journal(jsonb) from public, anon, authenticated, service_role");
+    expect(review).toContain("grant execute on function economy_note_receipt(text, text, text, integer, numeric, text, text) to chogos_economy_verifier");
+    expect(review).toContain("grant execute on function economy_settle_proposal(text, text) to chogos_economy_verifier");
+    expect(review).toContain("grant execute on function economy_append_journal(jsonb) to chogos_economy_verifier");
+    expect(sql).toContain("existing.amount_raw is distinct from (p_row->>'amountraw')::numeric(78, 0)");
+    const holds = sql.slice(sql.indexOf("function economy_try_holds"), sql.indexOf("function economy_release_operation"));
+    expect(holds.indexOf("different reservation")).toBeGreaterThan(0);
+    expect(holds.indexOf("insufficient_funds")).toBeLessThan(holds.indexOf("insert into economy_reservations"));
+    expect(holds.indexOf("insufficient_funds")).toBeLessThan(holds.indexOf("set state = 'held'"));
+    expect(holds).toContain("operation_id");
+    expect(holds).toContain("heldkeys");
+    expect(holds).toContain("and state = 'held'");
+    expect(holds).not.toContain("set state = 'released'");
+    expect(holds).toContain("update economy_reservations");
+    expect(holds).not.toContain("idempotency_key not in");
+    const cleanup = sql.slice(sql.indexOf("function economy_release_operation"), sql.indexOf("function economy_note_receipt"));
+    expect(cleanup).toContain("operation_id = p_operation");
+    expect(cleanup).toContain("set state = 'released'");
+    expect(cleanup).not.toContain("idempotency_key");
+    expect(sql).toContain("does not query monad and does not verify a receipt");
+    expect(sql).toContain("'anon'");
+    expect(sql).toContain("'authenticated'");
+    expect(sql).toContain("revoke all on function %s from %i");
+    const note = sql.slice(sql.indexOf("function economy_note_receipt"), sql.indexOf("function economy_settle_proposal"));
+    expect(note.indexOf("'duplicate', true")).toBeLessThan(note.indexOf("update economy_proposals"));
+    expect(note.indexOf("different transaction")).toBeLessThan(note.indexOf("update economy_proposals"));
+    const settle = sql.slice(sql.indexOf("function economy_settle_proposal"), sql.indexOf("revoke all on function economy_try_hold"));
+    expect(settle.indexOf("'duplicate', true")).toBeLessThan(settle.indexOf("update economy_proposals"));
+    expect(settle.indexOf("different transaction")).toBeLessThan(settle.indexOf("update economy_proposals"));
+    expect(settle).toContain("settlement requires a counted journal posting");
+    expect(sql).toContain("revoke all");
+    expect(sql).toContain("service_role");
+    expect(sql).not.toContain("private_key");
+    expect(sql).not.toContain("execution_enabled");
+    expect(sql).not.toContain("watcher_");
+    expect(sql).not.toMatch(/0x[0-9a-f]{64}/);
+
+    const noteRelease = note.slice(note.indexOf("if next_status = 'reverted'"), note.indexOf("return jsonb_build_object('ok', true, 'duplicate', false, 'status', next_status"));
+    expect(noteRelease).toContain("proposal_id = current.id and state = 'held'");
+    expect(noteRelease).not.toContain("operation_id");
+    expect(noteRelease).not.toContain("idempotency_key");
+    const db = readFileSync("src/lib/economy/db.ts", "utf8");
+    expect(db).toContain("verifyMainnetReceipt");
+    expect(db).not.toContain("VerifiedReceipt");
+    expect(db).toContain('reported === "conflict"');
+    expect(db).toContain("heldKeys: body.heldKeys");
+    expect(db).toContain("economy_release_operation");
+    expect(db).toContain("p_holds: { operationId, holds }");
+    expect(db).toContain("p_operation: operationId");
+    expect(db).not.toContain('from("economy_reservations")');
+    expect(db).not.toContain(".in(\"idempotency_key\"");
+    const confirm = db.slice(db.indexOf("function confirmEconomyReceipt"), db.indexOf("function settleEconomyProposal"));
+    expect(confirm.indexOf("verifyMainnetReceipt")).toBeGreaterThanOrEqual(0);
+    expect(confirm.indexOf("verifyMainnetReceipt")).toBeLessThan(confirm.indexOf("economy_note_receipt"));
+    expect(confirm).not.toContain("createServiceRoleClient");
+    expect(confirm).not.toContain("openEconomyClient");
+    const settleFn = db.slice(db.indexOf("function settleEconomyProposal"), db.indexOf("function verifierFrom"));
+    expect(settleFn.indexOf("verifyMainnetReceipt")).toBeLessThan(settleFn.indexOf("economy_append_journal"));
+    expect(settleFn.indexOf("economy_append_journal")).toBeLessThan(settleFn.indexOf("economy_settle_proposal"));
+    expect(settleFn).not.toContain("createServiceRoleClient");
+    expect(settleFn).not.toContain("openEconomyClient");
+    const verifierSql = readFileSync("supabase/migrations/20261021000000_phase8_economy_verifier.sql", "utf8").toLowerCase();
+    expect(verifierSql).toContain("create role chogos_economy_verifier noinherit nologin");
+    expect(verifierSql).toContain("grant chogos_economy_verifier to authenticator");
+    expect(verifierSql).toContain("security definer set search_path = public");
+    expect(verifierSql).toContain("revoke all on function economy_note_receipt(text, text, text, integer, numeric, text, text) from public, anon, authenticated, service_role");
+    expect(verifierSql).toContain("revoke all on function economy_settle_proposal(text, text) from public, anon, authenticated, service_role");
+    expect(verifierSql).toContain("revoke all on function economy_append_journal(jsonb) from public, anon, authenticated, service_role");
+    expect(verifierSql).toContain("revoke all on function economy_try_hold(text, uuid, numeric, text, text, numeric, numeric) from public, anon, authenticated, service_role");
+    expect(verifierSql).toContain("grant execute on function economy_note_receipt(text, text, text, integer, numeric, text, text) to chogos_economy_verifier");
+    expect(verifierSql).toContain("grant execute on function economy_settle_proposal(text, text) to chogos_economy_verifier");
+    expect(verifierSql).toContain("grant execute on function economy_append_journal(jsonb) to chogos_economy_verifier");
+    expect(verifierSql).toContain("revoke insert, update, delete, truncate on table economy_journal from service_role");
+    expect(verifierSql).toContain("revoke insert, update, delete, truncate on table economy_reservations from service_role");
+    expect(verifierSql).toContain("revoke insert, update, delete, truncate on table economy_proposals from service_role");
+    expect(verifierSql).toContain("grant select on table economy_proposals, economy_reservations, economy_journal, economy_proposal_audit to service_role");
+    expect(verifierSql).toContain("receipt_observed");
+    expect(verifierSql).not.toMatch(/\bdrop\s+table\b/);
+    expect(verifierSql).not.toMatch(/\btruncate\s+economy_/);
+    expect(verifierSql).not.toMatch(/\bdelete\s+from\s+economy_/);
+    expect(verifierSql).not.toContain("grant chogos_economy_verifier to service_role");
+    expect(verifierSql).not.toContain("private_key");
+    expect(verifierSql).not.toMatch(/0x[0-9a-f]{64}/);
+    expect(readFileSync("src/lib/db/client.ts", "utf8")).toContain('import "server-only"');
+    expect(readFileSync("src/lib/db/client.ts", "utf8")).toContain("SUPABASE_ECONOMY_VERIFIER_KEY");
+    const clientModules = walk("src").filter((file) => readFileSync(file, "utf8").startsWith('"use client"'));
+    for (const file of clientModules) {
+      const source = readFileSync(file, "utf8");
+      expect(source, file).not.toContain("SUPABASE_ECONOMY_VERIFIER_KEY");
+      expect(source, file).not.toContain("createEconomyVerifierClient");
+    }
+    expect(readFileSync("src/lib/economy/verify-receipt.ts", "utf8")).not.toMatch(/sendTransaction|writeContract|signTransaction|walletClient|eth_sendRawTransaction/);
+    expect(readFileSync("src/lib/economy/observe.ts", "utf8")).not.toMatch(/sendTransaction|writeContract|deployContract|signTransaction|walletClient/);
+    expect(readFileSync("src/lib/economy/observe.ts", "utf8")).toContain("addresses.chogToken");
+    expect(readFileSync("src/lib/economy/production.ts", "utf8")).toContain("executionEnabled: false");
+    expect(readFileSync("src/lib/economy/production.ts", "utf8")).toContain("factoryDeployed: false");
+    expect(readFileSync("src/app/api/transactions/route.ts", "utf8")).toContain("assertExecutionDisabled");
+    expect(readFileSync("src/app/api/transactions/route.ts", "utf8")).not.toContain("economy_try_hold");
+    expect(readFileSync("src/components/shell/nav.tsx", "utf8")).not.toContain('href: "/economy"');
+    const phase7 = readFileSync("supabase/migrations/20261019230000_phase7_economy.sql", "utf8").toLowerCase();
+    expect(phase7).toContain("economy_try_hold");
+    const phase7Holds = phase7.slice(phase7.indexOf("function economy_try_holds"), phase7.indexOf("function economy_note_receipt"));
+    expect(phase7Holds).toContain("set state = 'released'");
+  });
+});

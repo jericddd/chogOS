@@ -1,10 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { addresses } from "@/lib/blockchain/addresses";
 import { applyHeldReservations, assessTreasuryRead, withLedgerReservations } from "@/lib/economy/observe";
-import { interpretLedgerSnapshot, LEDGER_PENDING, LEDGER_UNREAD } from "@/lib/economy/ledger";
 import { persistEconomyDecision, type EconomyGateway } from "@/lib/economy/persist";
 import { decideEconomicProposal, type EconomicProposal, type EconomyLimits } from "@/lib/economy/proposal";
+import { applyRpcVerification, interpretLedgerSnapshot, LEDGER_PENDING, LEDGER_UNREAD } from "@/lib/economy/ledger";
 import { assessReceiptEvidence, receiptRpcArgs, settleRpcArgs } from "@/lib/economy/receipt";
+import { verifyMainnetReceipt } from "@/lib/economy/verify-receipt";
 import type { Hex } from "viem";
 
 const NOW = Date.parse("2026-10-19T00:00:00.000Z");
@@ -66,7 +67,16 @@ function fresh() {
   });
 }
 
-function gateway(calls: string[], holds: EconomyGateway["tryHolds"] = async () => ({ ok: true, created: true })): EconomyGateway {
+function gateway(
+  calls: string[],
+  holds: EconomyGateway["tryHolds"] = async (rows, operationId) => ({
+    ok: true,
+    created: true,
+    createdKeys: rows.map((row) => row.key),
+    heldKeys: rows.map((row) => row.key),
+    operationId,
+  }),
+): EconomyGateway {
   return {
     async openProposal() {
       calls.push("open");
@@ -76,9 +86,9 @@ function gateway(calls: string[], holds: EconomyGateway["tryHolds"] = async () =
       calls.push(`status:${input.status}`);
       return { ok: true, status: input.status, duplicate: false };
     },
-    async tryHolds(rows) {
+    async tryHolds(rows, operationId) {
       calls.push(`holds:${rows.length}`);
-      return holds(rows);
+      return holds(rows, operationId);
     },
     async release(proposalId) {
       calls.push(`release:${proposalId}`);
@@ -225,9 +235,11 @@ describe("loaded ledger and verified settlement", () => {
     expect(ledger.holds).toHaveLength(1);
     expect(ledger.reservedGasRaw).toBe("10");
     expect(ledger.activities[0]?.chainVerified).toBe(false);
-    expect(ledger.activities[1]?.chainVerified).toBe(true);
+    expect(ledger.activities[1]?.chainVerified).toBe(false);
+    expect(ledger.activities[1]?.simulated).toBe(true);
     expect(ledger.transfers.map((transfer) => transfer.id)).toEqual(["seen"]);
-    expect(ledger.transfers[0]?.chainVerified).toBe(true);
+    expect(ledger.transfers[0]?.chainVerified).toBe(false);
+    expect(applyRpcVerification(ledger, null).activities[1]?.chainVerified).toBe(false);
     const viewed = applyHeldReservations(fresh(), {
       reservedGasWei: 10n,
       reservedDeploymentWei: 0n,
@@ -238,8 +250,8 @@ describe("loaded ledger and verified settlement", () => {
     expect(withLedgerReservations(fresh(), null).unallocatedMon).toBeNull();
   });
 
-  it("refuses settlement args unless the receipt succeeded on mainnet", () => {
-    const success = assessReceiptEvidence({
+  it("refuses settlement args unless the receipt was read from mainnet RPC", async () => {
+    const shaped = assessReceiptEvidence({
       chainId: 143,
       observedChainId: 143,
       txHash: TX,
@@ -247,25 +259,45 @@ describe("loaded ledger and verified settlement", () => {
       blockNumber: 10n,
       blockHash: BLOCK,
     });
-    const reverted = assessReceiptEvidence({
-      chainId: 143,
-      observedChainId: 143,
+    expect(shaped.ok).toBe(true);
+    if (!shaped.ok) {
+      return;
+    }
+    expect(receiptRpcArgs("proposal-1", shaped.evidence, "matched").ok).toBe(false);
+    expect(settleRpcArgs("proposal-1", shaped.evidence).ok).toBe(false);
+    const success = await verifyMainnetReceipt({
       txHash: TX,
-      status: "reverted",
-      blockNumber: 10n,
-      blockHash: BLOCK,
+      call: async (method) => {
+        if (method === "eth_chainId") return "0x8f";
+        if (method === "eth_getTransactionReceipt") {
+          return { transactionHash: TX, status: "0x1", blockNumber: "0xa", blockHash: BLOCK };
+        }
+        if (method === "eth_getBlockByNumber") return { number: "0xa", hash: BLOCK };
+        throw new Error(method);
+      },
+    });
+    const reverted = await verifyMainnetReceipt({
+      txHash: TX,
+      call: async (method) => {
+        if (method === "eth_chainId") return "0x8f";
+        if (method === "eth_getTransactionReceipt") {
+          return { transactionHash: TX, status: "0x0", blockNumber: "0xa", blockHash: BLOCK };
+        }
+        if (method === "eth_getBlockByNumber") return { number: "0xa", hash: BLOCK };
+        throw new Error(method);
+      },
     });
     expect(success.ok).toBe(true);
     expect(reverted.ok).toBe(true);
     if (!success.ok || !reverted.ok) {
       return;
     }
-    expect(receiptRpcArgs("proposal-1", success.evidence, "matched").ok).toBe(true);
-    expect(settleRpcArgs("proposal-1", success.evidence)).toEqual({
+    expect(receiptRpcArgs("proposal-1", success.receipt, "matched").ok).toBe(true);
+    expect(settleRpcArgs("proposal-1", success.receipt)).toEqual({
       ok: true,
       args: { p_key: "proposal-1", p_tx: TX },
     });
-    expect(settleRpcArgs("proposal-1", reverted.evidence).ok).toBe(false);
+    expect(settleRpcArgs("proposal-1", reverted.receipt).ok).toBe(false);
     expect(assessReceiptEvidence({
       chainId: 143,
       observedChainId: 143,
