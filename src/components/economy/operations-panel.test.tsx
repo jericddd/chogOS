@@ -23,7 +23,43 @@ describe("economic operations panel", () => {
     expect(screen.getAllByText("Not read").length).toBeGreaterThan(0);
     expect(screen.getAllByText("Not loaded").length).toBeGreaterThan(0);
     expect(screen.getAllByText(/ChogTreasury NFT wallet/).length).toBeGreaterThan(0);
+    expect(screen.getByText(/does not invent a transaction/)).toBeTruthy();
     expect(screen.queryByRole("link")).toBeNull();
+  });
+
+  it("shows a cached receipt as cached and links only a checked hash", () => {
+    const view = presentEconomy({
+      snapshot: emptySnapshot("not_configured", "Economic treasury address is not configured."),
+      execution: productionExecutionStatus({}),
+      allowlistReason: "No protocol allowlist is configured.",
+      ledgerLoaded: false,
+      receiptChecks: [
+        {
+          txHash: TX,
+          status: "verified",
+          fresh: false,
+          cached: true,
+          checkedAt: "2026-10-20T19:00:00.000Z",
+          blockNumber: "10",
+          blockHash: `0x${"cd".repeat(32)}`,
+          receiptStatus: "success",
+          headline: "Cached successful receipt from 2026-10-20T19:00:00.000Z. This is not a fresh verification.",
+          reason: "The receipt status is success and the block hash matches the canonical mainnet block.",
+          discrepancy: null,
+          explorerHref: `https://monadscan.com/tx/${TX}`,
+          transfers: [],
+          transferNote: "The successful receipt has no supported $CHOG transfer. Receipt success is not a transfer.",
+          settlement: "not_settled",
+          settlementNote: "This is not an accounting settlement. The page did not change the proposal.",
+        },
+      ],
+    });
+    const viewRender = render(<EconomicOperationsPanel view={view} />);
+    expect(screen.getByText(/not a fresh verification/)).toBeTruthy();
+    expect(screen.getByText(/Receipt success is not a transfer/)).toBeTruthy();
+    expect(screen.getByText(/not an accounting settlement/i)).toBeTruthy();
+    expect(screen.getByRole("link").getAttribute("href")).toBe(`https://monadscan.com/tx/${TX}`);
+    viewRender.unmount();
   });
 
   it("links a transfer only when the evidence is verified", () => {
