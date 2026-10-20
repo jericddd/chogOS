@@ -57,7 +57,7 @@ Rule-based activity stays `source=simulation`. A model timeout does not stop the
 
 ## Construction
 
-The mind decides how the town grows from that description. Daily life stays on `world_tick()`. The engine still has no free-form map generator. Phase 4 started **house** construction on a vacant, road-served genesis-v1.1 lot. Phase 5a extends that same path to `house | farm | workshop`. East lots at y=2 stay reserved until a road touches them. The model cannot pick coordinates. `planConstruction` chooses the plot, door, and complete `world_routes` table; `world_place_building` re-validates overlap and inserts `under_construction` at 0%. Completion is still +4% per builder shift with Storehouse wood/stone. Unknown kinds, including `road`, are rejected honestly. See [phase-5.md](phase-5.md).
+The mind decides how the town grows from that description and names the house, farm, or workshop it raises. That name is stored on the building. A surveyed road keeps its survey name. Daily life stays on `world_tick()`. The engine still has no free-form map generator. Phase 4 started **house** construction on a vacant, road-served genesis-v1.1 lot. Phase 5a extends that same path to `house | farm | workshop`. East lots at y=2 stay reserved until a road touches them. The model cannot pick coordinates. `planConstruction` chooses the plot, door, and complete `world_routes` table; `world_place_building` re-validates overlap and inserts `under_construction` at 0%. Completion is still +4% per builder shift with Storehouse wood/stone. Unknown kinds are rejected. A road is placed only when it matches an unbuilt survey. See [phase-5.md](phase-5.md).
 
 ## Scheduling
 

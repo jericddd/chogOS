@@ -14,10 +14,11 @@ export const GROWTH_RESPONSE_SCHEMA: Record<string, unknown> = {
     buildKind: { type: "string", enum: ["house", "farm", "workshop", "road"] },
     roadStubId: { type: "string" },
     projectId: { type: "string" },
+    placeName: { type: "string" },
     summary: { type: "string" },
     rationale: { type: "string" },
   },
-  required: ["action", "buildKind", "summary", "rationale"],
+  required: ["action", "buildKind", "placeName", "summary", "rationale"],
 };
 
 type Spur = DecisionContext["construction"]["roads"]["eligibleStubs"][number];
@@ -76,6 +77,24 @@ export function matchSurveyedSpur(
   return { ok: false, reason: "that road is not an unbuilt survey on this map" };
 }
 
+/** A short title the map can store. Empty, links, and "none" are not names. */
+export function placeTitle(raw: string | null | undefined): string | null {
+  if (!raw) {
+    return null;
+  }
+  const title = raw.trim().replace(/\s+/g, " ");
+  if (title.length < 2 || title.length > 40 || norm(title) === "none") {
+    return null;
+  }
+  if (/https?:\/\//i.test(title) || /[<>]/.test(title)) {
+    return null;
+  }
+  if (!/^[A-Za-z][A-Za-z0-9 '&-]*$/.test(title)) {
+    return null;
+  }
+  return title;
+}
+
 /**
  * Keep a model judgment only when it is growth the current land can hold.
  * Daily life is refused here. Nothing is substituted on the model's behalf.
@@ -92,14 +111,18 @@ export function acceptGrowth(
     if (!matched.ok) {
       return matched;
     }
-    return { ok: true, decision: { ...decision, buildKind: "road", roadStubId: matched.id } };
+    return { ok: true, decision: { ...decision, buildKind: "road", roadStubId: matched.id, placeName: null } };
   }
   if (decision.buildKind === "house" || decision.buildKind === "farm" || decision.buildKind === "workshop") {
     const kind: ConstructKind = decision.buildKind;
     if (!context.construction.canBuildKinds.includes(kind)) {
       return { ok: false, reason: `a ${kind} cannot be started on the open land right now` };
     }
-    return { ok: true, decision: { ...decision, roadStubId: "none" } };
+    const title = placeTitle(decision.placeName);
+    if (!title) {
+      return { ok: false, reason: "name the place you are raising, as a short title taken from this land" };
+    }
+    return { ok: true, decision: { ...decision, roadStubId: "none", placeName: title } };
   }
   return { ok: false, reason: "that is not a structure this land can hold" };
 }

@@ -1,11 +1,24 @@
 import type { DecisionContext } from "@/lib/ai/context";
 import { worldDay } from "@/lib/world/clock";
-import { GRID_H, GRID_W, type BuildingKind } from "@/lib/world/layout";
+import { GRID_H, GRID_W, REGIONS, type BuildingKind } from "@/lib/world/layout";
 import { KIND_LABEL } from "@/lib/world/present";
 
 function kindLabel(kind: string): string {
   return kind in KIND_LABEL ? KIND_LABEL[kind as BuildingKind] : kind;
 }
+
+/** What a standing place is for. Facts about this map, not a list of jobs to pick. */
+const LAND_USE: Record<BuildingKind, string> = {
+  house: "shelter",
+  hall: "a roof for gathering",
+  commons: "open ground where people meet",
+  farm: "food from the fields",
+  forest: "wood",
+  quarry: "stone",
+  workshop: "tools",
+  storehouse: "the town's stock",
+  market: "trade",
+};
 
 /**
  * A description of the town as it stands. This is what the mind reads.
@@ -15,6 +28,10 @@ export function describePlace(context: DecisionContext): string {
   const lines: string[] = [];
   lines.push(
     `The map is ${GRID_W} by ${GRID_H} tiles. The founded town is the western ground. Open country lies to the east and south. A building can stand only on a lot that already touches a road. Land the roads have not reached stays empty.`,
+  );
+  lines.push(REGIONS.map((region) => `${region.name}: ${region.note}`).join(" "));
+  lines.push(
+    "Water lies in a pond inside the founding town, in the river along that town's south edge, and in a pond on the southern ground.",
   );
   lines.push(`The clock reads day ${worldDay(context.worldS)}, about hour ${Math.floor(context.hour)}.`);
   const who = context.name?.trim() || `Citizen ${context.tokenId}`;
@@ -31,7 +48,11 @@ export function describePlace(context: DecisionContext): string {
       list.push(label);
       groups.set(place.kind, list);
     }
-    const parts = [...groups.entries()].map(([kind, names]) => `${kindLabel(kind)}: ${names.join(", ")}`);
+    const parts = [...groups.entries()].map(([kind, names]) => {
+      const use = kind in LAND_USE ? LAND_USE[kind as BuildingKind] : "";
+      const label = kindLabel(kind);
+      return use ? `${label} (${use}): ${names.join(", ")}` : `${label}: ${names.join(", ")}`;
+    });
     lines.push(`What stands: ${parts.join(". ")}.`);
   }
 

@@ -13,6 +13,8 @@ export type ParsedDecision = {
   buildingId: string;
   buildKind: DecisionBuildKind;
   roadStubId: string | "none";
+  /** Name the mind gave a house, farm, or workshop. Roads keep their survey name. */
+  placeName: string | null;
   goalId: string | null;
   projectId: string | null;
   summary: string;
@@ -117,6 +119,16 @@ export function parseDecisionOutput(text: string): { ok: true; decision: ParsedD
 
   let buildKind: DecisionBuildKind = "none";
   let roadStubId: string | "none" = "none";
+  let placeName: string | null = null;
+  if (typeof body.placeName === "string") {
+    const named = body.placeName.trim();
+    if (named && named.toLowerCase() !== "none") {
+      if (/https?:\/\//i.test(named)) {
+        return { ok: false, reason: "decision text may not include URLs" };
+      }
+      placeName = clip(named, 80);
+    }
+  }
   if (action === "build") {
     if (body.buildKind === "road") {
       const stub = typeof body.roadStubId === "string" ? body.roadStubId.trim() : "";
@@ -183,6 +195,7 @@ export function parseDecisionOutput(text: string): { ok: true; decision: ParsedD
       buildingId: action === "build" || action === "request_wallet_activation" || action === "propose_economy" ? "" : buildingId,
       buildKind,
       roadStubId,
+      placeName,
       goalId,
       projectId,
       summary,
