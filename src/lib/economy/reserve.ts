@@ -16,7 +16,7 @@ export type Hold = {
 
 export type HoldResult =
   | { ok: true; holds: Hold[]; hold: Hold; created: boolean }
-  | { ok: false; outcome: "insufficient_funds" | "malformed"; reason: string; holds: Hold[] };
+  | { ok: false; outcome: "insufficient_funds" | "malformed" | "conflict"; reason: string; holds: Hold[] };
 
 export function heldRaw(holds: readonly Hold[], asset: "MON" | "CHOG", bucket?: HoldBucket): bigint {
   return sum(
@@ -68,6 +68,14 @@ export function tryHold(
 ): HoldResult {
   const existing = holds.find((hold) => hold.key === request.key);
   if (existing) {
+    if (!sameHoldIdentity(existing, request)) {
+      return {
+        ok: false,
+        outcome: "conflict",
+        reason: "This idempotency key is already used for a different reservation.",
+        holds: [...holds],
+      };
+    }
     return { ok: true, holds: [...holds], hold: existing, created: false };
   }
   if (!request.tokenId || request.amountRaw <= 0n || request.observedRaw === null || request.observedRaw < 0n) {
@@ -107,6 +115,19 @@ export function tryHold(
     state: "held",
   };
   return { ok: true, holds: [...holds, hold], hold, created: true };
+}
+
+function sameHoldIdentity(
+  existing: Hold,
+  request: { proposalId: string; tokenId: string; asset: "MON" | "CHOG"; bucket: HoldBucket; amountRaw: bigint },
+): boolean {
+  return (
+    existing.proposalId === request.proposalId &&
+    existing.tokenId === request.tokenId &&
+    existing.asset === request.asset &&
+    existing.bucket === request.bucket &&
+    existing.amountRaw === request.amountRaw
+  );
 }
 
 export function settleHold(

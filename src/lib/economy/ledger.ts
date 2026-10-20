@@ -1,7 +1,7 @@
 import { parseRawAmount } from "@/lib/economy/amounts";
 import type { EconomyActivityView, EconomyTransferView } from "@/lib/economy/present";
-import { assessReceiptEvidence } from "@/lib/economy/receipt";
 import type { Hold, HoldBucket } from "@/lib/economy/reserve";
+import { isRpcVerifiedReceipt, type RpcVerifiedReceipt } from "@/lib/economy/verify-receipt";
 
 export type EconomyLedger = {
   complete: boolean;
@@ -152,31 +152,16 @@ function interpretActivities(value: unknown): EconomyActivityView[] {
     if (!id || !status) {
       continue;
     }
-    const txHash = text(row.txHash) || null;
-    const blockText = text(row.receiptBlockNumber);
-    const blockNumber = /^[0-9]+$/.test(blockText) ? BigInt(blockText) : null;
-    const receiptStatus = row.receiptStatus === "success" || row.receiptStatus === "reverted" ? row.receiptStatus : "missing";
-    const chainId = row.receiptChainId === 143 || row.receiptChainId === "143" ? 143 : null;
-    const assessed = assessReceiptEvidence({
-      chainId: 143,
-      observedChainId: chainId,
-      txHash: txHash ?? "",
-      status: receiptStatus,
-      blockNumber,
-      blockHash: text(row.receiptBlockHash) || null,
-    });
-    const statusMatches =
-      assessed.ok &&
-      ((status === "reverted" && assessed.evidence.status === "reverted") ||
-        ((status === "confirmed" || status === "settled") && assessed.evidence.status === "success"));
+    const storedHash = text(row.txHash);
+    const txHash = /^0x[0-9a-fA-F]{64}$/.test(storedHash) ? storedHash.toLowerCase() : storedHash || null;
     activities.push({
       id,
       status,
       summary: text(row.objective) || "Economic proposal",
       reason: text(row.reason) || "Stored proposal. It is not itself a transfer.",
-      simulated: !statusMatches,
-      txHash: statusMatches ? assessed.evidence.txHash : txHash,
-      chainVerified: statusMatches,
+      simulated: true,
+      txHash,
+      chainVerified: false,
     });
   }
   return activities;
@@ -207,9 +192,41 @@ function interpretTransfers(value: unknown): EconomyTransferView[] {
       amountRaw: amountRaw.toString(10),
       decimals: asset === "MON" ? 18 : null,
       txHash: matched ? matched[1]!.toLowerCase() : null,
-      chainVerified: Boolean(matched) && status === "observed",
+      chainVerified: false,
       status,
     });
   }
   return transfers;
+}
+
+/**
+ * Mark rows only when this call already holds a receipt from verifyMainnetReceipt.
+ * Stored columns and evidence-key text stay unverified when that receipt is absent.
+ */
+export function applyRpcVerification(ledger: EconomyLedger, verified: RpcVerifiedReceipt | null): EconomyLedger {
+  if (!isRpcVerifiedReceipt(verified)) {
+    return {
+      ...ledger,
+      activities: ledger.activities.map((activity) => ({ ...activity, chainVerified: false, simulated: true })),
+      transfers: ledger.transfers.map((transfer) => ({ ...transfer, chainVerified: false })),
+    };
+  }
+  return {
+    ...ledger,
+    activities: ledger.activities.map((activity) => {
+      const matches = activity.txHash?.toLowerCase() === verified.txHash.toLowerCase();
+      const statusOk =
+        (verified.status === "success" && (activity.status === "confirmed" || activity.status === "settled")) ||
+        (verified.status === "reverted" && activity.status === "reverted");
+      const chainVerified = Boolean(matches && statusOk);
+      return { ...activity, chainVerified, simulated: !chainVerified };
+    }),
+    transfers: ledger.transfers.map((transfer) => ({
+      ...transfer,
+      chainVerified:
+        transfer.status === "observed" &&
+        verified.status === "success" &&
+        transfer.txHash?.toLowerCase() === verified.txHash.toLowerCase(),
+    })),
+  };
 }

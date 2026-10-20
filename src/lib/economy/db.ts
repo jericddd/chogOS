@@ -2,11 +2,13 @@ import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { createServiceRoleClient } from "@/lib/db/client";
 import { emptyLedger, interpretLedgerSnapshot, LEDGER_PENDING, LEDGER_UNREAD, utcDayStart, type EconomyLedger } from "@/lib/economy/ledger";
+import { readAppConfig } from "@/lib/config/env";
 import { persistEconomyDecision, type EconomyGateway, type PersistResult } from "@/lib/economy/persist";
 import type { EconomicProposal, EconomyDecision } from "@/lib/economy/proposal";
-import { receiptRpcArgs, settleRpcArgs, type VerifiedReceipt } from "@/lib/economy/receipt";
+import { receiptRpcArgs, settleRpcArgs } from "@/lib/economy/receipt";
 import type { Hold } from "@/lib/economy/reserve";
 import type { TreasurySnapshot } from "@/lib/economy/observe";
+import { jsonRpcCaller, verifyMainnetReceipt, type RpcCaller } from "@/lib/economy/verify-receipt";
 
 const LEDGER_TIMEOUT_MS = 4_000;
 
@@ -44,37 +46,74 @@ export async function saveEconomyDecision(
   }
 }
 
-export async function noteVerifiedReceipt(
+export type ChainWriteResult =
+  | { ok: true; status: string; duplicate: boolean; verified: true }
+  | { ok: false; reason: string; verified: boolean };
+
+/**
+ * Confirm a submitted proposal from an independent mainnet receipt read.
+ * The transaction hash is the only caller input. Receipt fields come from verifyMainnetReceipt.
+ */
+export async function confirmEconomyReceipt(
   client: SupabaseClient,
   key: string,
-  evidence: VerifiedReceipt,
-  reason: string,
-): Promise<{ ok: true; status: string } | { ok: false; reason: string }> {
-  const args = receiptRpcArgs(key, evidence, reason);
+  txHash: string,
+  call?: RpcCaller,
+): Promise<ChainWriteResult> {
+  const verified = await verifyMainnetReceipt({ txHash, call: call ?? economyRpc() });
+  if (!verified.ok) {
+    return { ok: false, reason: verified.reason, verified: false };
+  }
+  const reason =
+    verified.receipt.status === "reverted"
+      ? "The mainnet receipt reverted. No revenue was realized."
+      : "The mainnet receipt succeeded. Settlement still requires a counted journal posting.";
+  const args = receiptRpcArgs(key, verified.receipt, reason);
   if (!args.ok) {
-    return args;
+    return { ok: false, reason: args.reason, verified: false };
   }
   const result = await callRpc(client, "economy_note_receipt", args.args);
   if (!result.ok) {
-    return { ok: false, reason: "The receipt could not be recorded." };
+    return { ok: false, reason: "The receipt could not be recorded.", verified: true };
   }
-  return statusFrom(result.data);
+  const recorded = statusFrom(result.data);
+  if (!recorded.ok) {
+    return { ok: false, reason: recorded.reason, verified: true };
+  }
+  return { ...recorded, verified: true };
 }
 
-export async function settleVerifiedProposal(
+/**
+ * Settle only after the same read-only check returns a successful receipt.
+ * A reverted or unverified transaction never reaches economy_settle_proposal.
+ */
+export async function settleEconomyProposal(
   client: SupabaseClient,
   key: string,
-  evidence: VerifiedReceipt,
-): Promise<{ ok: true; status: string } | { ok: false; reason: string }> {
-  const args = settleRpcArgs(key, evidence);
+  txHash: string,
+  call?: RpcCaller,
+): Promise<ChainWriteResult> {
+  const verified = await verifyMainnetReceipt({ txHash, call: call ?? economyRpc() });
+  if (!verified.ok) {
+    return { ok: false, reason: verified.reason, verified: false };
+  }
+  const args = settleRpcArgs(key, verified.receipt);
   if (!args.ok) {
-    return args;
+    return { ok: false, reason: args.reason, verified: true };
   }
   const result = await callRpc(client, "economy_settle_proposal", args.args);
   if (!result.ok) {
-    return { ok: false, reason: "The proposal could not be settled." };
+    return { ok: false, reason: "The proposal could not be settled.", verified: true };
   }
-  return statusFrom(result.data);
+  const recorded = statusFrom(result.data);
+  if (!recorded.ok) {
+    return { ok: false, reason: recorded.reason, verified: true };
+  }
+  return { ...recorded, verified: true };
+}
+
+function economyRpc(): RpcCaller {
+  return jsonRpcCaller(readAppConfig().rpcUrl);
 }
 
 function supabaseGateway(client: SupabaseClient): EconomyGateway {
@@ -112,7 +151,8 @@ function supabaseGateway(client: SupabaseClient): EconomyGateway {
       }
       const body = record(result.data);
       if (!body || body.ok !== true) {
-        const outcome = body?.outcome === "insufficient_funds" ? "insufficient_funds" : "deferred";
+        const reported = text(body?.outcome);
+        const outcome = reported === "insufficient_funds" || reported === "conflict" ? reported : "deferred";
         return { ok: false, outcome, reason: text(body?.reason) || "The offchain reservation could not be saved." };
       }
       return { ok: true, created: body.created === true };
@@ -165,12 +205,12 @@ function reasonFor(error: DbError): string {
   return LEDGER_UNREAD;
 }
 
-function statusFrom(value: unknown): { ok: true; status: string } | { ok: false; reason: string } {
+function statusFrom(value: unknown): { ok: true; status: string; duplicate: boolean } | { ok: false; reason: string } {
   const body = record(value);
   if (!body || body.ok !== true || typeof body.status !== "string") {
     return { ok: false, reason: text(body?.reason) || "The proposal could not be updated." };
   }
-  return { ok: true, status: body.status };
+  return { ok: true, status: body.status, duplicate: body.duplicate === true };
 }
 
 function record(value: unknown): Record<string, unknown> | null {

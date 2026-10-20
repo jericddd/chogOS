@@ -1,0 +1,482 @@
+-- Phase 8: fail closed when an idempotency key is reused for different terms,
+-- and label conflicting receipt writes without rewriting history.
+-- Apply only after 20261019230000_phase7_economy.sql.
+-- This file is not applied to hosted Supabase by the Phase 8 change.
+-- It does not enable execution, insert balances, or reset sync cursors.
+-- Postgres cannot see Monad RPC. economy_note_receipt still trusts its arguments.
+-- The application must call verifyMainnetReceipt before those arguments are built.
+
+create or replace function economy_try_hold(
+  p_key text,
+  p_proposal uuid,
+  p_token numeric,
+  p_asset text,
+  p_bucket text,
+  p_amount numeric,
+  p_observed numeric
+)
+returns jsonb
+language plpgsql
+security invoker
+set search_path = public
+as $$
+declare
+  existing economy_reservations%rowtype;
+  used numeric(78, 0);
+  new_id uuid;
+begin
+  perform 1 from economy_lock where id = 1 for update;
+
+  if p_key is null or length(btrim(p_key)) < 1 or p_amount is null or p_amount <= 0 or p_observed is null or p_observed < 0 then
+    return jsonb_build_object('ok', false, 'outcome', 'malformed', 'reason', 'A reservation needs a positive amount and an observed balance.');
+  end if;
+  if p_asset not in ('MON', 'CHOG') or p_bucket not in ('gas', 'deployment', 'business_capital') then
+    return jsonb_build_object('ok', false, 'outcome', 'malformed', 'reason', 'The reservation asset or bucket is not supported.');
+  end if;
+  if p_bucket in ('gas', 'deployment') and p_asset <> 'MON' then
+    return jsonb_build_object('ok', false, 'outcome', 'malformed', 'reason', 'Gas and deployment reservations are native MON.');
+  end if;
+
+  select * into existing from economy_reservations where idempotency_key = p_key;
+  if found then
+    if existing.proposal_id is distinct from p_proposal
+       or existing.token_id is distinct from p_token
+       or existing.asset is distinct from p_asset
+       or existing.bucket is distinct from p_bucket
+       or existing.amount_raw is distinct from p_amount
+       or existing.chain_id is distinct from 143 then
+      return jsonb_build_object(
+        'ok', false,
+        'outcome', 'conflict',
+        'reason', 'This idempotency key is already used for a different reservation.'
+      );
+    end if;
+    return jsonb_build_object('ok', true, 'created', false, 'id', existing.id, 'state', existing.state);
+  end if;
+
+  select coalesce(sum(amount_raw), 0) into used
+    from economy_reservations
+    where state = 'held' and asset = p_asset;
+
+  if used + p_amount > p_observed then
+    return jsonb_build_object(
+      'ok', false,
+      'outcome', 'insufficient_funds',
+      'reason', 'The remaining observed balance cannot cover another reservation.'
+    );
+  end if;
+
+  insert into economy_reservations (
+    proposal_id, idempotency_key, chain_id, token_id, asset, bucket, amount_raw, observed_raw, state
+  ) values (
+    p_proposal, p_key, 143, p_token, p_asset, p_bucket, p_amount, p_observed, 'held'
+  )
+  returning id into new_id;
+
+  return jsonb_build_object('ok', true, 'created', true, 'id', new_id, 'state', 'held');
+end;
+$$;
+
+comment on function economy_try_hold(text, uuid, numeric, text, text, numeric, numeric) is
+  'Serializes one offchain hold. A reused key with a different proposal, asset, amount, bucket, or token fails closed and does not release the existing row.';
+
+create or replace function economy_open_proposal(p_row jsonb)
+returns jsonb
+language plpgsql
+security invoker
+set search_path = public
+as $$
+declare
+  new_id uuid;
+  existing economy_proposals%rowtype;
+  key text := p_row->>'idempotencyKey';
+  citizen uuid;
+  slippage text := coalesce(p_row->>'slippageBps', '');
+  quote numeric(78, 0);
+  slip integer;
+begin
+  perform 1 from economy_lock where id = 1 for update;
+  if key is null or length(btrim(key)) < 1 or length(key) > 120 then
+    return jsonb_build_object('ok', false, 'reason', 'A proposal needs an idempotency key.');
+  end if;
+  if coalesce(p_row->>'citizenId', '') !~ '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$' then
+    return jsonb_build_object('ok', false, 'reason', 'The citizen id is not a permanent citizen id.');
+  end if;
+  citizen := (p_row->>'citizenId')::uuid;
+  if coalesce(p_row->>'operation', '') not in ('payment', 'purchase', 'trade', 'swap', 'business', 'return_capital')
+     or coalesce(p_row->>'asset', '') not in ('MON', 'CHOG')
+     or coalesce(p_row->>'nftContract', '') !~ '^0x[0-9a-fA-F]{40}$'
+     or coalesce(p_row->>'tokenId', '') !~ '^[0-9]+$'
+     or coalesce(p_row->>'amountRaw', '') !~ '^[0-9]+$'
+     or coalesce(p_row->>'estimatedGasWei', '') !~ '^[0-9]+$'
+     or coalesce(p_row->>'fundingRequestRaw', '') !~ '^[0-9]+$'
+     or length(btrim(coalesce(p_row->>'objective', ''))) < 1
+     or length(btrim(coalesce(p_row->>'rationale', ''))) < 1
+     or length(btrim(coalesce(p_row->>'expectedOutcome', ''))) < 1 then
+    return jsonb_build_object('ok', false, 'reason', 'The proposal is missing a required field.');
+  end if;
+  if coalesce(p_row->>'target', '') <> '' and p_row->>'target' !~ '^0x[0-9a-fA-F]{40}$' then
+    return jsonb_build_object('ok', false, 'reason', 'The protocol target is not a valid address.');
+  end if;
+  if coalesce(p_row->>'selector', '') <> '' and p_row->>'selector' !~ '^0x[0-9a-fA-F]{8}$' then
+    return jsonb_build_object('ok', false, 'reason', 'The function selector is malformed.');
+  end if;
+  if slippage <> '' and (slippage !~ '^[0-9]+$' or slippage::integer > 1000) then
+    return jsonb_build_object('ok', false, 'reason', 'Slippage must be an integer number of basis points from 0 to 1000.');
+  end if;
+  quote := case
+    when coalesce(p_row->>'quotePriceRaw', '') ~ '^[0-9]+$' and (p_row->>'quotePriceRaw')::numeric(78, 0) > 0
+      then (p_row->>'quotePriceRaw')::numeric(78, 0)
+    else null
+  end;
+  slip := case when slippage ~ '^[0-9]+$' then slippage::integer else null end;
+
+  insert into economy_proposals (
+    idempotency_key, chain_id, citizen_id, nft_contract, token_id, operation,
+    objective, rationale, expected_outcome, target, selector, asset,
+    amount_raw, estimated_gas_wei, funding_request_raw, quote_price_raw, slippage_bps,
+    status, reason, attempts, executed, expires_at
+  ) values (
+    key,
+    143,
+    citizen,
+    p_row->>'nftContract',
+    (p_row->>'tokenId')::numeric(78, 0),
+    p_row->>'operation',
+    left(btrim(p_row->>'objective'), 180),
+    left(btrim(p_row->>'rationale'), 320),
+    left(btrim(p_row->>'expectedOutcome'), 240),
+    nullif(p_row->>'target', ''),
+    nullif(p_row->>'selector', ''),
+    p_row->>'asset',
+    (p_row->>'amountRaw')::numeric(78, 0),
+    (p_row->>'estimatedGasWei')::numeric(78, 0),
+    (p_row->>'fundingRequestRaw')::numeric(78, 0),
+    quote,
+    slip,
+    'proposed',
+    'Structured proposal received. It is not a transaction.',
+    1,
+    false,
+    coalesce(nullif(p_row->>'expiresAt', '')::timestamptz, now() + interval '1 hour')
+  )
+  on conflict (idempotency_key) do nothing
+  returning id into new_id;
+
+  if new_id is null then
+    select * into existing from economy_proposals where idempotency_key = key;
+    if existing.citizen_id is distinct from citizen
+       or lower(existing.nft_contract) is distinct from lower(p_row->>'nftContract')
+       or existing.token_id is distinct from (p_row->>'tokenId')::numeric(78, 0)
+       or existing.operation is distinct from p_row->>'operation'
+       or existing.asset is distinct from p_row->>'asset'
+       or existing.amount_raw is distinct from (p_row->>'amountRaw')::numeric(78, 0)
+       or existing.estimated_gas_wei is distinct from (p_row->>'estimatedGasWei')::numeric(78, 0)
+       or existing.funding_request_raw is distinct from (p_row->>'fundingRequestRaw')::numeric(78, 0)
+       or lower(coalesce(existing.target, '')) is distinct from lower(coalesce(p_row->>'target', ''))
+       or lower(coalesce(existing.selector, '')) is distinct from lower(coalesce(p_row->>'selector', ''))
+       or existing.quote_price_raw is distinct from quote
+       or existing.slippage_bps is distinct from slip then
+      return jsonb_build_object(
+        'ok', false,
+        'outcome', 'conflict',
+        'reason', 'This idempotency key is already used for a different proposal.'
+      );
+    end if;
+    return jsonb_build_object('ok', true, 'created', false, 'id', existing.id);
+  end if;
+  return jsonb_build_object('ok', true, 'created', true, 'id', new_id);
+end;
+$$;
+
+comment on function economy_open_proposal(jsonb) is
+  'Inserts one proposal. The same key with the same economic terms returns the existing id. Different terms fail closed and do not update the row.';
+
+create or replace function economy_try_holds(p_holds jsonb)
+returns jsonb
+language plpgsql
+security invoker
+set search_path = public
+as $$
+declare
+  item jsonb;
+  idx integer;
+  n integer;
+  all_exist boolean := true;
+  existing economy_reservations%rowtype;
+  hold_asset text;
+  observed numeric(78, 0);
+  used numeric(78, 0);
+  needed numeric(78, 0);
+  new_id uuid;
+  created_any boolean := false;
+begin
+  perform 1 from economy_lock where id = 1 for update;
+
+  if jsonb_typeof(p_holds) <> 'array' or jsonb_array_length(p_holds) < 1 or jsonb_array_length(p_holds) > 3 then
+    return jsonb_build_object('ok', false, 'outcome', 'malformed', 'reason', 'A reservation needs a positive amount and an observed balance.');
+  end if;
+  n := jsonb_array_length(p_holds);
+
+  for idx in 0 .. n - 1 loop
+    item := p_holds->idx;
+    if coalesce(item->>'key', '') = ''
+       or coalesce(item->>'proposalId', '') !~ '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$'
+       or coalesce(item->>'tokenId', '') !~ '^[0-9]+$'
+       or coalesce(item->>'amountRaw', '') !~ '^[0-9]+$'
+       or (item->>'amountRaw')::numeric(78, 0) <= 0
+       or coalesce(item->>'observedRaw', '') !~ '^[0-9]+$'
+       or item->>'asset' not in ('MON', 'CHOG')
+       or item->>'bucket' not in ('gas', 'deployment', 'business_capital')
+       or (item->>'bucket' in ('gas', 'deployment') and item->>'asset' <> 'MON') then
+      return jsonb_build_object('ok', false, 'outcome', 'malformed', 'reason', 'A reservation needs a positive amount and an observed balance.');
+    end if;
+    if not exists (select 1 from economy_proposals where id = (item->>'proposalId')::uuid) then
+      return jsonb_build_object('ok', false, 'outcome', 'malformed', 'reason', 'The reservation does not belong to a stored proposal.');
+    end if;
+    select * into existing from economy_reservations where idempotency_key = item->>'key';
+    if found then
+      if existing.proposal_id is distinct from (item->>'proposalId')::uuid
+         or existing.token_id is distinct from (item->>'tokenId')::numeric(78, 0)
+         or existing.asset is distinct from item->>'asset'
+         or existing.bucket is distinct from item->>'bucket'
+         or existing.amount_raw is distinct from (item->>'amountRaw')::numeric(78, 0)
+         or existing.chain_id is distinct from 143 then
+        return jsonb_build_object(
+          'ok', false,
+          'outcome', 'conflict',
+          'reason', 'This idempotency key is already used for a different reservation.'
+        );
+      end if;
+    else
+      all_exist := false;
+    end if;
+  end loop;
+
+  if all_exist then
+    return jsonb_build_object('ok', true, 'created', false);
+  end if;
+
+  for hold_asset in
+    select distinct value->>'asset' from jsonb_array_elements(p_holds)
+  loop
+    select (value->>'observedRaw')::numeric(78, 0) into observed
+      from jsonb_array_elements(p_holds)
+      where value->>'asset' = hold_asset
+      limit 1;
+    if exists (
+      select 1 from jsonb_array_elements(p_holds)
+      where value->>'asset' = hold_asset
+        and (value->>'observedRaw')::numeric(78, 0) is distinct from observed
+    ) then
+      return jsonb_build_object('ok', false, 'outcome', 'malformed', 'reason', 'A reservation needs a positive amount and an observed balance.');
+    end if;
+
+    select coalesce(sum(amount_raw), 0) into used
+      from economy_reservations
+      where state = 'held'
+        and economy_reservations.asset = hold_asset
+        and idempotency_key not in (select value->>'key' from jsonb_array_elements(p_holds));
+
+    select coalesce(sum((value->>'amountRaw')::numeric(78, 0)), 0) into needed
+      from jsonb_array_elements(p_holds)
+      where value->>'asset' = hold_asset;
+
+    if used + needed > observed then
+      update economy_reservations
+         set state = 'released'
+       where state = 'held'
+         and idempotency_key in (select value->>'key' from jsonb_array_elements(p_holds));
+      return jsonb_build_object(
+        'ok', false,
+        'outcome', 'insufficient_funds',
+        'reason', 'The remaining observed balance cannot cover another reservation.'
+      );
+    end if;
+  end loop;
+
+  for idx in 0 .. n - 1 loop
+    item := p_holds->idx;
+    if exists (select 1 from economy_reservations where idempotency_key = item->>'key') then
+      continue;
+    end if;
+    insert into economy_reservations (
+      proposal_id, idempotency_key, chain_id, token_id, asset, bucket, amount_raw, observed_raw, state
+    ) values (
+      (item->>'proposalId')::uuid,
+      item->>'key',
+      143,
+      (item->>'tokenId')::numeric(78, 0),
+      item->>'asset',
+      item->>'bucket',
+      (item->>'amountRaw')::numeric(78, 0),
+      (item->>'observedRaw')::numeric(78, 0),
+      'held'
+    )
+    returning id into new_id;
+    created_any := true;
+  end loop;
+
+  return jsonb_build_object('ok', true, 'created', created_any);
+end;
+$$;
+
+comment on function economy_try_holds(jsonb) is
+  'Reserves an offchain set under economy_lock. Identity conflicts return before any release. authorizes_execution stays false.';
+
+create or replace function economy_note_receipt(
+  p_key text,
+  p_reason text,
+  p_tx text,
+  p_chain integer,
+  p_block numeric,
+  p_block_hash text,
+  p_receipt_status text
+)
+returns jsonb
+language plpgsql
+security invoker
+set search_path = public
+as $$
+declare
+  current economy_proposals%rowtype;
+  next_status text;
+begin
+  perform 1 from economy_lock where id = 1 for update;
+  select * into current from economy_proposals where idempotency_key = p_key for update;
+  if not found then
+    return jsonb_build_object('ok', false, 'reason', 'No proposal exists for that key.');
+  end if;
+  if p_chain is distinct from 143
+     or p_receipt_status not in ('success', 'reverted')
+     or p_tx is null or p_tx !~ '^0x[0-9a-fA-F]{64}$'
+     or p_block_hash is null or p_block_hash !~ '^0x[0-9a-fA-F]{64}$'
+     or p_block is null or p_block < 0 then
+    return jsonb_build_object('ok', false, 'reason', 'Receipt evidence must be observed on Monad mainnet 143.');
+  end if;
+  next_status := case when p_receipt_status = 'success' then 'confirmed' else 'reverted' end;
+  if current.tx_hash is not null and lower(current.tx_hash) is distinct from lower(p_tx) then
+    return jsonb_build_object(
+      'ok', false,
+      'outcome', 'conflict',
+      'reason', 'This proposal is already tied to a different transaction.',
+      'status', current.status,
+      'executed', false
+    );
+  end if;
+  if current.status = next_status and current.tx_hash is not null and lower(current.tx_hash) = lower(p_tx) then
+    return jsonb_build_object('ok', true, 'duplicate', true, 'status', current.status, 'executed', false);
+  end if;
+  if current.status <> 'submitted' then
+    return jsonb_build_object('ok', false, 'reason', 'That status change is not allowed.', 'status', current.status);
+  end if;
+
+  update economy_proposals
+     set status = next_status,
+         reason = left(coalesce(p_reason, ''), 500),
+         tx_hash = lower(p_tx),
+         receipt_chain_id = 143,
+         receipt_block_number = p_block,
+         receipt_block_hash = lower(p_block_hash),
+         receipt_status = p_receipt_status
+   where id = current.id;
+
+  if next_status = 'reverted' then
+    update economy_reservations
+       set state = 'released'
+     where proposal_id = current.id and state = 'held';
+  end if;
+
+  return jsonb_build_object('ok', true, 'duplicate', false, 'status', next_status, 'executed', false);
+end;
+$$;
+
+comment on function economy_note_receipt(text, text, text, integer, numeric, text, text) is
+  'Records receipt fields supplied by the caller. Duplicate notes return before update, so the audit trigger does not append. A different transaction conflicts and does not rewrite history. RPC verification happens in the application.';
+
+create or replace function economy_settle_proposal(p_key text, p_tx text)
+returns jsonb
+language plpgsql
+security invoker
+set search_path = public
+as $$
+declare
+  current economy_proposals%rowtype;
+begin
+  perform 1 from economy_lock where id = 1 for update;
+  select * into current from economy_proposals where idempotency_key = p_key for update;
+  if not found then
+    return jsonb_build_object('ok', false, 'reason', 'No proposal exists for that key.');
+  end if;
+  if p_tx is null or p_tx !~ '^0x[0-9a-fA-F]{64}$' then
+    return jsonb_build_object('ok', false, 'reason', 'Settlement requires a successful mainnet receipt.');
+  end if;
+  if current.status = 'settled' and lower(current.tx_hash) = lower(p_tx) then
+    return jsonb_build_object('ok', true, 'duplicate', true, 'status', 'settled', 'executed', false);
+  end if;
+  if current.tx_hash is not null and lower(current.tx_hash) is distinct from lower(p_tx) then
+    return jsonb_build_object(
+      'ok', false,
+      'outcome', 'conflict',
+      'reason', 'This proposal is already tied to a different transaction.',
+      'status', current.status,
+      'executed', false
+    );
+  end if;
+  if current.status <> 'confirmed'
+     or current.receipt_status is distinct from 'success'
+     or current.receipt_chain_id is distinct from 143
+     or current.tx_hash is null
+     or lower(current.tx_hash) is distinct from lower(p_tx)
+     or current.receipt_block_number is null
+     or current.receipt_block_hash is null then
+    return jsonb_build_object('ok', false, 'reason', 'Settlement requires a successful mainnet receipt.');
+  end if;
+  if not exists (
+    select 1 from economy_journal
+    where source = 'chain'
+      and status in ('observed', 'realized')
+      and evidence_key like '143:' || lower(current.tx_hash) || ':%'
+  ) then
+    return jsonb_build_object('ok', false, 'reason', 'Settlement requires a counted journal posting for the verified receipt.');
+  end if;
+
+  update economy_proposals
+     set status = 'settled',
+         reason = 'Settled against the verified mainnet receipt and its journal posting. This row is not itself a transfer.'
+   where id = current.id;
+
+  update economy_reservations
+     set state = 'reconciled'
+   where proposal_id = current.id and state = 'held';
+
+  return jsonb_build_object('ok', true, 'duplicate', false, 'status', 'settled', 'executed', false);
+end;
+$$;
+
+comment on function economy_settle_proposal(text, text) is
+  'Settles a confirmed proposal only when the stored receipt and a counted journal posting agree. The same transaction returns before update. A different transaction conflicts. executed stays false.';
+
+revoke all on function economy_try_hold(text, uuid, numeric, text, text, numeric, numeric) from public;
+revoke all on function economy_open_proposal(jsonb) from public;
+revoke all on function economy_try_holds(jsonb) from public;
+revoke all on function economy_note_receipt(text, text, text, integer, numeric, text, text) from public;
+revoke all on function economy_settle_proposal(text, text) from public;
+
+do $$
+declare
+  fn text;
+begin
+  if exists (select 1 from pg_roles where rolname = 'service_role') then
+    foreach fn in array array[
+      'economy_try_hold(text, uuid, numeric, text, text, numeric, numeric)',
+      'economy_open_proposal(jsonb)',
+      'economy_try_holds(jsonb)',
+      'economy_note_receipt(text, text, text, integer, numeric, text, text)',
+      'economy_settle_proposal(text, text)'
+    ]
+    loop
+      execute format('grant execute on function %s to service_role', fn);
+    end loop;
+  end if;
+end $$;

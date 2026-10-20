@@ -32,6 +32,7 @@ import {
 } from "@/lib/economy/observe";
 import { presentEconomy } from "@/lib/economy/present";
 import { assessReceiptEvidence } from "@/lib/economy/receipt";
+import { verifyMainnetReceipt } from "@/lib/economy/verify-receipt";
 import { evaluateProductionEconomy } from "@/lib/economy/production";
 import {
   decideEconomicProposal,
@@ -769,7 +770,7 @@ describe("proposals, identity, and presentation", () => {
     expect(readFileSync("src/lib/economy/load.ts", "utf8")).toContain("readEconomyLedger");
   });
 
-  it("does not present a proposal or a simulated job as a confirmed transaction", () => {
+  it("does not present a proposal or a simulated job as a confirmed transaction", async () => {
     const opened = openProposal([], { id: "1", idempotencyKey: "tools-104", tokenId: "104", expiresAtMs: NOW + 1_000, at: "t0" });
     const again = openProposal(opened.records, { id: "2", idempotencyKey: "tools-104", tokenId: "104", expiresAtMs: NOW + 1_000, at: "t1" });
     expect(again.created).toBe(false);
@@ -804,16 +805,33 @@ describe("proposals, identity, and presentation", () => {
       blockHash: BLOCK,
     }).ok).toBe(false);
     records = noteReceipt(records, "tools-104", receipt.evidence, "t5");
+    expect(records[0]?.status).toBe("submitted");
+    const verified = await verifyMainnetReceipt({
+      txHash: TX,
+      call: async (method) => {
+        if (method === "eth_chainId") return "0x8f";
+        if (method === "eth_getTransactionReceipt") {
+          return { transactionHash: TX, status: "0x1", blockNumber: "0xa", blockHash: BLOCK };
+        }
+        if (method === "eth_getBlockByNumber") return { number: "0xa", hash: BLOCK };
+        throw new Error(method);
+      },
+    });
+    expect(verified.ok).toBe(true);
+    if (!verified.ok) {
+      return;
+    }
+    records = noteReceipt(records, "tools-104", verified.receipt, "t5b");
     expect(records[0]?.status).toBe("confirmed");
     expect(records[0]?.executed).toBe(false);
-    const withoutJournal = settleProposal(records, "tools-104", receipt.evidence, [], "t6");
+    const withoutJournal = settleProposal(records, "tools-104", verified.receipt, [], "t6");
     expect(withoutJournal.ok).toBe(false);
     const posted = reconcileChainTransfer([], evidence(), "t6");
     expect(posted.ok).toBe(true);
     if (!posted.ok) {
       return;
     }
-    const settled = settleProposal(records, "tools-104", receipt.evidence, posted.lines, "t7");
+    const settled = settleProposal(records, "tools-104", verified.receipt, posted.lines, "t7");
     expect(settled.ok).toBe(true);
     if (settled.ok) {
       expect(settled.records[0]?.status).toBe("settled");

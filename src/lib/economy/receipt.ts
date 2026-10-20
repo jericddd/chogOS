@@ -1,5 +1,6 @@
 import type { Hex } from "viem";
 import type { JournalLine } from "@/lib/economy/journal";
+import { isRpcVerifiedReceipt } from "@/lib/economy/verify-receipt";
 
 const HASH = /^0x[0-9a-fA-F]{64}$/;
 
@@ -12,9 +13,12 @@ export type ReceiptObservation = {
   blockHash: string | null;
 };
 
-/** Returned only by assessReceiptEvidence. Callers still re-check the fields. */
-export type VerifiedReceipt = {
-  kind: "verified-mainnet-receipt";
+/**
+ * A parsed shape. It is not a mainnet proof.
+ * Confirmation and settlement accept only a receipt branded by verifyMainnetReceipt.
+ */
+export type ReceiptShape = {
+  kind: "receipt-shape";
   chainId: 143;
   txHash: Hex;
   status: "success" | "reverted";
@@ -22,9 +26,10 @@ export type VerifiedReceipt = {
   blockHash: Hex;
 };
 
+/** Shape check only. A passing result cannot confirm or settle a proposal. */
 export function assessReceiptEvidence(
   observation: ReceiptObservation,
-): { ok: true; evidence: VerifiedReceipt } | { ok: false; reason: string } {
+): { ok: true; evidence: ReceiptShape } | { ok: false; reason: string } {
   if (observation.chainId !== 143 || observation.observedChainId !== 143) {
     return { ok: false, reason: "Receipt evidence must be observed on Monad mainnet 143." };
   }
@@ -46,7 +51,7 @@ export function assessReceiptEvidence(
   return {
     ok: true,
     evidence: {
-      kind: "verified-mainnet-receipt",
+      kind: "receipt-shape",
       chainId: 143,
       txHash: observation.txHash.toLowerCase() as Hex,
       status: observation.status,
@@ -54,18 +59,6 @@ export function assessReceiptEvidence(
       blockHash: observation.blockHash.toLowerCase() as Hex,
     },
   };
-}
-
-export function verifiedReceiptOk(evidence: VerifiedReceipt | null | undefined): evidence is VerifiedReceipt {
-  return Boolean(
-    evidence &&
-      evidence.kind === "verified-mainnet-receipt" &&
-      evidence.chainId === 143 &&
-      (evidence.status === "success" || evidence.status === "reverted") &&
-      HASH.test(evidence.txHash) &&
-      HASH.test(evidence.blockHash) &&
-      evidence.blockNumber >= 0n,
-  );
 }
 
 /** A counted chain posting whose evidence key starts with the mainnet transaction. */
@@ -85,10 +78,10 @@ export function journalSupportsReceipt(lines: readonly JournalLine[], txHash: st
 
 export function receiptRpcArgs(
   key: string,
-  evidence: VerifiedReceipt,
+  evidence: unknown,
   reason: string,
 ): { ok: true; args: Record<string, string | number> } | { ok: false; reason: string } {
-  if (!key || !verifiedReceiptOk(evidence)) {
+  if (!key || !isRpcVerifiedReceipt(evidence)) {
     return { ok: false, reason: "Receipt evidence must be observed on Monad mainnet 143." };
   }
   return {
@@ -107,9 +100,9 @@ export function receiptRpcArgs(
 
 export function settleRpcArgs(
   key: string,
-  evidence: VerifiedReceipt,
+  evidence: unknown,
 ): { ok: true; args: { p_key: string; p_tx: string } } | { ok: false; reason: string } {
-  if (!key || !verifiedReceiptOk(evidence) || evidence.status !== "success") {
+  if (!key || !isRpcVerifiedReceipt(evidence) || evidence.status !== "success") {
     return { ok: false, reason: "Settlement requires a successful mainnet receipt." };
   }
   return { ok: true, args: { p_key: key, p_tx: evidence.txHash } };

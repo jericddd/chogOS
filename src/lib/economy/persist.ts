@@ -29,6 +29,17 @@ export type PersistResult =
   | { ok: true; proposalId: string; status: string; reserved: boolean }
   | { ok: false; reason: string; reserved: false };
 
+/** Conflict is terminal for this key. Other hold failures stay retryable. */
+export function holdFailureStatus(outcome: string): "insufficient_funds" | "rejected" | "deferred" {
+  if (outcome === "insufficient_funds") {
+    return "insufficient_funds";
+  }
+  if (outcome === "conflict") {
+    return "rejected";
+  }
+  return "deferred";
+}
+
 export function proposalRow(proposal: EconomicProposal): Record<string, string> | { error: string } {
   if (!UUID.test(proposal.citizenId)) {
     return { error: "The citizen id is not a permanent citizen id." };
@@ -88,7 +99,7 @@ export async function persistEconomyDecision(
     if (inserts.length > 0) {
       const held = await gateway.tryHolds(inserts);
       if (!held.ok) {
-        status = held.outcome === "insufficient_funds" ? "insufficient_funds" : "deferred";
+        status = holdFailureStatus(held.outcome);
         reason = held.reason;
       } else {
         createdHold = held.created;
