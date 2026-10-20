@@ -6,7 +6,9 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-
 
 export type OpenResult = { ok: true; id: string; created: boolean } | { ok: false; reason: string };
 export type StatusResult = { ok: true; status: string; duplicate: boolean } | { ok: false; reason: string };
-export type HoldsResult = { ok: true; created: boolean } | { ok: false; outcome: string; reason: string };
+export type HoldsResult =
+  | { ok: true; created: boolean; createdKeys?: readonly string[] }
+  | { ok: false; outcome: string; reason: string };
 
 export type HoldInsert = {
   key: string;
@@ -22,7 +24,7 @@ export type EconomyGateway = {
   openProposal(row: Record<string, string>): Promise<OpenResult>;
   applyStatus(input: { key: string; status: string; reason: string }): Promise<StatusResult>;
   tryHolds(holds: readonly HoldInsert[]): Promise<HoldsResult>;
-  release(proposalId: string): Promise<{ ok: boolean }>;
+  release(proposalId: string, keys: readonly string[]): Promise<{ ok: boolean }>;
 };
 
 export type PersistResult =
@@ -90,7 +92,7 @@ export async function persistEconomyDecision(
 
   let status = input.decision.outcome;
   let reason = input.decision.reason;
-  let createdHold = false;
+  let createdKeys: string[] = [];
   if (input.decision.reserved) {
     const inserts = holdInserts(input.proposal, input.holds, input.observation, opened.id);
     if ("error" in inserts) {
@@ -102,7 +104,7 @@ export async function persistEconomyDecision(
         status = holdFailureStatus(held.outcome);
         reason = held.reason;
       } else {
-        createdHold = held.created;
+        createdKeys = held.createdKeys ? [...held.createdKeys] : held.created ? inserts.map((row) => row.key) : [];
       }
     }
   }
@@ -113,12 +115,12 @@ export async function persistEconomyDecision(
     reason: reason.slice(0, 500),
   });
   if (!applied.ok) {
-    if (createdHold) {
-      await gateway.release(opened.id);
+    if (createdKeys.length > 0) {
+      await gateway.release(opened.id, createdKeys);
     }
     return { ok: false, reason: applied.reason, reserved: false };
   }
-  return { ok: true, proposalId: opened.id, status: applied.status, reserved: createdHold && status === "approved" };
+  return { ok: true, proposalId: opened.id, status: applied.status, reserved: createdKeys.length > 0 && status === "approved" };
 }
 
 function holdInserts(

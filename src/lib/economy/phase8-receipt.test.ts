@@ -1,4 +1,5 @@
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync, statSync } from "node:fs";
+import path from "node:path";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { getAddress, type Hex } from "viem";
 import { describe, expect, it, vi } from "vitest";
@@ -6,14 +7,17 @@ import { describe, expect, it, vi } from "vitest";
 vi.mock("server-only", () => ({}));
 
 import { addresses } from "@/lib/blockchain/addresses";
-import { confirmEconomyReceipt, settleEconomyProposal } from "@/lib/economy/db";
+import { POST as postTransaction } from "@/app/api/transactions/route";
+import { confirmEconomyReceipt, saveEconomyDecision, settleEconomyProposal } from "@/lib/economy/db";
+import { productionExecutionStatus } from "@/lib/economy/execution";
 import { reconcileChainTransfer, type ChainTransferEvidence } from "@/lib/economy/journal";
 import { applyRpcVerification, interpretLedgerSnapshot } from "@/lib/economy/ledger";
-import { assessTreasuryRead, readEconomicTreasury, type TreasuryReader, type TreasurySnapshot } from "@/lib/economy/observe";
+import { assessTreasuryRead, emptySnapshot, readEconomicTreasury, type TreasuryReader, type TreasurySnapshot } from "@/lib/economy/observe";
+import { presentEconomy } from "@/lib/economy/present";
 import { holdFailureStatus, persistEconomyDecision, type EconomyGateway } from "@/lib/economy/persist";
 import { decideEconomicProposal, type EconomicProposal, type EconomyLimits } from "@/lib/economy/proposal";
 import { assessReceiptEvidence, settleRpcArgs } from "@/lib/economy/receipt";
-import { holdSequentially, tryHold, type Hold } from "@/lib/economy/reserve";
+import { holdSequentially, tryHold, tryHoldBatch, type Hold, type HoldRequest } from "@/lib/economy/reserve";
 import { isRpcVerifiedReceipt, jsonRpcCaller, verifyMainnetReceipt, type RpcCaller, type RpcVerifiedReceipt } from "@/lib/economy/verify-receipt";
 import { noteReceipt, noteSubmission, openProposal, planConfirmation, planSettlement, settleProposal } from "@/lib/economy/workflow";
 
@@ -679,6 +683,335 @@ describe("read-only treasury observer", () => {
   });
 });
 
+describe("phase 8 reservation and trust regressions", () => {
+  function held(overrides: Partial<Hold> & Pick<Hold, "key" | "amountRaw">): Hold {
+    return {
+      id: overrides.key,
+      proposalId: "citizen:104:existing",
+      tokenId: "104",
+      asset: "MON",
+      bucket: "business_capital",
+      state: "held",
+      ...overrides,
+    };
+  }
+
+  function request(overrides: Partial<HoldRequest> & Pick<HoldRequest, "key" | "amountRaw">): HoldRequest {
+    return {
+      id: overrides.key,
+      proposalId: "citizen:104:existing",
+      tokenId: "104",
+      asset: "MON",
+      bucket: "business_capital",
+      observedRaw: 100n,
+      ...overrides,
+    };
+  }
+
+  it("leaves an existing hold unchanged when the rest of the batch does not fit", () => {
+    const existing = held({ key: "existing", amountRaw: 60n });
+    const before = [existing];
+    const mixed = tryHoldBatch(before, [
+      request({ key: "existing", amountRaw: 60n }),
+      request({ key: "extra", id: "extra", proposalId: "citizen:104:extra", amountRaw: 50n }),
+    ]);
+    expect(mixed.ok).toBe(false);
+    if (!mixed.ok) {
+      expect(mixed.outcome).toBe("insufficient_funds");
+      expect(mixed.holds).toEqual(before);
+    }
+    expect(existing.state).toBe("held");
+    expect(existing.amountRaw).toBe(60n);
+    expect(before).toHaveLength(1);
+
+    const empty = tryHoldBatch([], [
+      request({ key: "one", amountRaw: 60n }),
+      request({ key: "two", amountRaw: 50n }),
+    ]);
+    expect(empty.ok).toBe(false);
+    if (!empty.ok) {
+      expect(empty.holds).toEqual([]);
+    }
+
+    const replay = tryHoldBatch(
+      [held({ key: "existing", amountRaw: 60n }), held({ key: "second", amountRaw: 50n })],
+      [request({ key: "existing", amountRaw: 60n, observedRaw: 100n }), request({ key: "second", amountRaw: 50n, observedRaw: 100n })],
+    );
+    expect(replay.ok && replay.created).toBe(false);
+    if (replay.ok) {
+      expect(replay.holds.map((item) => item.state)).toEqual(["held", "held"]);
+    }
+
+    const serial = holdSequentially(before, [
+      request({ key: "existing", amountRaw: 60n }),
+      request({ key: "extra", id: "extra", proposalId: "citizen:104:extra", amountRaw: 50n }),
+    ]);
+    expect(serial.holds).toEqual(before);
+    expect(serial.holds[0]?.state).toBe("held");
+  });
+
+  it("rejects a conflicting idempotency key without adding or editing reservations", () => {
+    const existing = held({ key: "existing", amountRaw: 40n });
+    const conflict = tryHoldBatch([existing], [
+      request({ key: "existing", amountRaw: 41n }),
+      request({ key: "extra", id: "extra", proposalId: "citizen:104:extra", amountRaw: 1n }),
+    ]);
+    expect(conflict.ok).toBe(false);
+    if (!conflict.ok) {
+      expect(conflict.outcome).toBe("conflict");
+      expect(conflict.holds).toEqual([existing]);
+      expect(conflict.holds.some((item) => item.key === "extra")).toBe(false);
+    }
+    expect(existing).toMatchObject({ state: "held", amountRaw: 40n });
+
+    const tight = assessTreasuryRead({
+      address: TREASURY,
+      read: {
+        chainId: 143,
+        blockNumber: 10n,
+        observedAt: new Date(NOW).toISOString(),
+        nativeRaw: 100n,
+        tokenRaw: 0n,
+        tokenDecimals: 6,
+      },
+      nowMs: NOW,
+      maxAgeMs: 60_000,
+    });
+    const prior = held({ key: "other-proposal", amountRaw: 60n });
+    const decided = decideEconomicProposal({
+      proposal: proposal({ fundingRequestRaw: 50n, amountRaw: 50n, estimatedGasWei: 0n }),
+      observation: tight,
+      holds: [prior],
+      limits: LIMITS,
+      dailyGasWei: 0n,
+      dailyGasKnown: true,
+      allowlist: [{ chainId: 143, target: TARGET, selectors: [SELECTOR], assets: ["MON"], label: "fixture" }],
+      factoryDeployed: false,
+      nowMs: NOW,
+      executionEnabled: false,
+    });
+    expect(decided.decision.outcome).toBe("insufficient_funds");
+    expect(decided.decision.reserved).toBe(false);
+    expect(decided.holds).toEqual([prior]);
+    expect(prior.state).toBe("held");
+  });
+
+  it("releases only keys created by the failed status write", async () => {
+    const released: string[][] = [];
+    const gateway: EconomyGateway = {
+      async openProposal() {
+        return { ok: true, id: PROPOSAL_ID, created: true };
+      },
+      async applyStatus() {
+        return { ok: false, reason: "The proposal status could not be saved." };
+      },
+      async tryHolds() {
+        return { ok: true, created: true, createdKeys: ["proposal-1:gas"] };
+      },
+      async release(_proposalId, keys) {
+        released.push([...keys]);
+        return { ok: true };
+      },
+    };
+    const item = proposal({ fundingRequestRaw: 20n, amountRaw: 20n, estimatedGasWei: 1n });
+    const saved = await persistEconomyDecision(gateway, {
+      proposal: item,
+      decision: { outcome: "approved", reason: "reserved", hold: null, reserved: true, executed: false },
+      holds: [
+        held({ key: item.idempotencyKey, proposalId: PROPOSAL_ID, amountRaw: 20n }),
+        held({ key: `${item.idempotencyKey}:gas`, proposalId: PROPOSAL_ID, bucket: "gas", amountRaw: 1n }),
+      ],
+      observation: fresh(),
+    });
+    expect(saved).toMatchObject({ ok: false, reserved: false });
+    expect(released).toEqual([["proposal-1:gas"]]);
+
+    const untouched: string[] = [];
+    const replay = await persistEconomyDecision(
+      {
+        ...gateway,
+        async tryHolds() {
+          return { ok: true, created: false, createdKeys: [] };
+        },
+        async applyStatus() {
+          return { ok: true, status: "approved", duplicate: false };
+        },
+        async release() {
+          untouched.push("released");
+          return { ok: true };
+        },
+      },
+      {
+        proposal: item,
+        decision: { outcome: "approved", reason: "replay", hold: null, reserved: true, executed: false },
+        holds: [held({ key: item.idempotencyKey, proposalId: PROPOSAL_ID, amountRaw: 20n })],
+        observation: fresh(),
+      },
+    );
+    expect(replay).toMatchObject({ ok: true, reserved: false });
+    expect(untouched).toEqual([]);
+  });
+
+  it("does not settle invalid, fabricated, reverted, mismatched, or unavailable receipts", async () => {
+    const cases: Array<{ name: string; call: RpcCaller; hash?: string; verified: boolean }> = [
+      { name: "invalid", call: mainnet().call, hash: "0x123", verified: false },
+      {
+        name: "fabricated",
+        call: mainnet({ receipt: { transactionHash: TX, status: "success", blockNumber: "0xa", blockHash: BLOCK } }).call,
+        verified: false,
+      },
+      {
+        name: "reverted",
+        call: mainnet({ receipt: { transactionHash: TX, status: "0x0", blockNumber: "0xa", blockHash: BLOCK } }).call,
+        verified: true,
+      },
+      { name: "mismatched", call: mainnet({ block: { number: "0xa", hash: OTHER_BLOCK } }).call, verified: false },
+      { name: "unavailable", call: mainnet({ throwOn: "eth_getTransactionReceipt" }).call, verified: false },
+    ];
+    for (const item of cases) {
+      const client = fakeClient(() => {
+        throw new Error(`${item.name} must not reach SQL`);
+      });
+      const settled = await settleEconomyProposal(client.client, "proposal-1", item.hash ?? TX, item.call);
+      expect(settled.ok, item.name).toBe(false);
+      expect(settled.verified, item.name).toBe(item.verified);
+      expect(client.calls, item.name).toEqual([]);
+    }
+
+    const opened = openProposal([], { id: "1", idempotencyKey: "tools-104", tokenId: "104", expiresAtMs: NOW + 1_000, at: "t0" });
+    const receipt = await verifiedReceipt();
+    const submitted = noteSubmission([{ ...opened.record, status: "approved", reason: "reserved" }], "tools-104", "t1");
+    const confirmed = noteReceipt(submitted, "tools-104", receipt, "t2");
+    const lines = reconcileChainTransfer([], evidence(), "t3");
+    expect(lines.ok).toBe(true);
+    const journal = lines.ok ? lines.lines : [];
+    const first = settleProposal(confirmed, "tools-104", receipt, journal, "t4");
+    expect(first.ok && first.duplicate).toBe(false);
+    const second = settleProposal(first.records, "tools-104", receipt, journal, "t5");
+    expect(second.ok && second.duplicate).toBe(true);
+    expect(second.records[0]?.history).toHaveLength(first.records[0]?.history.length ?? 0);
+    const other = await verifiedReceipt(OTHER_TX);
+    const conflict = settleProposal(first.records, "tools-104", other, journal, "t6");
+    expect(conflict.ok).toBe(false);
+    if (!conflict.ok) {
+      expect(conflict.outcome).toBe("conflict");
+    }
+    expect(conflict.records[0]?.txHash).toBe(TX);
+    expect(conflict.records[0]?.status).toBe("settled");
+  });
+
+  it("keeps confirmation and settlement off untrusted clients and keeps execution closed", async () => {
+    const forbidden = ["confirmEconomyReceipt", "settleEconomyProposal", "economy_note_receipt", "economy_settle_proposal"];
+    const appFiles = walk("src/app").filter((file) => file.endsWith(".ts") || file.endsWith(".tsx"));
+    for (const file of appFiles) {
+      const source = readFileSync(file, "utf8");
+      for (const name of forbidden) {
+        expect(source, file).not.toContain(name);
+      }
+    }
+    expect(readFileSync("src/lib/economy/db.ts", "utf8").startsWith('import "server-only"')).toBe(true);
+    expect(readFileSync("src/lib/economy/load.ts", "utf8")).not.toContain("verifyMainnetReceipt");
+    const sql = readFileSync("supabase/migrations/20261020050000_phase8_receipt_verification.sql", "utf8").toLowerCase();
+    expect(sql).toContain("revoke all on function %s from %i");
+    expect(sql).not.toContain("grant execute on function %s to anon");
+    expect(sql).not.toContain("grant execute on function %s to authenticated");
+
+    const response = await postTransaction();
+    expect(response.status).toBe(403);
+    expect(await response.json()).toMatchObject({ ok: false });
+    const execution = productionExecutionStatus({});
+    expect(execution.enabled).toBe(false);
+    expect(execution.signerKind).toBe("none");
+    expect(execution.relayerEnabled).toBe(false);
+    expect(execution.transactionsRoute).toBe("closed");
+
+    const ledger = interpretLedgerSnapshot({
+      ok: true,
+      complete: true,
+      reservedGas: "0",
+      reservedDeployment: "0",
+      allocatedMon: "0",
+      allocatedChog: "0",
+      dailyGas: "0",
+      holds: [],
+      proposals: [{ id: "stored", status: "confirmed", objective: "Pay timber", txHash: TX, receiptStatus: "success" }],
+      transfers: [{ id: "seen", asset: "MON", amountRaw: "1000", side: "debit", status: "observed", evidenceKey: `143:${TX}:native:MON:in` }],
+    });
+    const view = presentEconomy({
+      snapshot: emptySnapshot("not_configured", "Economic treasury address is not configured."),
+      execution,
+      allowlistReason: "No protocol allowlist is configured.",
+      ledgerLoaded: true,
+      activities: ledger.activities,
+      transfers: ledger.transfers,
+    });
+    expect(view.execution).toBe("Disabled");
+    expect(view.statusLabel).toBe("Not configured");
+    expect(view.activities[0]?.chainVerified).toBe(false);
+    expect(view.activities[0]?.href).toBeNull();
+    expect(view.transfers[0]?.chainVerified).toBe(false);
+    expect(view.transfers[0]?.href).toBeNull();
+    const linked = presentEconomy({
+      snapshot: emptySnapshot("not_configured", "Economic treasury address is not configured."),
+      execution,
+      allowlistReason: "No protocol allowlist is configured.",
+      ledgerLoaded: true,
+      activities: applyRpcVerification(ledger, await verifiedReceipt()).activities,
+    });
+    expect(linked.activities[0]?.href).toBe(`https://monadscan.com/tx/${TX}`);
+  });
+
+  it("narrows a service-role release to the keys returned by the reservation batch", async () => {
+    const updates: string[][] = [];
+    const client = {
+      rpc(fn: string) {
+        const data =
+          fn === "economy_open_proposal"
+            ? { ok: true, id: PROPOSAL_ID, created: true }
+            : fn === "economy_try_holds"
+              ? { ok: true, created: true, createdKeys: ["proposal-1:gas"] }
+              : { ok: false, reason: "The proposal status could not be saved." };
+        const promise = Promise.resolve({ data, error: null });
+        return Object.assign(promise, { abortSignal: () => promise });
+      },
+      from() {
+        const query = {
+          eq() {
+            return query;
+          },
+          in(_column: string, keys: string[]) {
+            updates.push(keys);
+            return query;
+          },
+          abortSignal() {
+            return Promise.resolve({ error: null });
+          },
+        };
+        return { update: () => query };
+      },
+    };
+    const item = proposal({ fundingRequestRaw: 20n, amountRaw: 20n, estimatedGasWei: 1n });
+    const saved = await saveEconomyDecision(client as unknown as SupabaseClient, {
+      proposal: item,
+      decision: { outcome: "approved", reason: "reserved", hold: null, reserved: true, executed: false },
+      holds: [
+        held({ key: item.idempotencyKey, amountRaw: 20n }),
+        held({ key: `${item.idempotencyKey}:gas`, bucket: "gas", amountRaw: 1n }),
+      ],
+      observation: fresh(),
+    });
+    expect(saved.ok).toBe(false);
+    expect(updates).toEqual([["proposal-1:gas"]]);
+  });
+});
+
+function walk(dir: string): string[] {
+  return readdirSync(dir).flatMap((entry) => {
+    const full = path.join(dir, entry);
+    return statSync(full).isDirectory() ? walk(full) : [full];
+  });
+}
+
 describe("phase 8 safety scans", () => {
   it("keeps stored ledger rows unverified until this call checked the receipt", async () => {
     const ledger = interpretLedgerSnapshot({
@@ -733,7 +1066,14 @@ describe("phase 8 safety scans", () => {
     expect(sql).toContain("existing.amount_raw is distinct from (p_row->>'amountraw')::numeric(78, 0)");
     const holds = sql.slice(sql.indexOf("function economy_try_holds"), sql.indexOf("function economy_note_receipt"));
     expect(holds.indexOf("different reservation")).toBeGreaterThan(0);
-    expect(holds.indexOf("different reservation")).toBeLessThan(holds.indexOf("set state = 'released'"));
+    expect(holds.indexOf("insufficient_funds")).toBeLessThan(holds.indexOf("insert into economy_reservations"));
+    expect(holds).not.toContain("set state = 'released'");
+    expect(holds).not.toContain("update economy_reservations");
+    expect(holds).not.toContain("idempotency_key not in");
+    expect(sql).toContain("does not query monad and does not verify a receipt");
+    expect(sql).toContain("'anon'");
+    expect(sql).toContain("'authenticated'");
+    expect(sql).toContain("revoke all on function %s from %i");
     const note = sql.slice(sql.indexOf("function economy_note_receipt"), sql.indexOf("function economy_settle_proposal"));
     expect(note.indexOf("'duplicate', true")).toBeLessThan(note.indexOf("update economy_proposals"));
     expect(note.indexOf("different transaction")).toBeLessThan(note.indexOf("update economy_proposals"));
@@ -765,6 +1105,9 @@ describe("phase 8 safety scans", () => {
     expect(readFileSync("src/app/api/transactions/route.ts", "utf8")).toContain("assertExecutionDisabled");
     expect(readFileSync("src/app/api/transactions/route.ts", "utf8")).not.toContain("economy_try_hold");
     expect(readFileSync("src/components/shell/nav.tsx", "utf8")).not.toContain('href: "/economy"');
-    expect(readFileSync("supabase/migrations/20261019230000_phase7_economy.sql", "utf8")).toContain("economy_try_hold");
+    const phase7 = readFileSync("supabase/migrations/20261019230000_phase7_economy.sql", "utf8").toLowerCase();
+    expect(phase7).toContain("economy_try_hold");
+    const phase7Holds = phase7.slice(phase7.indexOf("function economy_try_holds"), phase7.indexOf("function economy_note_receipt"));
+    expect(phase7Holds).toContain("set state = 'released'");
   });
 });

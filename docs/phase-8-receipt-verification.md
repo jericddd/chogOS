@@ -15,7 +15,6 @@ The merged migration `supabase/migrations/20261019230000_phase7_economy.sql` is 
 - `economy_apply_status` refuses `confirmed`, `reverted`, and `settled`. The status guard refuses those statuses without receipt fields, and refuses `settled` without a counted journal line.
 - `economy_note_receipt` requires chain 143, a 32-byte hash, a block number, a block hash, and status `success` or `reverted`. The same status and transaction returns before `UPDATE`, so the audit trigger does not append a second row.
 - `economy_settle_proposal` requires the stored success receipt plus a `economy_journal` row whose evidence key starts with `143:<tx>:` and whose source is `chain` with status `observed` or `realized`. A second settlement of that same transaction returns before `UPDATE`.
-- An insufficient `economy_try_holds` batch releases held rows whose keys are in that batch. It does not release unrelated keys.
 
 Those database checks do not read Monad. They accept the arguments the service role sends.
 
@@ -26,6 +25,7 @@ Those database checks do not read Monad. They accept the arguments the service r
 3. `economy_try_hold`, `economy_try_holds`, and the in-memory `tryHold` returned success when an idempotency key already existed, without comparing proposal, asset, or amount. `economy_open_proposal` did the same for a repeated key.
 4. Two `tryHold` calls that do not share a lock can both succeed against one observed balance. `economy_lock` is the production serializer. A process-local mutex is not.
 5. The read-only observer already returns `not_configured`, `stale`, `unavailable`, and `wrong_chain` without inventing a zero balance, and it reads `$CHOG` only from `addresses.chogToken`. This phase re-checks that behavior. It does not change the observer into a writer.
+6. Phase 7 `economy_try_holds` releases held rows whose keys are in an insufficient batch. The Phase 8 function validates the batch and the available balance before any insert, and an insufficient or conflicting batch returns without changing existing reservations. The Phase 7 file stays as merged. Hosted Postgres keeps the release until the Phase 8 file is applied.
 
 ## Receipt verifier
 
@@ -52,13 +52,15 @@ In-memory `noteReceipt` and `settleProposal` ignore unbranded evidence. A repeat
 
 ## Idempotency
 
-`tryHold` compares proposal id, token id, asset, bucket, and amount. A difference returns `conflict` and does not change the existing hold. An exact replay returns `created: false`.
+`tryHold` and `tryHoldBatch` compare proposal id, token id, asset, bucket, and amount. A difference returns `conflict` and leaves every existing hold as it was, including a new key that shared the batch. An exact replay of every key returns `created: false` before the balance check, so a later lower observation does not release those holds.
 
-`holdFailureStatus("conflict")` is `rejected`. `persistEconomyDecision` writes that status and does not release the prior hold. `insufficient_funds` stays `insufficient_funds`. Other hold failures stay `deferred`.
+`tryHoldBatch` is the in-memory batch used by `reserveApproved`. It checks shape, duplicate keys, identity, and funding for the whole batch before it appends anything. Funding counts every current `held` amount once, then adds only keys that are not already reserved. If that sum is above the observed balance, the function returns `insufficient_funds` and the original holds. `holdSequentially` remains the one-at-a-time demonstration; a later refusal does not change an earlier hold to `released`.
 
-The new migration replaces `economy_try_hold`, `economy_try_holds`, and `economy_open_proposal` with the same comparisons. A conflict returns before any `UPDATE` or release. An exact replay still returns the existing id and `created: false`.
+`holdFailureStatus("conflict")` is `rejected`. `persistEconomyDecision` writes that status and does not release the prior hold. `insufficient_funds` stays `insufficient_funds`. Other hold failures stay `deferred`. When a status write fails after a batch insert, `release` receives only `createdKeys` from that call. An explicit empty `createdKeys` does not release. If a Phase 7 function response omits `createdKeys` and reports `created: true`, the server still releases the keys it just submitted. That fallback stays until the Phase 8 function is the one answering.
 
-`economy_note_receipt` and `economy_settle_proposal` are replaced so a different transaction returns `outcome: conflict` before `UPDATE`, and a duplicate returns before `UPDATE`. The journal requirement for settlement is unchanged. `executed` stays false.
+The new migration replaces `economy_try_hold`, `economy_try_holds`, and `economy_open_proposal` with the same comparisons. A conflict returns before any insert. An insufficient batch returns before any insert and does not set existing rows to `released`. An exact replay returns `created: false` and `createdKeys: []`. Duplicate keys in one batch are malformed and do not write.
+
+`economy_note_receipt` and `economy_settle_proposal` are replaced so a different transaction returns `outcome: conflict` before `UPDATE`, and a duplicate returns before `UPDATE`. The journal requirement for settlement is unchanged. `executed` stays false. A reverted receipt note still releases the holds for that proposal. That release is the reverted-proposal path, not the insufficient-batch path.
 
 ## Migration review
 
@@ -69,11 +71,21 @@ Apply manually, later, and only in this order:
 1. `supabase/migrations/20261019230000_phase7_economy.sql`
 2. `supabase/migrations/20261020050000_phase8_receipt_verification.sql`
 
-This change does not apply either file. It does not insert balances, change `economy_controls`, or mention watcher checkpoints. The replaced functions keep `security invoker`, `search_path = public`, and `FOR UPDATE` on `economy_lock`. Execute is revoked from `public` and granted to `service_role` when that role exists. Signatures are unchanged, so this is a `CREATE OR REPLACE` rather than a new argument list.
+This change does not apply either file. It does not insert balances, change `economy_controls`, or mention watcher checkpoints. The replaced functions keep `security invoker`, `search_path = public`, and `FOR UPDATE` on `economy_lock`. Signatures are unchanged, so this is a `CREATE OR REPLACE` rather than a new argument list.
 
 Safe retry of an identical proposal or an identical reservation returns the existing row. A retry that changes proposal, asset, or amount fails closed. A retry of the same confirmed or settled transaction does not append another audit row.
 
-One Phase 7 behavior remains. `economy_try_holds`, after the identity check, can still release held rows whose keys are in an insufficient batch. A batch that mixes an existing matching key with a new key can therefore release the earlier hold when the combined amount does not fit. A conflict returns before that release. The in-memory `tryHold` path does not release on conflict.
+## Trust boundary
+
+Postgres cannot call Monad. `economy_note_receipt`, `economy_settle_proposal`, and `economy_proposal_status_guard` store and compare the fields they are given. Their comments say they do not query Monad and do not verify a receipt. A successful status still needs chain 143, a transaction hash, a block number, a block hash, and, for settlement, a counted journal row. Those checks are shape and consistency checks.
+
+The trusted boundary is the server process. `src/lib/economy/db.ts` and `src/lib/economy/load.ts` import `server-only`. `confirmEconomyReceipt` and `settleEconomyProposal` call `verifyMainnetReceipt` before they build SQL arguments, and the only caller input is the proposal key and the transaction hash. No file under `src/app` calls those functions or the SQL names. The economy page loader does not call the verifier.
+
+Phase 7 enables row level security on the economy tables and creates no permissive policy, so `anon` and `authenticated` receive no rows through the table API. It revokes table privileges from `public`, `anon`, and `authenticated`, and it grants `service_role` select, insert, and update on proposals and reservations. Journal and audit stay insert-only for that role. The service role bypasses row level security. That is why the application uses it only from server code.
+
+Phase 7 revokes function execute from `public` and grants it to `service_role`. Supabase default privileges can still leave execute with `anon` and `authenticated` after a revoke from `public`. The Phase 8 file revokes execute on the economy functions from `public`, `anon`, and `authenticated` when those roles exist, then grants execute back to `service_role` for the functions the server calls. Trigger functions are revoked and are not granted. The functions stay `security invoker`. Revoking `service_role` update, or moving the functions to `security definer` in this change, would break `release` and the verified confirm and settle path. This migration does not do that.
+
+Until an operator applies the Phase 8 file, hosted Postgres still has the Phase 7 `economy_try_holds` release and the Phase 7 function grants.
 
 ## Observer
 
@@ -93,15 +105,17 @@ One Phase 7 behavior remains. `economy_try_holds`, after the identity check, can
 
 ## Residual risk
 
-Postgres cannot call Ethereum. A process that already has the service role can still execute `economy_note_receipt` or `economy_settle_proposal` with fields it invented. The application path will not do that, and this review does not claim the database can detect a lie from that role. Closing that gap would mean a later design that does not grant those functions to a role which also accepts caller-supplied receipt fields.
+The service role can still call `economy_note_receipt` and `economy_settle_proposal`, or update `economy_proposals`, with fields it invented. The status guard checks shape, chain 143, and a journal row. It does not see Monad. A service-role client that also inserts a chain journal line can settle a proposal the RPC verifier never read. The application path does not do that. This review does not claim that SQL verifies a receipt.
 
-The hosted migration is not applied, so production reservations still have the Phase 7 idempotency behavior until an operator applies both files. This agent did not apply them.
+The compatible design that closes that gap, without changing the verified path in this change, is a later migration: a dedicated verifier role owns `security definer` functions, `service_role` loses direct update on receipt columns and loses execute on `economy_note_receipt` and `economy_settle_proposal`, and the server uses only that role after `verifyMainnetReceipt`. That needs a new credential and a reviewed migration. It is not applied here.
 
-The economy page does not re-check stored hashes during render. Explorer links appear only after `applyRpcVerification` has a branded receipt from the same call. A loaded ledger therefore shows stored proposals without calling them verified.
+The hosted Phase 8 migration is not applied. Production reservations keep the Phase 7 insufficient-batch release, and production function grants stay as Phase 7 left them, until an operator applies the Phase 7 file and then the Phase 8 file. This agent did not apply them.
+
+`interpretLedgerSnapshot` leaves `chainVerified` false. `presentEconomy` builds an explorer link only when `applyRpcVerification` has already marked that row from a branded receipt in the same call. The page loader does not call the verifier, so a stored hash is shown without a verified label and without an explorer link. A passing test is not a claim that a particular production transaction was verified.
 
 The civilization treasury query on `/economy` can still hold the document open. That behavior is unchanged.
 
-No test in this phase calls a live RPC endpoint or hosted Supabase. A passing test is not a claim that a particular production transaction was verified.
+No test in this phase calls a live RPC endpoint or hosted Supabase. The signer stays unset, the relayer stays disabled, the economic treasury stays unconfigured, and `executionEnabled` stays false. `/api/transactions` still returns 403.
 
 ## Production state
 

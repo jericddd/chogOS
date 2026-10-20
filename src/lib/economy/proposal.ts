@@ -2,7 +2,7 @@ import { getAddress, type Address, type Hex } from "viem";
 import { findProtocolRule, type ProtocolRule } from "@/lib/economy/allowlist";
 import { parseRawAmount } from "@/lib/economy/amounts";
 import type { TreasurySnapshot } from "@/lib/economy/observe";
-import { heldRaw, tryHold, type Hold } from "@/lib/economy/reserve";
+import { heldRaw, tryHoldBatch, type Hold, type HoldRequest } from "@/lib/economy/reserve";
 
 export const ECONOMY_OPERATIONS = ["payment", "purchase", "trade", "swap", "business", "return_capital"] as const;
 export type EconomicOperation = (typeof ECONOMY_OPERATIONS)[number];
@@ -291,11 +291,9 @@ function reserveApproved(
   observed: bigint,
   gasObserved: bigint,
 ): { decision: EconomyDecision; holds: Hold[] } {
-  let next = [...holds];
-  let primary: Hold | null = null;
-  let created = false;
+  const requests: HoldRequest[] = [];
   if (proposal.fundingRequestRaw > 0n) {
-    const capital = tryHold(next, {
+    requests.push({
       id: `${proposal.id}:capital`,
       key: proposal.idempotencyKey,
       proposalId: `${proposal.citizenId}:${proposal.tokenId}:${proposal.id}`,
@@ -305,24 +303,9 @@ function reserveApproved(
       amountRaw: proposal.fundingRequestRaw,
       observedRaw: observed,
     });
-    if (!capital.ok) {
-      return {
-        decision: {
-          outcome: capital.outcome === "insufficient_funds" ? "insufficient_funds" : "rejected",
-          reason: capital.reason,
-          hold: null,
-          reserved: false,
-          executed: false,
-        },
-        holds: [...holds],
-      };
-    }
-    next = capital.holds;
-    primary = capital.hold;
-    created = capital.created;
   }
   if (proposal.estimatedGasWei > 0n) {
-    const gas = tryHold(next, {
+    requests.push({
       id: `${proposal.id}:gas`,
       key: `${proposal.idempotencyKey}:gas`,
       proposalId: `${proposal.citizenId}:${proposal.tokenId}:${proposal.id}`,
@@ -332,33 +315,47 @@ function reserveApproved(
       amountRaw: proposal.estimatedGasWei,
       observedRaw: gasObserved,
     });
-    if (!gas.ok) {
-      return {
-        decision: {
-          outcome: gas.outcome === "insufficient_funds" ? "insufficient_funds" : "rejected",
-          reason: gas.reason,
-          hold: null,
-          reserved: false,
-          executed: false,
-        },
-        holds: [...holds],
-      };
-    }
-    next = gas.holds;
-    primary = primary ?? gas.hold;
-    created = created || gas.created;
   }
+  if (requests.length === 0) {
+    return {
+      decision: {
+        outcome: "approved",
+        reason: "The reservation already exists. This approval does not broadcast a transaction.",
+        hold: null,
+        reserved: false,
+        executed: false,
+      },
+      holds: [...holds],
+    };
+  }
+  const batch = tryHoldBatch(holds, requests);
+  if (!batch.ok) {
+    return {
+      decision: {
+        outcome: batch.outcome === "insufficient_funds" ? "insufficient_funds" : "rejected",
+        reason: batch.reason,
+        hold: null,
+        reserved: false,
+        executed: false,
+      },
+      holds: batch.holds,
+    };
+  }
+  const primary =
+    batch.holds.find((hold) => hold.key === proposal.idempotencyKey) ??
+    batch.holds.find((hold) => hold.key === `${proposal.idempotencyKey}:gas`) ??
+    null;
   return {
     decision: {
       outcome: "approved",
-      reason: created
+      reason: batch.created
         ? "Reserved against the observed balance. This approval does not broadcast a transaction."
         : "The reservation already exists. This approval does not broadcast a transaction.",
       hold: primary,
-      reserved: created,
+      reserved: batch.created,
       executed: false,
     },
-    holds: next,
+    holds: batch.holds,
   };
 }
 

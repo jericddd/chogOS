@@ -26,22 +26,28 @@ export function heldRaw(holds: readonly Hold[], asset: "MON" | "CHOG", bucket?: 
   );
 }
 
+export type HoldRequest = {
+  id: string;
+  key: string;
+  proposalId: string;
+  tokenId: string;
+  asset: "MON" | "CHOG";
+  bucket: HoldBucket;
+  amountRaw: bigint;
+  observedRaw: bigint | null;
+};
+
+export type HoldBatchResult =
+  | { ok: true; holds: Hold[]; created: boolean }
+  | { ok: false; outcome: "insufficient_funds" | "malformed" | "conflict"; reason: string; holds: Hold[] };
+
 /**
  * Apply holds one at a time against the same observed balance.
- * The database function takes the row lock; this is the same arithmetic.
+ * A later refusal does not release an earlier hold. Production batches use tryHoldBatch.
  */
 export function holdSequentially(
   holds: readonly Hold[],
-  requests: readonly {
-    id: string;
-    key: string;
-    proposalId: string;
-    tokenId: string;
-    asset: "MON" | "CHOG";
-    bucket: HoldBucket;
-    amountRaw: bigint;
-    observedRaw: bigint | null;
-  }[],
+  requests: readonly HoldRequest[],
 ): { holds: Hold[]; results: HoldResult[] } {
   let current = [...holds];
   const results: HoldResult[] = [];
@@ -53,18 +59,70 @@ export function holdSequentially(
   return { holds: current, results };
 }
 
+/**
+ * Validate a whole batch, then insert only the new keys.
+ * A conflict, a malformed request, or an insufficient balance returns the original holds unchanged.
+ */
+export function tryHoldBatch(holds: readonly Hold[], requests: readonly HoldRequest[]): HoldBatchResult {
+  if (requests.length < 1 || requests.length > 3) {
+    return batchFailure(holds, "malformed", "A reservation needs a positive amount and an observed balance.");
+  }
+  const seen = new Set<string>();
+  for (const request of requests) {
+    if (!request.key || seen.has(request.key)) {
+      return batchFailure(holds, "malformed", "A reservation needs a positive amount and an observed balance.");
+    }
+    seen.add(request.key);
+    if (!request.tokenId || request.amountRaw <= 0n || request.observedRaw === null || request.observedRaw < 0n) {
+      return batchFailure(holds, "malformed", "A reservation needs a positive amount and an observed balance.");
+    }
+    if ((request.bucket === "gas" || request.bucket === "deployment") && request.asset !== "MON") {
+      return batchFailure(holds, "malformed", "Gas and deployment reservations are native MON, not $CHOG.");
+    }
+    const existing = holds.find((hold) => hold.key === request.key);
+    if (existing && !sameHoldIdentity(existing, request)) {
+      return batchFailure(holds, "conflict", "This idempotency key is already used for a different reservation.");
+    }
+  }
+  const pending = requests.filter((request) => !holds.some((hold) => hold.key === request.key));
+  if (pending.length === 0) {
+    return { ok: true, holds: [...holds], created: false };
+  }
+  for (const asset of new Set(requests.map((request) => request.asset))) {
+    const observations = requests.filter((request) => request.asset === asset).map((request) => request.observedRaw);
+    const observed = observations[0];
+    if (observed === null || observations.some((value) => value !== observed)) {
+      return batchFailure(holds, "malformed", "A reservation needs a positive amount and an observed balance.");
+    }
+    const needed = sum(pending.filter((request) => request.asset === asset).map((request) => request.amountRaw));
+    if (heldRaw(holds, asset) + needed > observed) {
+      return batchFailure(holds, "insufficient_funds", "The remaining observed balance cannot cover another reservation.");
+    }
+  }
+  const added = pending.map((request): Hold => ({
+    id: request.id,
+    key: request.key,
+    proposalId: request.proposalId,
+    tokenId: request.tokenId,
+    asset: request.asset,
+    bucket: request.bucket,
+    amountRaw: request.amountRaw,
+    state: "held",
+  }));
+  return { ok: true, holds: [...holds, ...added], created: true };
+}
+
+function batchFailure(
+  holds: readonly Hold[],
+  outcome: "insufficient_funds" | "malformed" | "conflict",
+  reason: string,
+): HoldBatchResult {
+  return { ok: false, outcome, reason, holds: holds.map((hold) => ({ ...hold })) };
+}
+
 export function tryHold(
   holds: readonly Hold[],
-  request: {
-    id: string;
-    key: string;
-    proposalId: string;
-    tokenId: string;
-    asset: "MON" | "CHOG";
-    bucket: HoldBucket;
-    amountRaw: bigint;
-    observedRaw: bigint | null;
-  },
+  request: HoldRequest,
 ): HoldResult {
   const existing = holds.find((hold) => hold.key === request.key);
   if (existing) {

@@ -1,10 +1,12 @@
 -- Phase 8: fail closed when an idempotency key is reused for different terms,
--- and label conflicting receipt writes without rewriting history.
+-- keep reservation batches atomic, and label conflicting receipt writes
+-- without rewriting history.
 -- Apply only after 20261019230000_phase7_economy.sql.
 -- This file is not applied to hosted Supabase by the Phase 8 change.
 -- It does not enable execution, insert balances, or reset sync cursors.
--- Postgres cannot see Monad RPC. economy_note_receipt still trusts its arguments.
--- The application must call verifyMainnetReceipt before those arguments are built.
+-- Postgres cannot see Monad RPC. economy_note_receipt stores caller-supplied
+-- fields. It does not query Monad and does not verify a receipt.
+-- The server calls verifyMainnetReceipt before those arguments are built.
 
 create or replace function economy_try_hold(
   p_key text,
@@ -210,6 +212,7 @@ declare
   needed numeric(78, 0);
   new_id uuid;
   created_any boolean := false;
+  created_keys jsonb := '[]'::jsonb;
 begin
   perform 1 from economy_lock where id = 1 for update;
 
@@ -229,6 +232,12 @@ begin
        or item->>'asset' not in ('MON', 'CHOG')
        or item->>'bucket' not in ('gas', 'deployment', 'business_capital')
        or (item->>'bucket' in ('gas', 'deployment') and item->>'asset' <> 'MON') then
+      return jsonb_build_object('ok', false, 'outcome', 'malformed', 'reason', 'A reservation needs a positive amount and an observed balance.');
+    end if;
+    if (
+      select count(*) from jsonb_array_elements(p_holds) as request
+      where request.value->>'key' = item->>'key'
+    ) > 1 then
       return jsonb_build_object('ok', false, 'outcome', 'malformed', 'reason', 'A reservation needs a positive amount and an observed balance.');
     end if;
     if not exists (select 1 from economy_proposals where id = (item->>'proposalId')::uuid) then
@@ -254,7 +263,7 @@ begin
   end loop;
 
   if all_exist then
-    return jsonb_build_object('ok', true, 'created', false);
+    return jsonb_build_object('ok', true, 'created', false, 'createdKeys', '[]'::jsonb);
   end if;
 
   for hold_asset in
@@ -275,18 +284,17 @@ begin
     select coalesce(sum(amount_raw), 0) into used
       from economy_reservations
       where state = 'held'
-        and economy_reservations.asset = hold_asset
-        and idempotency_key not in (select value->>'key' from jsonb_array_elements(p_holds));
+        and economy_reservations.asset = hold_asset;
 
-    select coalesce(sum((value->>'amountRaw')::numeric(78, 0)), 0) into needed
-      from jsonb_array_elements(p_holds)
-      where value->>'asset' = hold_asset;
+    select coalesce(sum((request.value->>'amountRaw')::numeric(78, 0)), 0) into needed
+      from jsonb_array_elements(p_holds) as request
+      where request.value->>'asset' = hold_asset
+        and not exists (
+          select 1 from economy_reservations
+          where idempotency_key = request.value->>'key'
+        );
 
     if used + needed > observed then
-      update economy_reservations
-         set state = 'released'
-       where state = 'held'
-         and idempotency_key in (select value->>'key' from jsonb_array_elements(p_holds));
       return jsonb_build_object(
         'ok', false,
         'outcome', 'insufficient_funds',
@@ -315,14 +323,15 @@ begin
     )
     returning id into new_id;
     created_any := true;
+    created_keys := created_keys || jsonb_build_array(item->>'key');
   end loop;
 
-  return jsonb_build_object('ok', true, 'created', created_any);
+  return jsonb_build_object('ok', true, 'created', created_any, 'createdKeys', created_keys);
 end;
 $$;
 
 comment on function economy_try_holds(jsonb) is
-  'Reserves an offchain set under economy_lock. Identity conflicts return before any release. authorizes_execution stays false.';
+  'Validates an offchain batch under economy_lock before inserting. A conflict or an insufficient balance returns without changing existing reservations. authorizes_execution stays false.';
 
 create or replace function economy_note_receipt(
   p_key text,
@@ -392,7 +401,7 @@ end;
 $$;
 
 comment on function economy_note_receipt(text, text, text, integer, numeric, text, text) is
-  'Records receipt fields supplied by the caller. Duplicate notes return before update, so the audit trigger does not append. A different transaction conflicts and does not rewrite history. RPC verification happens in the application.';
+  'Stores receipt fields supplied by the caller. This function does not query Monad and does not verify a receipt. Duplicate notes return before update, so the audit trigger does not append. A different transaction conflicts and does not rewrite history.';
 
 create or replace function economy_settle_proposal(p_key text, p_tx text)
 returns jsonb
@@ -438,12 +447,12 @@ begin
       and status in ('observed', 'realized')
       and evidence_key like '143:' || lower(current.tx_hash) || ':%'
   ) then
-    return jsonb_build_object('ok', false, 'reason', 'Settlement requires a counted journal posting for the verified receipt.');
+    return jsonb_build_object('ok', false, 'reason', 'Settlement requires a counted journal posting for the stored receipt.');
   end if;
 
   update economy_proposals
      set status = 'settled',
-         reason = 'Settled against the verified mainnet receipt and its journal posting. This row is not itself a transfer.'
+         reason = 'Settled against the stored mainnet receipt and its journal posting. This row is not itself a transfer.'
    where id = current.id;
 
   update economy_reservations
@@ -455,9 +464,47 @@ end;
 $$;
 
 comment on function economy_settle_proposal(text, text) is
-  'Settles a confirmed proposal only when the stored receipt and a counted journal posting agree. The same transaction returns before update. A different transaction conflicts. executed stays false.';
+  'Settles a confirmed proposal only when the stored receipt columns and a counted journal posting agree. This function does not query Monad and does not verify a receipt. The same transaction returns before update. A different transaction conflicts. executed stays false.';
+
+create or replace function economy_proposal_status_guard()
+returns trigger
+language plpgsql
+set search_path = public
+as $$
+begin
+  if new.status in ('confirmed', 'reverted', 'settled') then
+    if new.tx_hash is null
+       or new.tx_hash !~ '^0x[0-9a-fA-F]{64}$'
+       or new.receipt_chain_id is distinct from 143
+       or new.receipt_block_number is null
+       or new.receipt_block_hash is null
+       or new.receipt_block_hash !~ '^0x[0-9a-fA-F]{64}$' then
+      raise exception 'a receipt status requires chain 143, a transaction hash, a block number, and a block hash';
+    end if;
+  end if;
+  if new.status in ('confirmed', 'settled') and new.receipt_status is distinct from 'success' then
+    raise exception 'confirmation requires receipt_status success';
+  end if;
+  if new.status = 'reverted' and new.receipt_status is distinct from 'reverted' then
+    raise exception 'a reverted proposal requires receipt_status reverted';
+  end if;
+  if new.status = 'settled' and not exists (
+    select 1 from economy_journal
+    where source = 'chain'
+      and status in ('observed', 'realized')
+      and evidence_key like '143:' || lower(new.tx_hash) || ':%'
+  ) then
+    raise exception 'settlement requires a counted journal posting for the stored receipt';
+  end if;
+  return new;
+end;
+$$;
+
+comment on function economy_proposal_status_guard() is
+  'Checks stored receipt columns and a journal row. It does not query Monad and does not verify a receipt.';
 
 revoke all on function economy_try_hold(text, uuid, numeric, text, text, numeric, numeric) from public;
+revoke all on function economy_proposal_status_guard() from public;
 revoke all on function economy_open_proposal(jsonb) from public;
 revoke all on function economy_try_holds(jsonb) from public;
 revoke all on function economy_note_receipt(text, text, text, integer, numeric, text, text) from public;
@@ -466,17 +513,40 @@ revoke all on function economy_settle_proposal(text, text) from public;
 do $$
 declare
   fn text;
+  role_name text;
 begin
-  if exists (select 1 from pg_roles where rolname = 'service_role') then
-    foreach fn in array array[
-      'economy_try_hold(text, uuid, numeric, text, text, numeric, numeric)',
-      'economy_open_proposal(jsonb)',
-      'economy_try_holds(jsonb)',
-      'economy_note_receipt(text, text, text, integer, numeric, text, text)',
-      'economy_settle_proposal(text, text)'
-    ]
+  foreach fn in array array[
+    'economy_try_hold(text, uuid, numeric, text, text, numeric, numeric)',
+    'economy_open_proposal(jsonb)',
+    'economy_try_holds(jsonb)',
+    'economy_note_receipt(text, text, text, integer, numeric, text, text)',
+    'economy_settle_proposal(text, text)',
+    'economy_append_journal(jsonb)',
+    'economy_apply_status(text, text, text, text)',
+    'economy_ledger_snapshot(timestamp with time zone)',
+    'economy_proposal_status_guard()',
+    'economy_proposal_write_audit()',
+    'economy_reject_mutation()',
+    'economy_reservation_immutable()',
+    'economy_proposal_immutable()'
+  ]
+  loop
+    execute format('revoke all on function %s from public', fn);
+    foreach role_name in array array['anon', 'authenticated']
     loop
-      execute format('grant execute on function %s to service_role', fn);
+      if exists (select 1 from pg_roles where rolname = role_name) then
+        execute format('revoke all on function %s from %I', fn, role_name);
+      end if;
     end loop;
-  end if;
+    if exists (select 1 from pg_roles where rolname = 'service_role')
+       and fn not in (
+         'economy_proposal_status_guard()',
+         'economy_proposal_write_audit()',
+         'economy_reject_mutation()',
+         'economy_reservation_immutable()',
+         'economy_proposal_immutable()'
+       ) then
+      execute format('grant execute on function %s to service_role', fn);
+    end if;
+  end loop;
 end $$;

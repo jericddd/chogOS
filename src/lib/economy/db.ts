@@ -155,9 +155,17 @@ function supabaseGateway(client: SupabaseClient): EconomyGateway {
         const outcome = reported === "insufficient_funds" || reported === "conflict" ? reported : "deferred";
         return { ok: false, outcome, reason: text(body?.reason) || "The offchain reservation could not be saved." };
       }
-      return { ok: true, created: body.created === true };
+      const created = body.created === true;
+      const createdKeys = Array.isArray(body.createdKeys)
+        ? body.createdKeys.filter((item): item is string => typeof item === "string" && item.length > 0)
+        : undefined;
+      return { ok: true, created, ...(createdKeys ? { createdKeys } : {}) };
     },
-    async release(proposalId) {
+    async release(proposalId, keys) {
+      const wanted = keys.filter((key) => key.length > 0);
+      if (wanted.length === 0) {
+        return { ok: true };
+      }
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), LEDGER_TIMEOUT_MS);
       try {
@@ -166,6 +174,7 @@ function supabaseGateway(client: SupabaseClient): EconomyGateway {
           .update({ state: "released" })
           .eq("proposal_id", proposalId)
           .eq("state", "held")
+          .in("idempotency_key", wanted)
           .abortSignal(controller.signal);
         return { ok: !error };
       } catch {
