@@ -67,10 +67,16 @@ export function ActivityFeed({
   store,
   initialFilter = {},
   mode = "home",
+  dock = false,
+  inactive = false,
 }: {
   store: LiveStore;
   initialFilter?: EventFilter;
   mode?: "home" | "page";
+  /** Cropped panel inside the world stage. The history page stays full size. */
+  dock?: boolean;
+  /** Phone hides the unselected pane. Wide screens still show it. */
+  inactive?: boolean;
 }) {
   const live = useLive(store);
   const now = useNow(15_000);
@@ -92,6 +98,7 @@ export function ActivityFeed({
   const atTop = useRef(true);
   const topRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
+  const listRef = useRef<HTMLDivElement>(null);
   const request = useRef(0);
   const names = useMemo(
     () => new Map((live.snapshot?.citizens ?? []).map((c) => [c.tokenId, c.name])),
@@ -238,6 +245,10 @@ export function ActivityFeed({
 
   const showPending = () => {
     setFeed((current) => revealPending(current));
+    if (dock) {
+      listRef.current?.scrollTo({ top: 0, behavior: "smooth" });
+      return;
+    }
     topRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
   };
 
@@ -247,53 +258,62 @@ export function ActivityFeed({
       ? (live.snapshot?.buildings.find((b) => b.id === filter.buildingId)?.name ?? filter.buildingId)
       : null;
 
+  const selectClass = dock
+    ? "border-2 border-line bg-background px-1.5 py-1 text-xs text-foreground"
+    : "rounded-lg border border-line bg-background px-2 py-1.5 text-sm text-foreground";
+
   return (
-    <section aria-labelledby="activity-title" className="rounded-2xl border border-line bg-card px-4 py-5 sm:px-5">
-      <div className="flex flex-wrap items-end justify-between gap-3">
-        <div>
-          <h2 id="activity-title" className="font-serif text-2xl tracking-tight">
-            Civilization Activity
-          </h2>
-          <p className="mt-1 text-sm text-muted">
-            Newest first. Every row is a recorded world event, labeled by where it came from.
-          </p>
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <AiDecisionsLink />
-          <label className="text-xs text-muted">
-            <span className="sr-only">Category</span>
-            <select
-              value={filter.category ?? ""}
-              onChange={(event) => changeFilter({ category: (event.target.value || undefined) as EventCategory | undefined })}
-              className="rounded-lg border border-line bg-background px-2 py-1.5 text-sm text-foreground"
-            >
-              <option value="">All activity</option>
-              {EVENT_CATEGORIES.map((category) => (
-                <option key={category} value={category}>
-                  {CATEGORY_LABEL[category]}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="text-xs text-muted">
-            <span className="sr-only">Source</span>
-            <select
-              value={filter.source ?? ""}
-              onChange={(event) => changeFilter({ source: (event.target.value || undefined) as EventSource | undefined })}
-              className="rounded-lg border border-line bg-background px-2 py-1.5 text-sm text-foreground"
-            >
-              <option value="">All sources</option>
-              {EVENT_SOURCES.map((source) => (
-                <option key={source} value={source}>
-                  {SOURCE_LABEL[source]}
-                </option>
-              ))}
-            </select>
-          </label>
-        </div>
+    <section
+      aria-labelledby="activity-title"
+      className={dock ? `world-activity pixel-panel${inactive ? " is-inactive" : ""}` : "rounded-2xl border border-line bg-card px-4 py-5 sm:px-5"}
+    >
+      <div className={dock ? "flex shrink-0 flex-wrap items-center justify-between gap-2 border-b-4 border-line px-2.5 py-2" : "flex flex-wrap items-end justify-between gap-3"}>
+          <div>
+            <h2 id="activity-title" className={dock ? "font-display text-[0.62rem] leading-4 text-accent" : "font-serif text-2xl tracking-tight"}>
+              {dock ? "Activity" : "Civilization Activity"}
+            </h2>
+            {dock ? null : (
+              <p className="mt-1 text-sm text-muted">
+                Newest first. Every row is a recorded world event, labeled by where it came from.
+              </p>
+            )}
+          </div>
+          <div className="flex flex-wrap items-center gap-1.5">
+            {dock ? null : <AiDecisionsLink />}
+            <label className="text-xs text-muted">
+              <span className="sr-only">Category</span>
+              <select
+                value={filter.category ?? ""}
+                onChange={(event) => changeFilter({ category: (event.target.value || undefined) as EventCategory | undefined })}
+                className={selectClass}
+              >
+                <option value="">All activity</option>
+                {EVENT_CATEGORIES.map((category) => (
+                  <option key={category} value={category}>
+                    {CATEGORY_LABEL[category]}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="text-xs text-muted">
+              <span className="sr-only">Source</span>
+              <select
+                value={filter.source ?? ""}
+                onChange={(event) => changeFilter({ source: (event.target.value || undefined) as EventSource | undefined })}
+                className={selectClass}
+              >
+                <option value="">All sources</option>
+                {EVENT_SOURCES.map((source) => (
+                  <option key={source} value={source}>
+                    {SOURCE_LABEL[source]}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
       </div>
       {scoped ? (
-        <p className="mt-3 text-sm">
+        <p className={dock ? "shrink-0 px-2.5 pt-2 text-xs" : "mt-3 text-sm"}>
           Showing {scoped}.{" "}
           <button type="button" className="text-accent" onClick={() => changeFilter({ tokenId: undefined, buildingId: undefined })}>
             Show everything
@@ -301,58 +321,61 @@ export function ActivityFeed({
         </p>
       ) : null}
 
-      <div ref={topRef} aria-hidden className="h-px scroll-mt-24" />
-      <div className="sticky top-2 z-10 flex justify-center">
-        {feed.pending.length > 0 ? (
-          <button
-            type="button"
-            onClick={showPending}
-            className="mt-2 rounded-full border border-accent/50 bg-background/95 px-4 py-1.5 text-sm text-accent shadow-lg"
-          >
-            ↑ New activity · {feed.pending.length}
-          </button>
-        ) : null}
-      </div>
-      <p role="status" className="sr-only">
-        {feed.pending.length > 0 ? `${feed.pending.length} new events` : ""}
-      </p>
-
-      {status === "loading" && feed.shown.length === 0 ? <p className="mt-4 text-sm text-muted">Reading history…</p> : null}
-      {status === "error" ? (
-        <p className="mt-4 text-sm text-warning">
-          History could not be read.{" "}
-          <button type="button" className="text-accent" onClick={() => reload(filterRef.current)}>
-            Try again
-          </button>
+      <div ref={listRef} className={dock ? "world-scroll min-h-0 flex-1 overflow-y-auto overscroll-contain px-2.5" : undefined}>
+        <div ref={topRef} aria-hidden className="h-px scroll-mt-24" />
+        <div className={`z-10 flex justify-center ${dock ? "sticky top-0" : "sticky top-2"}`}>
+          {feed.pending.length > 0 ? (
+            <button
+              type="button"
+              onClick={showPending}
+              className={dock ? "mt-2 border border-accent/50 bg-background/95 px-3 py-1 text-xs text-accent" : "mt-2 border border-accent/50 bg-background/95 px-4 py-1.5 text-sm text-accent shadow-lg"}
+            >
+              ↑ New activity · {feed.pending.length}
+            </button>
+          ) : null}
+        </div>
+        <p role="status" className="sr-only">
+          {feed.pending.length > 0 ? `${feed.pending.length} new events` : ""}
         </p>
-      ) : null}
-      {status === "unavailable" ? <p className="mt-4 text-sm leading-6 text-muted">{detail} Recorded history appears here once it can be read.</p> : null}
-      {status === "ready" && feed.shown.length === 0 ? <p className="mt-4 text-sm leading-6 text-muted">{emptyText(filter)}</p> : null}
 
-      <ul className={`mt-3 divide-y divide-line border-y border-line ${feed.shown.length === 0 ? "hidden" : ""}`}>
-        {feed.shown.map((event) => (
-          <EventItem key={event.id} event={event} now={now} citizenName={citizenName} />
-        ))}
-      </ul>
+        {status === "loading" && feed.shown.length === 0 ? <p className="py-3 text-sm text-muted">Reading history…</p> : null}
+        {status === "error" ? (
+          <p className="py-3 text-sm text-warning">
+            History could not be read.{" "}
+            <button type="button" className="text-accent" onClick={() => reload(filterRef.current)}>
+              Try again
+            </button>
+          </p>
+        ) : null}
+        {status === "unavailable" ? <p className="py-3 text-sm leading-6 text-muted">{detail} Recorded history appears here once it can be read.</p> : null}
+        {status === "ready" && feed.shown.length === 0 ? <p className="py-3 text-sm leading-6 text-muted">{emptyText(filter)}</p> : null}
 
-      <div ref={bottomRef} className="mt-4 flex flex-wrap items-center justify-between gap-3">
+        <ul className={`divide-y divide-line ${dock ? "" : "mt-3 border-y border-line"} ${feed.shown.length === 0 ? "hidden" : ""}`}>
+          {feed.shown.map((event) => (
+            <EventItem key={event.id} event={event} now={now} citizenName={citizenName} compact={dock} />
+          ))}
+        </ul>
+        <div ref={bottomRef} className="h-px" />
+      </div>
+
+      <div className={dock ? "flex shrink-0 flex-wrap items-center justify-between gap-2 border-t-4 border-line px-2.5 py-2" : "mt-4 flex flex-wrap items-center justify-between gap-3"}>
         {nextBefore !== null && feed.shown.length > 0 ? (
           <button
             type="button"
             onClick={loadOlder}
             disabled={older === "loading"}
-            className="rounded-full border border-line px-4 py-2 text-sm text-muted hover:text-foreground disabled:opacity-60"
+            className={dock ? "text-xs text-muted hover:text-foreground disabled:opacity-60" : "rounded-full border border-line px-4 py-2 text-sm text-muted hover:text-foreground disabled:opacity-60"}
           >
-            {older === "loading" ? "Loading…" : older === "error" ? "Could not load. Try again" : "Load older activity"}
+            {older === "loading" ? "Loading…" : older === "error" ? "Could not load. Try again" : dock ? "Older" : "Load older activity"}
           </button>
         ) : feed.shown.length > 0 ? (
-          <p className="text-sm text-muted">This is the beginning of recorded history.</p>
+          <p className={dock ? "text-xs text-muted" : "text-sm text-muted"}>{dock ? "Start of history" : "This is the beginning of recorded history."}</p>
         ) : (
           <span />
         )}
         {mode === "home" ? (
-          <Link href="/activity" className="text-sm text-accent">
-            Open full history
+          <Link href="/activity" className={dock ? "text-xs text-accent" : "text-sm text-accent"}>
+            {dock ? "Full history" : "Open full history"}
           </Link>
         ) : null}
       </div>

@@ -84,6 +84,7 @@ export function LivingWorld({ initial, realtime }: { initial: WorldLoad; realtim
   const params = useSearchParams();
   const selection = parseSelection(params);
   const [follow, setFollow] = useState(true);
+  const [phonePane, setPhonePane] = useState<"town" | "growth" | "activity">("town");
   const canvas = useRef<WorldCanvasHandle>(null);
   const stage = useRef<HTMLDivElement>(null);
   const now = useNow(5_000);
@@ -95,6 +96,7 @@ export function LivingWorld({ initial, realtime }: { initial: WorldLoad; realtim
   if (selectionKey !== seenKey) {
     setSeenKey(selectionKey);
     setFollow(true);
+    if (selectionKey) setPhonePane("town");
   }
 
   useEffect(() => {
@@ -143,60 +145,70 @@ export function LivingWorld({ initial, realtime }: { initial: WorldLoad; realtim
   const health = now > 0 ? runnerHealth(snapshot.clock, now + live.skewMs) : "live";
 
   return (
-    <div>
-      <div
-        ref={stage}
-        className="world-stage relative flex h-[calc(100dvh-var(--shell-header))] min-h-[24rem] flex-col overflow-hidden bg-[#07140c] md:block"
-      >
-        <div className="relative min-h-0 flex-1 md:absolute md:inset-0">
-          <WorldCanvas
-            ref={canvas}
-            snapshot={snapshot}
-            skewMs={live.skewMs}
-            selection={selection}
-            follow={follow}
-            onSelect={onHit}
-            onUserMove={() => setFollow(false)}
-          />
-          <div className="pointer-events-none absolute top-3 left-3 z-10 flex max-w-[calc(100%-1.5rem)] flex-col gap-2 md:max-w-[calc(100%-23.5rem)]">
-            <p className="pointer-events-auto w-fit border-2 border-[var(--pixel-gold)] bg-background/90 px-3 py-1 text-[0.65rem] leading-4 text-muted">
-              Observing · pan to explore the surrounding lands
-            </p>
-            <div className="pointer-events-auto flex gap-1.5">
-              <MapButton label="Zoom in" onClick={() => canvas.current?.zoom(1.4)}>
-                +
-              </MapButton>
-              <MapButton label="Zoom out" onClick={() => canvas.current?.zoom(1 / 1.4)}>
-                −
-              </MapButton>
-              <MapButton
-                label="Reset view"
-                onClick={() => {
-                  setFollow(false);
-                  canvas.current?.reset();
-                }}
-              >
-                ⤢
-              </MapButton>
-            </div>
-            {health === "stalled" || health === "paused" ? (
-              <p className="pointer-events-auto max-w-xs bg-background/90 px-3 py-2 text-xs text-warning">
-                {health === "paused"
-                  ? "Paused by an operator. Citizens hold still until the simulation resumes."
-                  : "The simulation runner is not ticking. The world is frozen and will resume without replaying missed time."}
-              </p>
-            ) : null}
+    <div
+      ref={stage}
+      className="world-stage h-[calc(100dvh-var(--shell-header))] min-h-[24rem] overflow-hidden bg-[#07140c]"
+    >
+      <div className="world-map">
+        <WorldCanvas
+          ref={canvas}
+          snapshot={snapshot}
+          skewMs={live.skewMs}
+          selection={selection}
+          follow={follow}
+          onSelect={onHit}
+          onUserMove={() => setFollow(false)}
+        />
+        <div className="pointer-events-none absolute top-3 left-3 z-10 flex max-w-[calc(100%-1.5rem)] flex-col gap-2 md:max-w-[calc(100%-23.5rem)]">
+          <p className="pointer-events-auto w-fit border-2 border-[var(--pixel-gold)] bg-background/90 px-3 py-1 text-[0.65rem] leading-4 text-muted">
+            Observing · pan to explore the surrounding lands
+          </p>
+          <div className="pointer-events-auto flex gap-1.5">
+            <MapButton label="Zoom in" onClick={() => canvas.current?.zoom(1.4)}>
+              +
+            </MapButton>
+            <MapButton label="Zoom out" onClick={() => canvas.current?.zoom(1 / 1.4)}>
+              −
+            </MapButton>
+            <MapButton
+              label="Reset view"
+              onClick={() => {
+                setFollow(false);
+                canvas.current?.reset();
+              }}
+            >
+              ⤢
+            </MapButton>
           </div>
+          {health === "stalled" || health === "paused" ? (
+            <p className="pointer-events-auto max-w-xs bg-background/90 px-3 py-2 text-xs text-warning">
+              {health === "paused"
+                ? "Paused by an operator. Citizens hold still until the simulation resumes."
+                : "The simulation runner is not ticking. The world is frozen and will resume without replaying missed time."}
+            </p>
+          ) : null}
         </div>
-        <aside
-          aria-label="World details"
-          className="world-hud pixel-panel z-10 flex min-h-0 flex-col overflow-hidden max-md:mx-3 max-md:mb-3 max-md:max-h-[54%] max-md:shrink-0 md:absolute md:inset-y-3 md:right-3 md:w-[22rem]"
-        >
+      </div>
+      <div className="world-lower">
+        <div className="world-tabs" role="tablist" aria-label="World panels">
+          {(
+            [
+              ["town", "Town"],
+              ["growth", "Growth"],
+              ["activity", "Activity"],
+            ] as const
+          ).map(([id, label]) => (
+            <button key={id} type="button" role="tab" aria-selected={phonePane === id} onClick={() => setPhonePane(id)}>
+              {label}
+            </button>
+          ))}
+        </div>
+        <aside aria-label="World details" className={`world-town world-hud pixel-panel${phonePane === "town" ? "" : " is-inactive"}`}>
           <div className="flex flex-wrap items-center justify-between gap-2 border-b-4 border-line px-3 py-2">
             <p className="font-display text-[0.6rem] leading-4 text-accent">One shared world</p>
             <AiDecisionsLink />
           </div>
-          <div className="min-h-0 flex-1 space-y-3 overflow-y-auto overscroll-contain px-3 py-3">
+          <div className="world-scroll min-h-0 flex-1 space-y-3 overflow-y-auto overscroll-contain px-3 py-3">
             <WorldStatus snapshot={snapshot} skewMs={live.skewMs} link={live.link} realtime={live.realtime} />
             <WorldPanel
               snapshot={snapshot}
@@ -214,10 +226,10 @@ export function LivingWorld({ initial, realtime }: { initial: WorldLoad; realtim
             />
           </div>
         </aside>
-      </div>
-      <div className="mx-auto max-w-7xl space-y-8 px-4 py-6 sm:px-6">
-        <GrowthDecisions />
-        <ActivityFeed store={store} initialFilter={feedFilter} />
+        <div className="world-feeds">
+          <GrowthDecisions dock inactive={phonePane !== "growth"} />
+          <ActivityFeed store={store} initialFilter={feedFilter} dock inactive={phonePane !== "activity"} />
+        </div>
       </div>
     </div>
   );

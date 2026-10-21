@@ -58,7 +58,7 @@ export function EventItem({
             )}
           </p>
           {event.source === "ai" && (event.mind?.rationale || event.mind?.summary) ? (
-            <p className="mt-1 text-sm leading-6 text-foreground/90">
+            <p className={`mt-1 text-sm leading-6 text-foreground/90 ${compact ? "line-clamp-3" : ""}`}>
               {event.mind.rationale ?? event.mind.summary}
             </p>
           ) : null}
