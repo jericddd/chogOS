@@ -19,6 +19,7 @@ import {
   clampCamera,
   fitCamera,
   hitTest,
+  openingCamera,
   minScale,
   placeCitizens,
   zoomAt,
@@ -433,6 +434,16 @@ describe("scene placement", () => {
     const view = { width: 900, height: 600 };
     const fit = fitCamera(view);
     expect(fit.scale).toBeCloseTo(Math.min(900 / DEFAULT_VIEW_PX_W, 600 / DEFAULT_VIEW_PX_H));
+    expect(openingCamera(view)).toEqual(fit);
+    const phone = { width: 390, height: 520 };
+    const opened = openingCamera(phone);
+    const contained = Math.min(phone.width / DEFAULT_VIEW_PX_W, phone.height / DEFAULT_VIEW_PX_H);
+    expect(opened.scale).toBeGreaterThan(contained);
+    expect(opened.x).toBeGreaterThanOrEqual(phone.width - WORLD_PX_W * opened.scale);
+    expect(opened.x).toBeLessThanOrEqual(0);
+    const town = opened.x + 8 * TILE * opened.scale;
+    expect(town).toBeGreaterThanOrEqual(0);
+    expect(town).toBeLessThanOrEqual(phone.width);
     expect(DEFAULT_VIEW_TILE_W).toBeGreaterThan(60);
     expect(DEFAULT_VIEW_TILE_W).toBeLessThan(120);
     expect(minScale(view)).toBeCloseTo(Math.min(900 / WORLD_PX_W, 600 / WORLD_PX_H));

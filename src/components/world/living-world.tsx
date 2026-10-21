@@ -2,6 +2,7 @@
 
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
+import { AiDecisionsLink } from "@/components/world/ai-decisions-link";
 import { ActivityFeed } from "@/components/world/activity-feed";
 import { GrowthDecisions } from "@/components/world/growth-decisions";
 import { createLiveStore, sharedLiveStore, useLive, type LiveStore } from "@/components/world/live-store";
@@ -142,9 +143,12 @@ export function LivingWorld({ initial, realtime }: { initial: WorldLoad; realtim
   const health = now > 0 ? runnerHealth(snapshot.clock, now + live.skewMs) : "live";
 
   return (
-    <div className="space-y-8">
-      <div ref={stage} className="grid scroll-mt-4 gap-4 lg:grid-cols-[minmax(0,1fr)_22rem]">
-        <div className="relative h-[62vh] min-h-[340px] overflow-hidden rounded-2xl border border-line bg-[#0b1712] sm:h-auto sm:aspect-[3/2] sm:max-h-[78vh] sm:min-h-0">
+    <div>
+      <div
+        ref={stage}
+        className="world-stage relative flex h-[calc(100dvh-var(--shell-header))] min-h-[24rem] flex-col overflow-hidden bg-[#07140c] md:block"
+      >
+        <div className="relative min-h-0 flex-1 md:absolute md:inset-0">
           <WorldCanvas
             ref={canvas}
             snapshot={snapshot}
@@ -154,39 +158,46 @@ export function LivingWorld({ initial, realtime }: { initial: WorldLoad; realtim
             onSelect={onHit}
             onUserMove={() => setFollow(false)}
           />
-          <div className="pointer-events-none absolute top-3 left-3 flex flex-col gap-2">
-            <p className="pointer-events-auto rounded-full bg-background/85 px-3 py-1 text-xs text-muted">
+          <div className="pointer-events-none absolute top-3 left-3 z-10 flex max-w-[calc(100%-1.5rem)] flex-col gap-2 md:max-w-[calc(100%-23.5rem)]">
+            <p className="pointer-events-auto w-fit border-2 border-[var(--pixel-gold)] bg-background/90 px-3 py-1 text-[0.65rem] leading-4 text-muted">
               Observing · pan to explore the surrounding lands
             </p>
+            <div className="pointer-events-auto flex gap-1.5">
+              <MapButton label="Zoom in" onClick={() => canvas.current?.zoom(1.4)}>
+                +
+              </MapButton>
+              <MapButton label="Zoom out" onClick={() => canvas.current?.zoom(1 / 1.4)}>
+                −
+              </MapButton>
+              <MapButton
+                label="Reset view"
+                onClick={() => {
+                  setFollow(false);
+                  canvas.current?.reset();
+                }}
+              >
+                ⤢
+              </MapButton>
+            </div>
             {health === "stalled" || health === "paused" ? (
-              <p className="pointer-events-auto max-w-xs rounded-lg bg-background/90 px-3 py-2 text-xs text-warning">
+              <p className="pointer-events-auto max-w-xs bg-background/90 px-3 py-2 text-xs text-warning">
                 {health === "paused"
                   ? "Paused by an operator. Citizens hold still until the simulation resumes."
                   : "The simulation runner is not ticking. The world is frozen and will resume without replaying missed time."}
               </p>
             ) : null}
           </div>
-          <div className="absolute top-3 right-3 flex flex-col gap-1.5">
-            <MapButton label="Zoom in" onClick={() => canvas.current?.zoom(1.4)}>
-              +
-            </MapButton>
-            <MapButton label="Zoom out" onClick={() => canvas.current?.zoom(1 / 1.4)}>
-              −
-            </MapButton>
-            <MapButton
-              label="Reset view"
-              onClick={() => {
-                setFollow(false);
-                canvas.current?.reset();
-              }}
-            >
-              ⤢
-            </MapButton>
-          </div>
         </div>
-        <aside className="space-y-4" aria-label="World details">
-          <WorldStatus snapshot={snapshot} skewMs={live.skewMs} link={live.link} realtime={live.realtime} />
-          <div className="rounded-xl border border-line bg-card px-4 py-4 lg:max-h-[calc(78vh-7rem)] lg:overflow-y-auto">
+        <aside
+          aria-label="World details"
+          className="world-hud pixel-panel z-10 flex min-h-0 flex-col overflow-hidden max-md:mx-3 max-md:mb-3 max-md:max-h-[54%] max-md:shrink-0 md:absolute md:inset-y-3 md:right-3 md:w-[22rem]"
+        >
+          <div className="flex flex-wrap items-center justify-between gap-2 border-b-4 border-line px-3 py-2">
+            <p className="font-display text-[0.6rem] leading-4 text-accent">One shared world</p>
+            <AiDecisionsLink />
+          </div>
+          <div className="min-h-0 flex-1 space-y-3 overflow-y-auto overscroll-contain px-3 py-3">
+            <WorldStatus snapshot={snapshot} skewMs={live.skewMs} link={live.link} realtime={live.realtime} />
             <WorldPanel
               snapshot={snapshot}
               skewMs={live.skewMs}
@@ -204,8 +215,10 @@ export function LivingWorld({ initial, realtime }: { initial: WorldLoad; realtim
           </div>
         </aside>
       </div>
-      <GrowthDecisions />
-      <ActivityFeed store={store} initialFilter={feedFilter} />
+      <div className="mx-auto max-w-7xl space-y-8 px-4 py-6 sm:px-6">
+        <GrowthDecisions />
+        <ActivityFeed store={store} initialFilter={feedFilter} />
+      </div>
     </div>
   );
 }
@@ -217,7 +230,7 @@ function MapButton({ label, onClick, children }: { label: string; onClick: () =>
       aria-label={label}
       title={label}
       onClick={onClick}
-      className="grid h-9 w-9 place-items-center rounded-lg border border-line bg-background/90 text-lg text-foreground hover:border-accent/60 hover:text-accent"
+      className="grid h-9 w-9 place-items-center border-2 border-[var(--pixel-gold)] bg-background/90 font-display text-sm text-foreground hover:bg-accent hover:text-[var(--pixel-ink)]"
     >
       {children}
     </button>

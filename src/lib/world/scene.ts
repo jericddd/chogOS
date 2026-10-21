@@ -211,6 +211,26 @@ export function fitCamera(view: Viewport): Camera {
   };
 }
 
+/**
+ * First frame and the reset view.
+ * A wide screen shows the inhabited town. A narrow screen fills the viewport
+ * from the west edge so the town stays large enough to read.
+ */
+export function openingCamera(view: Viewport): Camera {
+  if (view.width >= 768) {
+    return fitCamera(view);
+  }
+  const scale = Math.min(MAX_SCALE, Math.max(view.width / DEFAULT_VIEW_PX_W, view.height / DEFAULT_VIEW_PX_H));
+  return clampCamera(
+    {
+      scale,
+      x: 0,
+      y: (view.height - DEFAULT_VIEW_PX_H * scale) / 2,
+    },
+    view,
+  );
+}
+
 /** Smallest zoom that still shows the whole expanded map. */
 export function minScale(view: Viewport): number {
   return Math.min(view.width / WORLD_PX_W, view.height / WORLD_PX_H);
