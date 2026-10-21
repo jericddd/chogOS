@@ -98,7 +98,7 @@ describe("public ownerless treasury", () => {
   });
 
   it("shows a checked contract without claiming source verification or a deployment transaction", () => {
-    const view = presentOwnerlessTreasury({ inspection: live(), decisions: [], decisionsLoaded: true, fundingLogsRead: true });
+    const view = presentOwnerlessTreasury({ inspection: live(), decisions: [], decisionsLoaded: true, fundingScan: "empty" });
     expect(view.fundingReady).toBe(true);
     expect(view.fundingAddress).toBe(BANK);
     expect(view.explorerContractHref).toBe(`https://monadscan.com/address/${BANK.toLowerCase()}`);
@@ -110,6 +110,10 @@ describe("public ownerless treasury", () => {
     expect(view.authorizerStatus).toContain("privileged spending authority");
     expect(view.execution).toContain("does not sign");
     expect(view.policy.join(" ")).toContain("application review limits");
+    expect(view.fundingScan).toBe("empty");
+    expect(view.fundingNote).toContain("finished");
+    expect(view.fundingNote).toContain("No successful Funded or Distributed event");
+    expect(view.decisionsNote).toContain("found no Distributed event");
   });
 
   it("links a deployment transaction only after that receipt is marked as creating the checked contract", () => {
@@ -228,6 +232,47 @@ describe("public ownerless treasury", () => {
     expect(view.decisions[0]?.txHref).toBeNull();
     expect(view.decisions[0]?.detail).toMatch(/not a deployment/i);
     expect(view.fundingAddress).toBeNull();
+  });
+
+  it("distinguishes a finished empty scan from an unreadable scan", () => {
+    const empty = presentOwnerlessTreasury({ inspection: live(), decisions: [], decisionsLoaded: true, fundingScan: "empty" });
+    const unread = presentOwnerlessTreasury({ inspection: live(), decisions: [], decisionsLoaded: true, fundingScan: "unreadable" });
+    const missingStart = presentOwnerlessTreasury({
+      inspection: live(),
+      decisions: [],
+      decisionsLoaded: true,
+      fundingScan: "unreadable",
+      fundingScanCause: "no-start",
+    });
+    const partial = presentOwnerlessTreasury({
+      inspection: live(),
+      decisions: [],
+      decisionsLoaded: true,
+      fundingScan: "unreadable",
+      fundingRows: [
+        {
+          txHash: HASH,
+          blockNumber: "1010",
+          from: AUTHORIZER,
+          asset: "MON",
+          amountRaw: "20000000000000000",
+          kind: "funded_event",
+        },
+      ],
+    });
+
+    expect(empty.fundingNote).toContain("No successful Funded or Distributed event");
+    expect(empty.fundingRows).toHaveLength(0);
+    expect(unread.fundingNote).toContain("not a claim");
+    expect(unread.fundingNote).not.toContain("No successful Funded or Distributed event");
+    expect(unread.decisionsNote).toContain("did not finish");
+    expect(unread.decisionsNote).toContain("not proof");
+    expect(missingStart.fundingNote).toContain("no start block");
+    expect(missingStart.fundingNote).toContain("not a claim");
+    expect(partial.fundingRows).toHaveLength(1);
+    expect(partial.fundingRows[0]?.amountText).toContain("0.02");
+    expect(partial.fundingNote).toContain("not a claim");
+    expect(partial.fundingNote).toContain("blocks that were read");
   });
 
   it("does not treat an unloaded decision query as an empty history", () => {

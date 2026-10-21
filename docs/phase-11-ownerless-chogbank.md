@@ -57,7 +57,7 @@ No code path in this phase produces that signature. `loadProtectedSigner` refuse
 
 After a real deployment, native MON is sent to the contract. No approval is required. `$CHOG` can be sent with a normal transfer. `depositChog` pulls tokens and emits `Funded` for the amount actually received. A direct transfer increases `balanceOf` and does not emit `Funded`. The page balance is the chain balance, not a reconstructed event sum.
 
-The page lists recent successful funding receipts only after the address has passed the ownerless checks. An empty log window is not displayed as a zero balance. This phase has no such address, so it lists none.
+After the address passes the ownerless checks, the page reads `Funded` and `Distributed` logs from the verified deployment receipt block through the latest block, in ranges the RPC accepts. A finished scan with no events says so. A failed, timed-out, or incomplete scan says the logs were not read and is not an empty history. An empty log list is not displayed as a zero balance. This phase has no such address, so it lists none.
 
 `CHOG_BANK_DEPLOYMENT_TX` is optional and stays unset. The page links it only when the contract checks pass and a successful receipt has `contractAddress` equal to that contract. Any other hash stays "Not recorded".
 

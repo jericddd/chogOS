@@ -89,9 +89,12 @@ export type PublicTreasuryDecision = {
   txHref: string | null;
 };
 
+export type FundingScan = "empty" | "complete" | "unreadable";
+
 export type ChogBankPublicView = {
   deploymentState: "pending" | "rejected" | "unreadable" | "live";
   fundingReady: false | true;
+  fundingScan: FundingScan | "skipped";
   fundingAddress: string | null;
   explorerContractHref: string | null;
   deploymentTxHref: string | null;
@@ -164,6 +167,33 @@ function deploymentHref(fundingReady: boolean, inspection: OwnerlessInspection):
     return null;
   }
   return explorerTxUrl(143, inspection.deploymentTx);
+}
+
+function fundingCopy(fundingReady: boolean, scan: FundingScan | undefined, cause: "no-start" | undefined, hasRows: boolean): string {
+  if (!fundingReady) return "No funding transaction is shown because this address is not a verified treasury.";
+  if (scan === "empty") {
+    return "The scan from the verified deployment block through the latest block finished. No successful Funded or Distributed event was found. The balances above are separate chain-state reads.";
+  }
+  if (scan === "complete") {
+    return "The scan from the verified deployment block through the latest block finished. Each row is a successful receipt in that range. The balances above are separate chain-state reads.";
+  }
+  if (cause === "no-start") {
+    return "The deployment receipt is not verified, so the log scan has no start block. This is not a claim that no Funded or Distributed event exists. No funding transaction was invented.";
+  }
+  const partial = hasRows ? " Rows below are successful receipts from the blocks that were read." : "";
+  return `Funding and payout logs were not read through the latest block. This is not a claim that no Funded or Distributed event exists.${partial} No funding transaction was invented.`;
+}
+
+function decisionCopy(loaded: boolean, fundingReady: boolean, scan: FundingScan | undefined): string {
+  if (!loaded) return "Treasury decisions were not loaded. An empty list is not a claim that none exist.";
+  const base =
+    "A proposed allocation is an off-chain review. It is a payment only when a confirmed Distributed event on Monad mainnet is shown with a transaction link. A wallet-issuance row is a proposal to create a wallet. It is not a deployment and not a payment.";
+  if (!fundingReady) return base;
+  if (scan === "empty") return `${base} The scan from the deployment block through the latest block found no Distributed event.`;
+  if (scan !== "complete") {
+    return `${base} The Distributed-event scan did not finish. A proposal without a receipt is not proof that no payout exists.`;
+  }
+  return base;
 }
 
 function applicationPolicy(): string[] {
@@ -315,7 +345,9 @@ export function presentOwnerlessTreasury(input: {
   decisionsLoaded: boolean;
   distributions?: readonly VerifiedDistribution[];
   fundingRows?: readonly VerifiedFunding[];
-  fundingLogsRead?: boolean;
+  /** A missing scan is unreadable. It is not an empty history. */
+  fundingScan?: FundingScan;
+  fundingScanCause?: "no-start";
 }): ChogBankPublicView {
   const inspection = input.inspection;
   const warnings: string[] = [];
@@ -468,15 +500,10 @@ export function presentOwnerlessTreasury(input: {
           "Do not send MON or $CHOG to a predicted wallet, a predicted factory, the ChogTreasury NFT holder, the Genesis contract, or the token contract.",
         ],
     fundingRows,
-    fundingNote: !fundingReady
-      ? "No funding transaction is shown because this address is not a verified treasury."
-      : input.fundingLogsRead
-        ? "The rows are recent successful receipts. They are not a complete history. The balances above are separate chain-state reads."
-        : "Funding logs were not read. The balances above are chain-state reads when they say an amount. No funding transaction was invented.",
+    fundingScan: fundingReady ? (input.fundingScan ?? "unreadable") : "skipped",
+    fundingNote: fundingCopy(fundingReady, input.fundingScan, input.fundingScanCause, fundingRows.length > 0),
     decisions,
-    decisionsNote: input.decisionsLoaded
-      ? "A proposed allocation is an off-chain review. It is a payment only when a confirmed Distributed event on Monad mainnet is shown with a transaction link. A wallet-issuance row is a proposal to create a wallet. It is not a deployment and not a payment."
-      : "Treasury decisions were not loaded. An empty list is not a claim that none exist.",
+    decisionsNote: decisionCopy(input.decisionsLoaded, fundingReady, input.fundingScan),
     warnings,
     summary,
   };

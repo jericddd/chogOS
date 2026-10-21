@@ -1,20 +1,12 @@
 # Hackathon mainnet launch
 
-Nothing in this sequence has been broadcast. ChogBank is not deployed. No citizen wallet is deployed. There is no funding address. Do not send MON or `$CHOG` anywhere because of this document.
+Nothing in this repository has been broadcast. ChogBank is not deployed. No citizen wallet is deployed. There is no funding address. Do not send MON or `$CHOG` anywhere because of this document.
 
-## Five states
-
-| State | Where it stands |
-| --- | --- |
-| 1. Code tested locally | Foundry and the application tests exercise V3 issuance, wallet authorization, and ChogBank. A passing test is not a mainnet transaction. |
-| 2. Contracts deployed | No. No factory, implementation, citizen wallet, or ChogBank receipt exists from this work. |
-| 3. Treasury funded | No. There is no address to fund. |
-| 4. Confirmed payout | No. A database row is not a `Distributed` event. |
-| 5. AI manual versus autonomous | The mind can propose an allocation and a wallet issuance. Signing and broadcasting stay disabled. That is not autonomous execution. |
+This file is the operator checklist for one native-MON demo: deploy one V3 wallet, deploy ChogBank, fund it with 0.02 MON, then broadcast one 0.01 MON payout from an actual AI allocation proposal. A proposal is not a payment. The Next.js app does not sign or broadcast.
 
 ## What is void
 
-These V2 predictions are not the product and are not funding addresses. They match the V2 bytecode still in this repository. Do not deploy that contract. `CitizenAccountV3` replaces it.
+Do not deploy `CitizenAccountV2`. These predictions are not funding addresses:
 
 | Void address | What it was |
 | --- | --- |
@@ -25,39 +17,23 @@ These V2 predictions are not the product and are not funding addresses. They mat
 | `0x2d8c32B8Df4E57a18A96fa2830DE036A781B472c` | V1 factory |
 | `0xA2edAC990B30A488D61fc4607D4365b22e41e39c` | V1.1 factory |
 
-V3 addresses are not printed here. The implementation constructor takes the agent public key, so the factory and every citizen wallet move when that key changes. Publish an address only after a chain-143 receipt, code at that address, and a check of the constructor arguments.
+Do not send funds to the ChogTreasury NFT holder `0x84113421A8a564b594ee9ae78c875310332d7023`, the Genesis contract `0xc96d31F8626c6D03Fae5dCD3d61e3FB9F4a73763`, or the `$CHOG` token `0x350035555E10d9AfAF1566AaebfCeD5BA6C27777`.
 
-Also do not send funds to the ChogTreasury NFT holder `0x84113421A8a564b594ee9ae78c875310332d7023`, the Genesis contract `0xc96d31F8626c6D03Fae5dCD3d61e3FB9F4a73763`, or the `$CHOG` token `0x350035555E10d9AfAF1566AaebfCeD5BA6C27777`.
+V3 addresses depend on the agent public key. Publish one only after a chain-143 receipt, code at that address, and the checks below. A console line from a script that was not broadcast is not an address to fund.
 
-## What a payout can and cannot do
+## Keys
 
-A confirmed payout is a `Distributed` event from ChogBank on chain 143. An `ai_decisions` row is a review. It is not a payment.
+Three separate keys. None go in git, Vercel, Supabase, `.env.local`, the database, or an AI prompt.
 
-The contract pays only the V3 wallet for one Genesis token id, and only after that address has code whose `token()` matches the citizen and whose `codeVersion()` is 3. The NFT holder can change. The wallet address does not. The holder cannot call a public execute. The agent signature is the only spend path.
+1. Gas key. Foundry keystore `--account chog-gas`. It pays gas. It is not the agent and not the authorizer.
+2. Wallet agent key. `CHOG_WALLET_AGENT_KEY` is read only by `contracts/script/DeployCitizenWallets.s.sol`. The matching public address is `CHOG_WALLET_AGENT`. This key can later spend every V3 wallet that uses that implementation. There is no numeric wallet cap and no rotation.
+3. Bank authorizer key. A file outside the repository, mode `600`, one line, `0x` plus 64 hex characters. `CHOG_BANK_AUTHORIZER_KEYFILE` points at it. The public address is `CHOG_BANK_AUTHORIZER`. It can sign allocations inside the contract caps and only to a deployed V3 wallet. It cannot change caps, upgrade the bank, or choose an arbitrary recipient.
 
-`distribute` reverts with `WalletNotDeployed` when the wallet has no code. It does not send MON to the empty prediction. `distributeWithIssuance` creates the wallet with a separate agent issuance signature and then pays it. If creation fails, the transaction reverts and the allocation is not paid.
+The app refuses `CHOG_BANK_AUTHORIZER_PRIVATE_KEY`, `CHOG_WALLET_AGENT_KEY`, and `CHOG_WALLET_AGENT_PRIVATE_KEY`. Leave `CHOG_BANK_RELAYER_ENABLED` unset. Setting it does not enable broadcasting.
 
-A prior read-only check of Genesis found that `transferFrom` does not call the recipient, while `safeTransferFrom` does when the recipient has code. V3 reverts in `onERC721Received`, so a safe transfer into a deployed wallet fails. A raw `transferFrom` can still put the NFT inside the wallet. The wallet refuses to call the Genesis contract, so that NFT cannot be moved back out. MON in the wallet can still be spent by the agent. That is an NFT-trapping hazard. It is not the V2 fund freeze, and it is not a reason to require custody.
+## Contract caps for this demo
 
-The wallet signs one exact call. It does not copy ChogBank's demo caps. It rejects the zero address, itself, its implementation, and the Genesis contract. It does not `delegatecall`. It does not have an upgrade or a rescue key. An approval is possible only as exact signed calldata. A compromised agent key can spend the wallet. On-chain evidence can show that the agent public key signed. It cannot show that no human ever held that key.
-
-`$CHOG` application caps are 0. Leave them there. The contract still needs a positive cap to deploy; use 1 wei so a leaked authorizer cannot move a meaningful token balance. No `$CHOG` payout is enabled unless both layers allow it. A prior `decimals()` read on the official token returned 18. The application still rejects token amounts when a live read is missing or not 18.
-
-The authorizer key can sign allocations inside the caps and only to a deployed V3 citizen wallet. It cannot change caps, upgrade the contract, or choose an arbitrary recipient. The Next.js app refuses to load it, and it refuses `CHOG_WALLET_AGENT_KEY` and `CHOG_WALLET_AGENT_PRIVATE_KEY`.
-
-## Keys, later
-
-Use separate keys. None go in git, Vercel, `.env.local`, the database, or an AI prompt. This coding task does not create them.
-
-1. Gas key. A Foundry keystore on your machine, funded only when you decide to broadcast. It pays gas. It does not control the wallet or the bank.
-2. Wallet agent key. The public address is an argument to the V3 implementation. The private key signs issuance and later wallet calls. It is not a treasury key. If a human can read or replace it, say so. The contract cannot prove otherwise.
-3. Bank authorizer key. It signs ChogBank allocations only. It should be a different key from the agent. One machine holding both keys is a custody choice, not ownerlessness.
-
-The app must not receive any of those private keys. A relayer may submit a valid agent signature. That relayer does not become the wallet owner.
-
-## Caps for a later native-MON test
-
-These are the immutable contract numbers for a small demo. They cannot be changed later. They are not wallet rules.
+These are fixed in the constructor. A wrong value means a new deployment, not an edit.
 
 | Variable | Value |
 | --- | --- |
@@ -69,13 +45,38 @@ These are the immutable contract numbers for a small demo. They cannot be change
 | `CHOG_BANK_MAX_PER_TX_CHOG` | `1` |
 | `CHOG_BANK_MAX_CITIZEN_WINDOW_CHOG` | `1` |
 | `CHOG_BANK_MAX_AGGREGATE_WINDOW_CHOG` | `1` |
-| `CHOG_BANK_DEMO_TOKEN_ID` | one real enrolled token id, such as `104` |
+| `CHOG_BANK_DEMO_TOKEN_ID` | one enrolled token, such as `104` |
 
-The application review still allows at most 0.1 MON per transaction, 1 MON per citizen, and 2 MON aggregate, and it allows 0 `$CHOG`. A 0.01 MON proposal fits. A `$CHOG` proposal does not. Maximum contract exposure under the table is 0.05 MON per 24 hour window, repeating while the authorizer key exists and the balance remains. A later fund of 0.02 MON is the suggested amount, and only to the address `/economy` shows after the checks. Exposure today is zero.
+`$CHOG` application caps stay 0. Do not send `$CHOG`. The 1 wei contract caps exist so the constructor can deploy. They are not permission to pay the token.
 
-## Order, after review
+## Production Vercel variables
 
-Run the tests first. From the repository root:
+Set only these on Production, after the cast checks pass:
+
+| Name | Value |
+| --- | --- |
+| `CHOG_BANK_CONTRACT_ADDRESS` | Bank address from the deployment receipt |
+| `CHOG_BANK_DEPLOYMENT_TX` | Deployment transaction hash whose receipt created that bank |
+
+Do not set a private key, `CHOG_BANK_RELAYER_ENABLED`, `CHOG_WALLET_AGENT_KEY`, or `CHOG_BANK_AUTHORIZER_PRIVATE_KEY`.
+
+`MONAD_RPC_URL` is optional and is not a signing key. When it is unset, the bank read uses `https://rpc.monad.xyz`. Set it only to an `https` Monad mainnet endpoint if that public read fails.
+
+Without `CHOG_BANK_DEPLOYMENT_TX`, `/economy` has no scan start block. That page must say the logs were not read. It must not be treated as an empty bank.
+
+## What the website will show
+
+`/economy` reads `Funded` and `Distributed` from the verified deployment receipt block through the latest block. The public RPC rejects `eth_getLogs` when `toBlock - fromBlock` is greater than 100, so the read is paginated inside that limit.
+
+- A finished scan with no events says no successful `Funded` or `Distributed` event was found.
+- A finished scan with events lists those successful receipts.
+- A missing deployment block, RPC error, timeout, or unfinished range says the logs were not read through the latest block. That is not a claim that no event exists. Receipts from blocks that were read can still be listed.
+
+Source verification stays "not checked" until Monadscan shows a match. Payout execution stays disabled.
+
+## Command sequence
+
+Run the tests first. A pass is not a mainnet transaction.
 
 ```bash
 npx vitest run
@@ -84,29 +85,45 @@ npx eslint
 forge test --root contracts
 ```
 
-`testOfficialChogDecimalsOnMonad` and the Genesis fork tests skip when Foundry cannot open a Monad fork from an Ethereum EVM. Do not treat a skip as a mainnet proof. Do not add `--broadcast` while following this file as a rehearsal.
+`testOfficialChogDecimalsOnMonad` and the Genesis fork tests skip when Foundry cannot open a Monad fork. A skip is not mainnet proof. Do not add `--broadcast` while rehearsing.
 
-### 1. Choose the agent public key, then the citizen wallet
-
-The script reads `CHOG_WALLET_AGENT_KEY` and `CHOG_WALLET_AGENT`. They must describe the same key. It signs an issuance digest for the predicted factory before broadcast. The decision id is `keccak256(abi.encode("chogos.wallet.issue.v3", chainid, genesis, tokenId))`. Anyone could relay that signature. The script's gas key is the relayer for this one deployment. It does not own the wallet.
+Export the RPC only in the operator shell. The scripts revert unless chain id is 143 and the phrase is exact. Do not delete or weaken those checks.
 
 ```bash
-export MONAD_RPC_URL="<your monad mainnet rpc>"
+export MONAD_RPC_URL="https://rpc.monad.xyz"
+```
+
+### 1. Citizen wallet
+
+`CHOG_WALLET_AGENT_KEY` and `CHOG_WALLET_AGENT` must be the same key. The script signs an issuance for the predicted factory, broadcasts with the gas keystore, and reverts if the deployed wallet does not match the prediction or has no code. The logged wallet is not a funding address.
+
+```bash
 export CHOG_BANK_AUTHORIZE_WALLETS="yes-deploy-citizen-wallets-on-monad-mainnet"
 export CHOG_BANK_DEMO_TOKEN_ID="104"
 export CHOG_WALLET_AGENT="<agent address>"
-export CHOG_WALLET_AGENT_KEY="<agent private key, script environment only>"
+export CHOG_WALLET_AGENT_KEY="<agent private key, this shell only>"
 forge script contracts/script/DeployCitizenWallets.s.sol:DeployCitizenWallets \
   --root contracts \
   --rpc-url "$MONAD_RPC_URL" \
   --account chog-gas \
   --broadcast \
   --slow
+unset CHOG_WALLET_AGENT_KEY CHOG_BANK_AUTHORIZE_WALLETS
 ```
 
-Unset both wallet variables after it returns. Read the logged wallet on https://monadscan.com and confirm it has code, `token()` matches chain 143, Genesis, and the token id, and `codeVersion()` is 3. That wallet is still not a funding address. The bank does not exist yet. Do not send the payout to it directly.
+Copy the wallet from `contracts/broadcast/DeployCitizenWallets.s.sol/143/run-latest.json`, then prove it on chain:
+
+```bash
+cast code <wallet> --rpc-url "$MONAD_RPC_URL"
+cast call <wallet> "codeVersion()(uint256)" --rpc-url "$MONAD_RPC_URL"
+cast call <wallet> "token()(uint256,address,uint256)" --rpc-url "$MONAD_RPC_URL"
+```
+
+Require non-empty code, `codeVersion` 3, and `token()` equal to chain 143, `0xc96d31F8626c6D03Fae5dCD3d61e3FB9F4a73763`, and token 104. Stop if any check fails.
 
 ### 2. ChogBank
+
+The script reverts before broadcast when Genesis or `$CHOG` has no code, the factory or implementation is missing, `codeVersion` is not 3, or the demo wallet has no code. Caps are the constructor values above.
 
 ```bash
 export CHOG_BANK_AUTHORIZE_BROADCAST="yes-deploy-chogbank-on-monad-mainnet"
@@ -127,66 +144,143 @@ forge script contracts/script/DeployChogBank.s.sol:DeployChogBank \
   --account chog-gas \
   --broadcast \
   --slow
+unset CHOG_BANK_AUTHORIZE_BROADCAST
 ```
 
-The script reverts on a chain other than 143, without the phrase, without official Genesis and `$CHOG` code, without the V3 wallet path, or without code at the demo wallet. Unset `CHOG_BANK_AUTHORIZE_BROADCAST` after it returns.
-
-Copy the address only from the transaction receipt. Then, from a separate read:
-
-- `cast code <bank> --rpc-url "$MONAD_RPC_URL"` is not empty
-- `cast call <bank> "configuredChainId()(uint256)"` is 143
-- `cast call <bank> "genesis()(address)"` is `0xc96d31F8626c6D03Fae5dCD3d61e3FB9F4a73763`
-- `cast call <bank> "chogToken()(address)"` is `0x350035555E10d9AfAF1566AaebfCeD5BA6C27777`
-- `cast call <bank> "authorizer()(address)"` is the authorizer address, not the bank
-- `cast call <bank> "walletFactory()(address)"` is the factory from the receipt
-- `cast call <bank> "owner()"` reverts
-- `cast storage <bank> 0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc` is zero
-- `cast storage <bank> 0xb53127684a568b3173ae13b9f8a6016e243e63b6e8ee1178d6a717850b5d6103` is zero
-
-### 3. Verify source
-
-From `contracts/`, after the receipt exists. Replace `<bank>` with the deployed address. This does not mark verification done by itself.
+If the script reverts after `vm.stopBroadcast`, read `contracts/broadcast/DeployChogBank.s.sol/143/run-latest.json` before sending another transaction. A second run creates a second bank. Fund only one address, and only after the checks below.
 
 ```bash
+cast receipt <deployTx> status --rpc-url "$MONAD_RPC_URL"
+cast receipt <deployTx> contractAddress --rpc-url "$MONAD_RPC_URL"
+cast receipt <deployTx> blockNumber --rpc-url "$MONAD_RPC_URL"
+cast code <bank> --rpc-url "$MONAD_RPC_URL"
+cast call <bank> "configuredChainId()(uint256)" --rpc-url "$MONAD_RPC_URL"
+cast call <bank> "genesis()(address)" --rpc-url "$MONAD_RPC_URL"
+cast call <bank> "chogToken()(address)" --rpc-url "$MONAD_RPC_URL"
+cast call <bank> "authorizer()(address)" --rpc-url "$MONAD_RPC_URL"
+cast call <bank> "walletFactory()(address)" --rpc-url "$MONAD_RPC_URL"
+cast call <bank> "walletImplementation()(address)" --rpc-url "$MONAD_RPC_URL"
+cast call <bank> "windowSeconds()(uint256)" --rpc-url "$MONAD_RPC_URL"
+cast call <bank> "maxAuthorizationTtl()(uint256)" --rpc-url "$MONAD_RPC_URL"
+cast call <bank> "maxPerTxMon()(uint256)" --rpc-url "$MONAD_RPC_URL"
+cast call <bank> "maxCitizenWindowMon()(uint256)" --rpc-url "$MONAD_RPC_URL"
+cast call <bank> "maxAggregateWindowMon()(uint256)" --rpc-url "$MONAD_RPC_URL"
+cast call <bank> "maxPerTxChog()(uint256)" --rpc-url "$MONAD_RPC_URL"
+cast call <bank> "maxCitizenWindowChog()(uint256)" --rpc-url "$MONAD_RPC_URL"
+cast call <bank> "maxAggregateWindowChog()(uint256)" --rpc-url "$MONAD_RPC_URL"
+cast call <bank> "owner()" --rpc-url "$MONAD_RPC_URL"
+cast storage <bank> 0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc --rpc-url "$MONAD_RPC_URL"
+cast storage <bank> 0xb53127684a568b3173ae13b9f8a6016e243e63b6e8ee1178d6a717850b5d6103 --rpc-url "$MONAD_RPC_URL"
+```
+
+Require receipt status 1, `contractAddress` equal to the bank, non-empty code, chain 143, official Genesis and `$CHOG`, the authorizer (not the bank), the factory and implementation from the wallet deployment, the cap table above, `owner()` reverting, and both storage slots zero. `configuredChainId`, `genesis`, `chogToken`, `walletFactory`, `walletImplementation`, and `authorizer` are immutable. The cap fields are written once in the constructor.
+
+### 3. Source verification
+
+From `contracts/`, after the receipt exists. This does not flip the website flag.
+
+```bash
+ARGS=$(cast abi-encode "constructor((address,address,address,address,address,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256))" "(0xc96d31F8626c6D03Fae5dCD3d61e3FB9F4a73763,0x350035555E10d9AfAF1566AaebfCeD5BA6C27777,<factory>,<implementation>,<authorizer>,86400,3600,10000000000000000,50000000000000000,50000000000000000,1,1,1)")
 forge verify-contract <bank> src/ChogBank.sol:ChogBank \
   --root . \
   --chain 143 \
   --verifier sourcify \
   --verifier-url https://sourcify-api-monad.blockvision.org/ \
+  --constructor-args "$ARGS" \
   --rpc-url "$MONAD_RPC_URL"
 ```
 
-Verify the implementation and factory the same way. Compiler settings are solc 0.8.28, optimizer 200, Cancun, `via_ir` off. `via_ir` must stay off. Until the explorer shows a match, the site must keep saying source verification is not checked.
+Verify `CitizenAccountV3` with `constructor(address)` encoded as the agent address, and `CitizenAccountFactoryV3` with `constructor(address)` encoded as the implementation. Compiler settings are solc 0.8.28, optimizer 200, Cancun, `via_ir` off. `via_ir` must stay off. Until Monadscan shows a match, `/economy` keeps saying source verification is not checked.
 
-### 4. Show the checked address
+### 4. Show the checked bank
 
-In Vercel, set only:
+Set the two Production variables above. Reload https://chogos.vercel.app/economy. The funding address appears only when the owner, proxy, chain, and asset checks pass. Payout execution stays disabled. The deployment transaction link appears only when the receipt created that contract.
 
-- `CHOG_BANK_CONTRACT_ADDRESS` to the checked bank
-- `CHOG_BANK_DEPLOYMENT_TX` to the deployment hash, and only if that receipt's created contract is the bank
+### 5. Fund 0.02 MON
 
-Do not set a private key. Reload https://chogos.vercel.app/economy. The funding address appears only when the owner, proxy, chain, and asset checks pass. Payout execution on the server stays disabled.
+Send `20000000000000000` wei of native MON to the funding address shown on `/economy`. No token approval. Do not send `$CHOG`. Stop if that page does not show the address.
 
-### 5. Fund only the address that page shows
+Then, using the deployment block from the receipt:
 
-Send 0.02 MON of native MON to the bank address shown on `/economy`. No token approval. Do not send `$CHOG`. Stop if the page does not show that address. Do not send it to a predicted wallet.
+```bash
+cast receipt <fundTx> status --rpc-url "$MONAD_RPC_URL"
+cast logs --from-block <deploymentBlock> --to-block latest \
+  --address <bank> \
+  "Funded(address,address,uint256)" \
+  --rpc-url "$MONAD_RPC_URL"
+```
 
-### 6. One manual native-MON payout
+Require status 1 and a `Funded` log for asset `0x0000000000000000000000000000000000000000` and amount `20000000000000000`. Reload `/economy`. The row is "ChogBank Funded event" only after this scan is deployed and the two variables are set. A page that says the logs were not read is not an empty bank; use the `cast logs` result.
 
-The server will not sign this. Pick the decision id from a treasury review, or compute the same id the app uses: `keccak256` of the UTF-8 string `chogos.treasury.v1:<tokenId>:MON:<windowId>`, where `windowId` is `floor(unixSeconds / 86400)`. The reason hash is `keccak256` of the exact reason string. The amount is `10000000000000000` wei. The deadline is at most 3600 seconds ahead.
+### 6. One manual payout from a real proposal
 
-The wallet from step 1 must already have code. `payoutRecipient` reverts otherwise. Do not broadcast a payout to an empty address.
+The server will not sign this. On `/economy`, copy one `proposed` treasury allocation whose output has a `decisionId`, `tokenId` of the deployed citizen, `asset` `MON`, and `amountRaw`. If that row is missing, wait for the mind to record one. Do not insert a database row. Do not invent a decision id. A rejected row has no decision id.
 
-Write the authorizer private key to a file outside the repo, mode `600`, and point `CHOG_BANK_AUTHORIZER_KEYFILE` at it. Run `contracts/script/ChogBankPayout.s.sol` `digest()` first. If `payoutRecipient` reverts, stop. Then set `CHOG_BANK_AUTHORIZE_PAYOUT` to `yes-broadcast-one-chogbank-payout` and broadcast with the gas keystore. Unset the phrase and delete the key file.
+Broadcast amount:
 
-A payment exists only after the receipt status is success on chain 143 and the log contains `Distributed` for that decision id, the citizen token id, the wallet address, asset `address(0)`, and the amount. Run the same decision again and the contract reverts `Replay`. If the database does not record the receipt, `/economy` still shows the chain event. Do not insert a successful payout by hand for a reverted transaction.
+- `10000000000000000` when `amountRaw` is at least that value. The contract cap rejects more.
+- the proposal's `amountRaw` when it is smaller. Do not increase it.
 
-Final custody of that 0.01 MON is the citizen wallet. The agent key can sign one `execute` that sends it to a chosen address. The NFT holder cannot. Leave the remaining bank balance under the same caps. There is no admin withdrawal.
+```bash
+export CHOG_BANK_CONTRACT_ADDRESS="<bank>"
+export CHOG_BANK_DECISION_ID="<output.decisionId>"
+export CHOG_BANK_TOKEN_ID="104"
+export CHOG_BANK_ASSET="MON"
+export CHOG_BANK_AMOUNT_WEI="10000000000000000"
+export CHOG_BANK_DEADLINE="$(( $(date +%s) + 600 ))"
+export CHOG_BANK_REASON_HASH="$(cast keccak "<output.reason, exact UTF-8>")"
+export CHOG_BANK_AUTHORIZER_KEYFILE="<path outside the repo>"
+forge script contracts/script/ChogBankPayout.s.sol:ChogBankPayout \
+  --sig "digest()" \
+  --root contracts \
+  --rpc-url "$MONAD_RPC_URL"
+```
 
-### 7. What not to do on camera
+`digest()` does not broadcast. If `payoutRecipient` reverts, the wallet is missing or is not this citizen. Stop. The deadline must be in the future and at most 3600 seconds ahead. `cast keccak` must hash the exact `output.reason` string.
 
-Do not ask the NFT holder to call `execute`. That path does not exist on V3. Do not `transferFrom` the NFT into the citizen wallet.
+Then:
 
-## Still not automatic
+```bash
+export CHOG_BANK_AUTHORIZE_PAYOUT="yes-broadcast-one-chogbank-payout"
+forge script contracts/script/ChogBankPayout.s.sol:ChogBankPayout \
+  --root contracts \
+  --rpc-url "$MONAD_RPC_URL" \
+  --account chog-gas \
+  --broadcast \
+  --slow
+unset CHOG_BANK_AUTHORIZE_PAYOUT
+rm -f "$CHOG_BANK_AUTHORIZER_KEYFILE"
+unset CHOG_BANK_AUTHORIZER_KEYFILE
+```
 
-No Vercel cron, world tick, or AI run can sign or broadcast this payout. Turning that on would put a private key where the application can see it. The mind records proposals. A human runs the gated script. That is the remaining gap between a proposal and an on-chain action.
+The gas keystore signs the transaction. The authorizer file signs the allocation. Confirm before calling it a payment:
+
+```bash
+cast receipt <payoutTx> status --rpc-url "$MONAD_RPC_URL"
+cast logs --from-block <deploymentBlock> --to-block latest \
+  --address <bank> \
+  "Distributed(bytes32,uint256,address,address,uint256,uint256,bytes32)" \
+  --rpc-url "$MONAD_RPC_URL"
+```
+
+Require status 1 and one `Distributed` log for that decision id, token 104, the V3 wallet, asset `address(0)`, and the signed amount. Reload `/economy`. The payment is the "Confirmed" row and "View payout receipt". The proposal line without a receipt is still not a payment. Do not insert a successful database row. A second broadcast of the same decision id reverts `Replay`.
+
+The 0.01 MON then sits in the citizen wallet. The agent key can sign one `execute` that sends it onward. The NFT holder cannot. Leave the remaining bank balance under the same caps. There is no admin withdrawal.
+
+## Automatic versus operator-controlled
+
+Automatic, already running, and unchanged by a broadcast:
+
+- The daily mind can record a treasury allocation proposal and a wallet-issuance proposal. Both are database rows. Neither is a signature, a deployment, or a payment.
+- `/economy` reads chain state. It does not sign.
+
+Operator-controlled, and the only path that moves mainnet MON:
+
+- Creating the three keys and funding the gas key.
+- `DeployCitizenWallets.s.sol` with the wallet phrase and `--broadcast`.
+- `DeployChogBank.s.sol` with the bank phrase and `--broadcast`.
+- The two Vercel variables, with no signing keys.
+- The 0.02 MON transfer to the address `/economy` shows.
+- `ChogBankPayout.s.sol` with the payout phrase, the authorizer file, and the gas keystore.
+
+No Vercel cron, world tick, or AI run can sign or broadcast this payout. `CHOG_BANK_RELAYER_ENABLED` does not turn that on.
