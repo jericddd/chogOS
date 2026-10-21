@@ -24,6 +24,8 @@ import { evaluateProductionEconomy } from "@/lib/economy/production";
 import { proposalFromDraft } from "@/lib/economy/proposal";
 import { considerTreasuryAllocation } from "@/lib/ai/treasury-run";
 import { loadTreasuryPrior, loadTreasuryRoster, recordTreasuryDecision } from "@/lib/ai/treasury-db";
+import { considerWalletIssuance } from "@/lib/ai/wallet-run";
+import { loadWalletIssuanceContext, recordWalletIssuance } from "@/lib/ai/wallet-db";
 import { AiProviderError, type AiCompletion } from "@/lib/ai/types";
 import type { PersonalityTraits } from "@/lib/ai/personality";
 import { readAppConfig, type AppConfig } from "@/lib/config/env";
@@ -87,6 +89,7 @@ export type MindRunReport = {
   rejected: number;
   decisions: Array<{ tokenId: string; status: string; detail: string }>;
   treasury?: { status: string; detail: string };
+  walletIssuance?: { status: string; detail: string };
 };
 
 type Client = ReturnType<typeof createServiceRoleClient>;
@@ -404,6 +407,84 @@ export async function runAiMind(
     let lastModelStartedAt = 0;
     let endRun = false;
     let treasuryConsidered = false;
+    let walletIssuanceConsidered = false;
+
+    async function attachWalletIssuance(): Promise<void> {
+      if (walletIssuanceConsidered) return;
+      walletIssuanceConsidered = true;
+      if (report.status === "halted" || report.status === "budget") {
+        report.walletIssuance = {
+          status: "skipped",
+          detail: "The mind run is halted or out of budget, so no wallet was requested.",
+        };
+        return;
+      }
+      if (timeoutWithinDeadline(startedAt, config.aiRequestTimeoutMs, Date.now(), deadlineMs) === null) {
+        report.walletIssuance = { status: "skipped", detail: "Stopped before the host timeout. No wallet was requested." };
+        return;
+      }
+      const gate = evaluateBudget(config, await readUsage(client));
+      if (!gate.ok) {
+        report.walletIssuance = { status: "skipped", detail: gate.reason };
+        if (gate.code === "halted") {
+          report.status = "halted";
+          report.reason = gate.reason;
+        }
+        return;
+      }
+      const context = await loadWalletIssuanceContext(client, config);
+      if (context == null) {
+        report.walletIssuance = { status: "failed", detail: "Earlier wallet records could not be read. The model was not called." };
+        return;
+      }
+      if (context.roster.length === 0) {
+        report.walletIssuance = { status: "skipped", detail: "No enrolled citizen is eligible, so no wallet was requested." };
+        return;
+      }
+      const slot = await takeModelSlot();
+      if (!slot) {
+        report.walletIssuance = { status: "skipped", detail: "No model time remained for a wallet decision." };
+        return;
+      }
+      try {
+        const result = await considerWalletIssuance({
+          roster: context.roster,
+          admittedDecisionIds: context.admittedDecisionIds,
+          deploymentPathReady: false,
+          timeoutMs: slot.timeoutMs,
+          maxOutputTokens: config.aiMaxOutputTokens,
+          provider: config.aiProvider,
+          model: config.aiModel ?? "",
+          complete: async (request) =>
+            provider.complete({
+              purpose: "wallet_issuance",
+              messages: [
+                { role: "system", content: request.system },
+                { role: "user", content: request.user },
+              ],
+              timeoutMs: request.timeoutMs,
+              maxOutputTokens: request.maxOutputTokens,
+            }),
+          record: (row) => recordWalletIssuance(client, row),
+        });
+        if (result.promptChars > 0) {
+          await bumpUsage(client, result.promptChars, result.outputTokens);
+        }
+        report.walletIssuance = { status: result.status, detail: result.detail };
+        if (result.halt) {
+          await haltScheduler(client, result.halt.until, result.halt.reason);
+          report.status = "halted";
+          report.reason = result.halt.reason;
+        }
+      } catch {
+        if (report.status !== "halted") {
+          report.walletIssuance = {
+            status: "failed",
+            detail: "The wallet review failed before a deployment. No wallet was created.",
+          };
+        }
+      }
+    }
 
     async function attachTreasury(): Promise<void> {
       if (treasuryConsidered) return;
@@ -539,6 +620,7 @@ export async function runAiMind(
       if (queue.length === 0) {
         if (report.claimed === 0) {
           await attachTreasury();
+          await attachWalletIssuance();
           await client
             .from("ai_scheduler_state")
             .update({ last_run_at: new Date().toISOString(), last_error: report.reason ?? null })
@@ -1180,6 +1262,7 @@ export async function runAiMind(
     }
 
     await attachTreasury();
+    await attachWalletIssuance();
     const schedulerPatch: Record<string, unknown> = {
       last_run_at: new Date().toISOString(),
       last_error: report.reason ?? null,

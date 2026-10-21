@@ -1,11 +1,18 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.28;
 
-import {CitizenAccountV2} from "./CitizenAccountV2.sol";
+import {CitizenAccountV3} from "./CitizenAccountV3.sol";
 import {CitizenWalletProxy} from "./CitizenWalletProxy.sol";
 
-interface IGenesisOwner {
-    function ownerOf(uint256 tokenId) external view returns (address);
+interface ICitizenWalletFactory {
+    function create(
+        uint256 chainId,
+        address nftContract,
+        uint256 tokenId,
+        bytes32 decisionId,
+        uint256 deadline,
+        bytes calldata signature
+    ) external returns (address);
 }
 
 /// @title ChogBank
@@ -15,7 +22,7 @@ interface IGenesisOwner {
 /// the contract still enforces the asset, the caps, the expiry, the nonce, and the recipient.
 /// The recipient is only the permanent citizen wallet for one Chog Genesis token id.
 /// If that wallet has no code, the transfer reverts. An empty predicted address is never paid.
-/// If the wallet holds its NFT outside deposit(), the transfer reverts. That state authorizes nobody.
+/// The wallet does not have to hold the NFT. NFT ownership is not an authorization.
 /// A leaked authorizer key can spend only inside these caps, and only to those wallets.
 /// It cannot change this contract or withdraw to an arbitrary address.
 /// This contract is not deployed. Deploying it does not deploy citizen wallets.
@@ -41,7 +48,6 @@ contract ChogBank {
     error AggregateCap();
     error InsufficientBalance();
     error WalletNotDeployed();
-    error WalletFrozen();
     error InvalidRecipient();
     error TransferFailed();
 
@@ -68,6 +74,12 @@ contract ChogBank {
     );
     bytes32 private constant SECP256K1_HALF =
         0x7fffffffffffffffffffffffffffffff5d576e7357a4501ddfe92f46681b20a0;
+
+    struct IssuancePermit {
+        bytes32 decisionId;
+        uint256 deadline;
+        bytes signature;
+    }
 
     struct Init {
         address genesis;
@@ -189,7 +201,7 @@ contract ChogBank {
     }
 
     function walletInitHash(uint256 tokenId) public view returns (bytes32) {
-        bytes memory initData = abi.encodeCall(CitizenAccountV2.initialize, (configuredChainId, genesis, tokenId));
+        bytes memory initData = abi.encodeCall(CitizenAccountV3.initialize, (configuredChainId, genesis, tokenId));
         return keccak256(abi.encodePacked(type(CitizenWalletProxy).creationCode, abi.encode(walletImplementation, initData)));
     }
 
@@ -206,6 +218,28 @@ contract ChogBank {
         _requireAuthorizer(allocationDigest(decisionId, tokenId, asset, amount, deadline, reasonHash), signature);
         _reserve(decisionId, tokenId, asset, amount);
         address recipient = payoutRecipient(tokenId);
+        _pay(asset, recipient, amount);
+        emit Distributed(decisionId, tokenId, recipient, asset, amount, deadline, reasonHash);
+    }
+
+    /// @notice Create the citizen wallet, when it has no code, and then pay it.
+    /// The issuance signature is checked by the factory. It is not a treasury signature.
+    /// A failed create reverts this call, so the allocation is not recorded as paid.
+    function distributeWithIssuance(
+        bytes32 decisionId,
+        uint256 tokenId,
+        address asset,
+        uint256 amount,
+        uint256 deadline,
+        bytes32 reasonHash,
+        bytes calldata signature,
+        IssuancePermit calldata issuance
+    ) external nonReentrant {
+        _checkFresh(decisionId, amount, deadline, asset);
+        _requireAuthorizer(allocationDigest(decisionId, tokenId, asset, amount, deadline, reasonHash), signature);
+        _reserve(decisionId, tokenId, asset, amount);
+        address recipient = _ensureWallet(tokenId, issuance);
+        _requireWalletIdentity(recipient, tokenId);
         _pay(asset, recipient, amount);
         emit Distributed(decisionId, tokenId, recipient, asset, amount, deadline, reasonHash);
     }
@@ -237,25 +271,33 @@ contract ChogBank {
         spentInWindow[windowKey] = nextWindow;
     }
 
-    /// @notice Recipient used by distribute. Reverts when the wallet is missing or frozen.
-    /// Frozen means the wallet holds the NFT and custody is closed. deposit() is the only opening.
+    /// @notice Recipient used by distribute. Reverts when the wallet is missing or is not this citizen.
+    /// An empty predicted address is never paid. NFT custody is not required.
     function payoutRecipient(uint256 tokenId) public view returns (address recipient) {
         recipient = citizenWallet(tokenId);
         if (recipient == address(this) || recipient == authorizer || recipient == chogToken || recipient == genesis) {
             revert InvalidRecipient();
         }
         if (recipient.code.length == 0) revert WalletNotDeployed();
-        address holder;
-        try IGenesisOwner(genesis).ownerOf(tokenId) returns (address owner) {
-            holder = owner;
-        } catch {
-            revert InvalidRecipient();
-        }
-        (bool ok, bytes memory data) = recipient.staticcall(abi.encodeWithSignature("custodyOpen()"));
-        if (!ok || data.length < 32) revert WalletFrozen();
-        bool custody = abi.decode(data, (bool));
-        if (holder == recipient && !custody) revert WalletFrozen();
-        if (custody && holder != recipient) revert WalletFrozen();
+        _requireWalletIdentity(recipient, tokenId);
+    }
+
+    function _ensureWallet(uint256 tokenId, IssuancePermit calldata issuance) private returns (address recipient) {
+        recipient = citizenWallet(tokenId);
+        if (recipient.code.length != 0) return recipient;
+        ICitizenWalletFactory(walletFactory).create(
+            configuredChainId, genesis, tokenId, issuance.decisionId, issuance.deadline, issuance.signature
+        );
+        if (recipient.code.length == 0) revert WalletNotDeployed();
+    }
+
+    function _requireWalletIdentity(address recipient, uint256 tokenId) private view {
+        (bool ok, bytes memory data) = recipient.staticcall(abi.encodeWithSignature("token()"));
+        if (!ok || data.length < 96) revert InvalidRecipient();
+        (uint256 chainId_, address nft_, uint256 id_) = abi.decode(data, (uint256, address, uint256));
+        if (chainId_ != configuredChainId || nft_ != genesis || id_ != tokenId) revert InvalidRecipient();
+        (bool versionOk, bytes memory versionData) = recipient.staticcall(abi.encodeWithSignature("codeVersion()"));
+        if (!versionOk || versionData.length < 32 || abi.decode(versionData, (uint256)) != 3) revert InvalidRecipient();
     }
 
     function _pay(address asset, address recipient, uint256 amount) private {

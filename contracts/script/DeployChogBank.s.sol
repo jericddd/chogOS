@@ -3,7 +3,7 @@ pragma solidity 0.8.28;
 
 import {Script, console2} from "forge-std/Script.sol";
 import {ChogBank} from "../src/ChogBank.sol";
-import {DeployCitizenAccountFactoryV2} from "./DeployCitizenAccountFactoryV2.s.sol";
+import {DeployCitizenAccountFactoryV3} from "./DeployCitizenAccountFactoryV3.s.sol";
 
 /// @notice Mainnet deployment gate for the ownerless ChogBank.
 /// `run()` reverts unless chain id is 143 and CHOG_BANK_AUTHORIZE_BROADCAST is the exact phrase below.
@@ -35,14 +35,15 @@ contract DeployChogBank is Script {
         uint256 perTxChog = vm.envUint("CHOG_BANK_MAX_PER_TX_CHOG");
         uint256 citizenChog = vm.envUint("CHOG_BANK_MAX_CITIZEN_WINDOW_CHOG");
         uint256 aggregateChog = vm.envUint("CHOG_BANK_MAX_AGGREGATE_WINDOW_CHOG");
-
-        DeployCitizenAccountFactoryV2 wallets = new DeployCitizenAccountFactoryV2();
-        address factory = wallets.predictFactory();
-        address implementation = wallets.predictImplementation();
         if (GENESIS.code.length == 0 || CHOG.code.length == 0) revert CodeMissing();
+
+        address agent = vm.envAddress("CHOG_WALLET_AGENT");
+        DeployCitizenAccountFactoryV3 wallets = new DeployCitizenAccountFactoryV3();
+        address factory = wallets.predictFactory(agent);
+        address implementation = wallets.predictImplementation(agent);
         if (!_walletPathReady(factory, implementation)) revert WalletPathMissing();
         uint256 demoTokenId = vm.envUint("CHOG_BANK_DEMO_TOKEN_ID");
-        if (wallets.predictAccount(block.chainid, GENESIS, demoTokenId).code.length == 0) revert WalletPathMissing();
+        if (wallets.predictAccount(block.chainid, GENESIS, demoTokenId, agent).code.length == 0) revert WalletPathMissing();
 
         vm.startBroadcast();
         bank = new ChogBank(
@@ -74,7 +75,7 @@ contract DeployChogBank is Script {
     function _walletPathReady(address factory, address implementation) internal view returns (bool) {
         if (factory.code.length == 0 || implementation.code.length == 0) return false;
         (bool versionOk, bytes memory versionData) = implementation.staticcall(abi.encodeWithSignature("codeVersion()"));
-        if (!versionOk || versionData.length < 32 || abi.decode(versionData, (uint256)) != 1) return false;
+        if (!versionOk || versionData.length < 32 || abi.decode(versionData, (uint256)) != 3) return false;
         (bool implOk, bytes memory implData) = factory.staticcall(abi.encodeWithSignature("implementation()"));
         return implOk && implData.length >= 32 && abi.decode(implData, (address)) == implementation;
     }

@@ -256,16 +256,14 @@ describe("ownerless treasury policy", () => {
     expect(dropped?.executed).toBe(false);
   });
 
-  it("refuses a frozen or missing wallet even when execution flags are on", () => {
+  it("refuses a missing or mismatched wallet even when execution flags are on", () => {
     const wallet = "0xD3c8e7fAfF0750bd202F72EBaBDD46D197B47502";
-    const holder = "0x1111111111111111111111111111111111111111";
-    expect(citizenWalletPayoutGate({ codeBytes: 0, wallet, nftHolder: holder, custodyOpen: false }).state).toBe("missing");
-    expect(citizenWalletPayoutGate({ codeBytes: 100, wallet, nftHolder: wallet, custodyOpen: false }).state).toBe("frozen");
-    expect(citizenWalletPayoutGate({ codeBytes: 100, wallet, nftHolder: holder, custodyOpen: true }).state).toBe("inconsistent");
-    expect(citizenWalletPayoutGate({ codeBytes: null, wallet, nftHolder: holder, custodyOpen: false }).state).toBe("unread");
-    expect(citizenWalletPayoutGate({ codeBytes: 100, wallet, nftHolder: holder, custodyOpen: false }).state).toBe("ready");
+    expect(citizenWalletPayoutGate({ codeBytes: 0, wallet, identityMatches: false }).state).toBe("missing");
+    expect(citizenWalletPayoutGate({ codeBytes: 100, wallet, identityMatches: false }).state).toBe("inconsistent");
+    expect(citizenWalletPayoutGate({ codeBytes: null, wallet, identityMatches: null }).state).toBe("unread");
+    expect(citizenWalletPayoutGate({ codeBytes: 100, wallet, identityMatches: true }).state).toBe("ready");
 
-    const frozen = evaluateTreasuryAllocation({
+    const mismatched = evaluateTreasuryAllocation({
       draft: draft(),
       limits: limits(),
       nowMs: NOW,
@@ -276,10 +274,10 @@ describe("ownerless treasury policy", () => {
       chogDecimals: 18,
       walletDeployed: true,
       executionEnabled: true,
-      walletObservation: { codeBytes: 100, wallet, nftHolder: wallet, custodyOpen: false },
+      walletObservation: { codeBytes: 100, wallet, identityMatches: false },
     });
-    expect(frozen.status).toBe("rejected");
-    expect(frozen.executed).toBe(false);
-    expect(frozen.reason).toContain("frozen");
+    expect(mismatched.status).toBe("rejected");
+    expect(mismatched.executed).toBe(false);
+    expect(mismatched.reason).toContain("not the wallet");
   });
 });

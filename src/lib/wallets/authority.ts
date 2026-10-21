@@ -5,11 +5,14 @@ import { sameAddress } from "@/lib/civilization/token-id";
 
 export const CITIZEN_WALLET_SCHEME = "unassigned" as const;
 export const NFT_BOUND_SCHEME = "nft_bound_v1" as const;
+/** Permanent AI-issued wallet. The NFT holder is not an owner of this scheme. */
+export const AI_ISSUED_SCHEME = "ai_issued_v3" as const;
 
-export type CitizenWalletScheme = typeof CITIZEN_WALLET_SCHEME | typeof NFT_BOUND_SCHEME;
+export type CitizenWalletScheme = typeof CITIZEN_WALLET_SCHEME | typeof NFT_BOUND_SCHEME | typeof AI_ISSUED_SCHEME;
 
 /**
  * Production registry rows remain `unassigned` and do not follow NFT ownership.
+ * `ai_issued_v3` is the permanent wallet. Its signer is the agent key, not ownerOf.
  * The Phase 6a `nft_bound_v1` account reads ownerOf at execution time.
  * V1 grantDelegation remains disabled (ownerAtGrant revival).
  * V1.1 adds one owner-opened executor session that latches dead after an

@@ -1,5 +1,7 @@
 # Wallet system
 
+The current citizen wallet is `CitizenAccountV3`. A citizen does not need a wallet to exist. When the AI issues one, the signer is an immutable agent key, not `ownerOf`. NFT custody is not required. The notes below keep the older Phase 6a and V2 designs as history. Do not deploy them.
+
 Phase 6a selected an NFT-bound `CitizenAccount` whose root authority is `ownerOf` at execution time. The V1 contract **does not** grant delegated executors: an `ownerAtGrant` snapshot is only invalid while another address owns the NFT, and it becomes executable again after A→B→A. See [phase-6a-wallet-architecture.md](phase-6a-wallet-architecture.md). Production registry rows remain `unassigned` and `not_configured` until a verified Mainnet factory deployment is separately authorized. The factory has not been broadcast.
 
 Phase 6b keeps that account design and adds owner-opened executor sessions plus ChogBank activation policy. V1.1 bytecode is a **new** factory address (`0xA2edAC99…`). Do not deploy the unused V1 prediction `0x2d8c32…`. See [phase-6b-chogbank.md](phase-6b-chogbank.md). Enrollment still does not create wallets. The relayer is disabled.

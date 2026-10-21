@@ -1,7 +1,7 @@
 import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { getAddress, type Address } from "viem";
-import { CITIZEN_WALLET_SCHEME } from "@/lib/wallets/authority";
+import { AI_ISSUED_SCHEME, CITIZEN_WALLET_SCHEME } from "@/lib/wallets/authority";
 import { planUnassignedWallets, type WalletAssignment, type WalletStatus } from "@/lib/wallets/lifecycle";
 import type { SafeVersion } from "@/lib/wallets/infrastructure";
 import type { TreasuryVerification } from "@/lib/wallets/lifecycle";
@@ -88,12 +88,15 @@ export class SupabaseWalletStore implements WalletRegistryStore {
       .select("citizen_id, chain_id, scheme, status, predicted_address, account_address")
       .eq("citizen_id", citizenId)
       .eq("chain_id", targetChain)
-      .eq("scheme", CITIZEN_WALLET_SCHEME)
-      .maybeSingle();
+      .in("scheme", [AI_ISSUED_SCHEME, CITIZEN_WALLET_SCHEME]);
     if (error) {
       return fail(error);
     }
-    return { ok: true, value: data ? this.toAssignment(data) : null };
+    const rows = data ?? [];
+    const issued = rows.find((row) => row.scheme === AI_ISSUED_SCHEME);
+    const plain = rows.find((row) => row.scheme === CITIZEN_WALLET_SCHEME);
+    const chosen = issued ?? plain ?? null;
+    return { ok: true, value: chosen ? this.toAssignment(chosen) : null };
   }
 
   async getTreasury(targetChain: 143 | 10143): Promise<WalletStoreResult<StoredTreasury | null>> {
@@ -298,8 +301,8 @@ export class SupabaseWalletStore implements WalletRegistryStore {
     return {
       citizenId: String(row.citizen_id),
       chainId: chainId(row.chain_id),
-      scheme: CITIZEN_WALLET_SCHEME,
-      status: row.scheme === CITIZEN_WALLET_SCHEME ? status : "failed",
+      scheme: row.scheme === AI_ISSUED_SCHEME ? AI_ISSUED_SCHEME : CITIZEN_WALLET_SCHEME,
+      status: row.scheme === CITIZEN_WALLET_SCHEME || row.scheme === AI_ISSUED_SCHEME ? status : "failed",
       predictedAddress: row.predicted_address,
       accountAddress: row.account_address,
     };

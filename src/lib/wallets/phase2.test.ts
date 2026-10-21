@@ -93,8 +93,8 @@ describe("citizen wallet registry", () => {
     expect(view.note).toMatch(/not a deployed account/i);
   });
 
-  it("refuses a verified wallet for an unverified NFT and refuses a browser claim", () => {
-    expect(statusAfterEvidence({ nftOwnershipVerified: false, evidence: "code_matched" })).toBe("failed");
+  it("treats matching code as verified without an NFT-ownership check and refuses a browser claim", () => {
+    expect(statusAfterEvidence({ nftOwnershipVerified: false, evidence: "code_matched" })).toBe("verified");
     expect(assessClientWalletClaim({ status: "verified" }).accepted).toBe(false);
     expect(assessClientWalletClaim({ status: "deployed" }).accepted).toBe(false);
     expect(assessClientWalletClaim({}).accepted).toBe(false);

@@ -1,11 +1,14 @@
 import "server-only";
+import { loadLatestIssuance } from "@/lib/ai/wallet-db";
 import { readAppConfig } from "@/lib/config/env";
+import { openEconomyClient } from "@/lib/economy/db";
 import { openWalletStore } from "@/lib/wallets/open-store";
 import {
   citizenWalletWorldLine,
   presentCitizenWallet,
   presentCivilizationTreasury,
   type BalanceReading,
+  type CitizenIssuanceView,
   type CitizenWalletView,
   type CivilizationTreasuryView,
 } from "@/lib/wallets/present";
@@ -120,12 +123,13 @@ function toLastKnown(
 }
 
 export async function loadCitizenWalletView(citizenId: string | null): Promise<CitizenWalletView> {
+  const issuance = await readIssuance(citizenId);
   if (!citizenId) {
-    return presentCitizenWallet({ citizenId: null, assignment: null, persistence: "not_persisted" });
+    return presentCitizenWallet({ citizenId: null, assignment: null, persistence: "not_persisted", issuance });
   }
   const store = openWalletStore();
   if (!store) {
-    return presentCitizenWallet({ citizenId, assignment: null, persistence: "not_persisted" });
+    return presentCitizenWallet({ citizenId, assignment: null, persistence: "not_persisted", issuance });
   }
   const found = await store.findAssignment(citizenId, readAppConfig().chainId);
   if (!found.ok) {
@@ -134,9 +138,17 @@ export async function loadCitizenWalletView(citizenId: string | null): Promise<C
       assignment: null,
       persistence: found.reason === "migration_pending" ? "migration_pending" : "unavailable",
       detail: found.detail,
+      issuance,
     });
   }
-  return presentCitizenWallet({ citizenId, assignment: found.value, persistence: "ready" });
+  return presentCitizenWallet({ citizenId, assignment: found.value, persistence: "ready", issuance });
+}
+
+async function readIssuance(citizenId: string | null): Promise<CitizenIssuanceView | null | undefined> {
+  if (!citizenId) return undefined;
+  const client = openEconomyClient();
+  if (!client) return undefined;
+  return loadLatestIssuance(client, citizenId);
 }
 
 export async function loadWalletWorldLine(): Promise<string> {

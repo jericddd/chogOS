@@ -68,9 +68,7 @@ export function statusAfterEvidence(input: {
   nftOwnershipVerified: boolean;
   evidence: "none" | "predicted" | "deployment_submitted" | "code_present" | "code_matched";
 }): WalletStatus {
-  if (input.evidence === "code_matched" && !input.nftOwnershipVerified) {
-    return "failed";
-  }
+  void input.nftOwnershipVerified;
   switch (input.evidence) {
     case "none":
       return "not_configured";
@@ -124,7 +122,7 @@ export function describeNftWalletAuthority(): string {
   if (walletControlFollowsNftOwner()) {
     return "The citizen wallet reads ownerOf, so a transfer moves control.";
   }
-  return "NFT ownership authorizes the citizen record. It does not automatically control a smart wallet. No account implementation that checks ownerOf is enabled, so a previous owner cannot spend through a wallet that was never deployed.";
+  return "The NFT holder is recorded as ownership metadata. The citizen wallet, once issued, is authorized by the agent signature, not by the NFT holder. A transfer does not move the wallet or its funds.";
 }
 
 export type TreasuryVerification = "unread" | "observed" | "safe_proxy";

@@ -54,6 +54,8 @@ export type StoredTreasuryDecision = {
   rationale: string | null;
   createdAt: string | null;
   output: unknown;
+  /** Missing means a treasury allocation review. */
+  purpose?: string;
 };
 
 export type VerifiedDistribution = {
@@ -172,7 +174,7 @@ function applicationPolicy(): string[] {
     `MON per transaction ${formatTokenAmount(limits.maxPerTxMon.toString(10), 18, "MON")}. Per citizen ${formatTokenAmount(limits.maxCitizenWindowMon.toString(10), 18, "MON")}. Aggregate ${formatTokenAmount(limits.maxAggregateWindowMon.toString(10), 18, "MON")}.`,
     "$CHOG application caps are 0. No token price was assumed, so token allocations stay closed.",
     "A model cannot raise these limits. Production signing stays off, so a passing review is not a signature.",
-    "A payout also reverts unless that citizen's wallet has code and is not holding its NFT outside deposit(). An unsafe transfer into the wallet freezes it. Production does not sign or broadcast.",
+    "A payout reverts unless that citizen's wallet has code and its stored token id matches. An empty prediction is not paid. The NFT holder does not control the wallet. A wallet-issuance proposal is not a deployment. Production does not sign or broadcast.",
   ];
 }
 
@@ -199,6 +201,7 @@ type Output = {
   onchain?: boolean;
   verified?: boolean;
   recipient?: string;
+  choice?: string;
 };
 
 function readOutput(value: unknown): Output {
@@ -219,6 +222,7 @@ function readOutput(value: unknown): Output {
     onchain: body.onchain === true,
     verified: body.verified === true,
     recipient: text("recipient"),
+    choice: text("choice"),
   };
 }
 
@@ -227,6 +231,28 @@ function amountText(asset: string | undefined, amountRaw: string | undefined, de
   if (asset === "MON") return formatTokenAmount(amountRaw, 18, "MON");
   if (decimals !== 18) return `${amountRaw} base units of $CHOG`;
   return formatTokenAmount(amountRaw, 18, "$CHOG");
+}
+
+function issuanceDecision(row: StoredTreasuryDecision): PublicTreasuryDecision {
+  const output = readOutput(row.output);
+  const choice = output.choice === "issue" || output.choice === "defer" || output.choice === "unnecessary" ? output.choice : "recorded";
+  const reason = output.reason || row.rationale || "No reason was stored.";
+  const citizen = output.tokenId && /^[0-9]+$/.test(output.tokenId) ? `Citizen token ${output.tokenId}` : null;
+  let statusLabel: PublicTreasuryDecision["statusLabel"] = "Pending";
+  if (output.stage === "failed" || row.status === "failed") statusLabel = "Failed";
+  else if (output.stage === "rejected" || row.status === "rejected") statusLabel = "Rejected";
+  else if (output.stage === "proposed" || row.status === "proposed") statusLabel = "Proposed";
+  return {
+    id: row.id,
+    statusLabel,
+    headline: citizen ? `${statusLabel} wallet issuance for ${citizen}` : `${statusLabel} wallet issuance`,
+    detail: `${choice}. ${reason} This record is not a deployment and not a payment.`,
+    amountText: null,
+    citizen,
+    recipient: null,
+    txHash: null,
+    txHref: null,
+  };
 }
 
 function offchainDecision(row: StoredTreasuryDecision, decimals: number | null): PublicTreasuryDecision {
@@ -370,17 +396,22 @@ export function presentOwnerlessTreasury(input: {
   const decimals = inspection.chogDecimals;
   const distributions = fundingReady ? (input.distributions ?? []) : [];
   const seen = new Set(distributions.map((row) => row.decisionId.toLowerCase()));
+  const allocationRows = input.decisions.filter((row) => row.purpose !== "wallet_issuance");
+  const issuanceRows = input.decisions.filter((row) => row.purpose === "wallet_issuance");
   const decisions: PublicTreasuryDecision[] = [];
   for (const row of distributions) {
     if (!HASH.test(row.txHash) || !HASH.test(row.decisionId) || !DECIMAL.test(row.blockNumber) || !/^[0-9]+$/.test(row.tokenId)) continue;
-    const db = input.decisions.find((item) => readOutput(item.output).decisionId?.toLowerCase() === row.decisionId.toLowerCase());
+    const db = allocationRows.find((item) => readOutput(item.output).decisionId?.toLowerCase() === row.decisionId.toLowerCase());
     decisions.push(chainDecision(row, decimals, db));
   }
   if (input.decisionsLoaded) {
-    for (const row of input.decisions) {
+    for (const row of allocationRows) {
       const decisionId = readOutput(row.output).decisionId;
       if (decisionId && seen.has(decisionId.toLowerCase())) continue;
       decisions.push(offchainDecision(row, decimals));
+    }
+    for (const row of issuanceRows) {
+      decisions.push(issuanceDecision(row));
     }
   }
 
@@ -444,7 +475,7 @@ export function presentOwnerlessTreasury(input: {
         : "Funding logs were not read. The balances above are chain-state reads when they say an amount. No funding transaction was invented.",
     decisions,
     decisionsNote: input.decisionsLoaded
-      ? "A proposed row is an off-chain review. It is a payment only when a confirmed Distributed event on Monad mainnet is shown with a transaction link."
+      ? "A proposed allocation is an off-chain review. It is a payment only when a confirmed Distributed event on Monad mainnet is shown with a transaction link. A wallet-issuance row is a proposal to create a wallet. It is not a deployment and not a payment."
       : "Treasury decisions were not loaded. An empty list is not a claim that none exist.",
     warnings,
     summary,

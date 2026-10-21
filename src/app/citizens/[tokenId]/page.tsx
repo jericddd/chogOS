@@ -105,8 +105,8 @@ async function CitizenLive({ tokenId }: { tokenId: string }) {
         </dl>
         {profile.heldByTreasury ? (
           <p className="mt-4 text-sm leading-6 text-muted">
-            Held by ChogTreasury ({shortAddress(profile.treasury)}). No external wallet controls this founding
-            citizen while the treasury holds the NFT.
+            Held by ChogTreasury ({shortAddress(profile.treasury)}). That address is the current NFT holder.
+            It is not the citizen wallet, and holding the NFT does not control one.
           </p>
         ) : null}
 

@@ -22,7 +22,7 @@ The contract is deployed with normal `CREATE` in `contracts/script/DeployChogBan
 | Application server | Reject a proposal, or record an accepted review with `executed: false`. | Sign or broadcast in this phase. `evaluateProductionTreasuryAllocation` forces execution off and wallet bytecode unseen. |
 | Authorizer key | After deployment, sign an EIP-712 allocation. The contract still enforces the asset, caps, expiry, nonce, and recipient. | Change caps, upgrade the contract, or pay an arbitrary address. |
 | Transaction submitter | Pay gas for a valid signed allocation. | Change policy or bypass `distribute`. |
-| NFT holder | Transfer the NFT. Ownership is tracked apart from citizen identity. | Redirect an allocation. The recipient is the wallet for the token id, not `ownerOf`. |
+| NFT holder | Transfer the NFT. The site updates the displayed owner. | Control the citizen wallet, redirect an allocation, or reset the citizen. The recipient is the wallet for the token id, not `ownerOf`. |
 | Anyone | Send MON to `receive` or transfer `$CHOG` to the contract. | Withdraw except through a valid allocation to a deployed citizen wallet. |
 
 A leaked authorizer key is a real spending authority inside the caps. This system does not claim to have no privileged key.
@@ -36,6 +36,8 @@ The treasury prompt lists enrolled citizens by token id, name, and an optional g
 The server then runs the policy below. The model is not asked again to approve its own limits. A passing production review is stored in `ai_decisions` with `purpose = treasury_allocation`, `executed: false`, `onchain: false`, and `txHash: null`. The decision id is `keccak256("chogos.treasury.v1:{tokenId}:{asset}:{windowId}")`. The same citizen and asset cannot be admitted twice in one window, even if the reason is rewritten.
 
 If earlier rows cannot be read, the model is not called. A provider quota error halts the scheduler. Any other treasury failure leaves the growth result in place. A completion is counted in the existing budget. The runner does not call an RPC and does not retry a payout, because it never creates one.
+
+A second pass, `considerWalletIssuance`, runs after the treasury pass. It may choose `issue`, `defer`, or `unnecessary` for one enrolled citizen. The growth prompt is unchanged and still forbids `request_wallet_activation`. The server rejects a second issuance for a citizen that already has a proposal or a wallet assignment. The decision id is `keccak256(abi.encode("chogos.wallet.issue.v3", 143, genesis, tokenId))`, the same encoding as `DeployCitizenWallets`. A deferral does not consume that id. The stored row has `purpose = wallet_issuance`, `executed: false`, `onchain: false`, `txHash: null`, and `address: null`. The runner passes `deploymentPathReady: false` because this server does not know a deployed factory and does not ask an RPC. An issue choice therefore stays `wallet_issuance_proposed`. It does not predict an address and it does not sign.
 
 ## Authorization
 
@@ -63,19 +65,22 @@ The page lists recent successful funding receipts only after the address has pas
 
 Citizen identity is the NFT token id. Personality, goals, biography, history, and economic records stay with that id when the NFT moves.
 
-The only payout destination in the contract is the CREATE2 citizen wallet for that token id, using the pinned factory, `CitizenWalletProxy`, and `CitizenAccountV2.initialize(chainId, genesis, tokenId)`. The contract does not read `ownerOf`. If the wallet has no code, the transfer reverts with `WalletNotDeployed`. An empty predicted address is never paid.
+The only payout destination in the contract is the CREATE2 citizen wallet for that token id, using the pinned V3 factory, `CitizenWalletProxy`, and `CitizenAccountV3.initialize(chainId, genesis, tokenId)`. The contract does not read `ownerOf`. If the wallet has no code, `distribute` reverts with `WalletNotDeployed`. An empty predicted address is never paid. `distributeWithIssuance` creates that wallet through the factory and then pays it. The factory checks a separate agent signature. If creation fails, the whole transaction reverts, so the allocation is not a completed payout.
 
-Those wallets are not deployed. V2 fixed the old session round-trip by requiring custody, and that fix is not a reason to send funds. The remaining hazards are unchanged:
+The NFT holder does not withdraw. The agent signature on the wallet is the only spend path. A treasury signature cannot be replayed as a wallet call: the domains are `chogOS ChogBank` version `1` and `chogOS CitizenWallet` version `3`.
 
-- An unsafe `transferFrom` of the NFT into the wallet can freeze it with no recovery.
-- A non-standard approval can outlive a transfer.
-- A session budget trusts the token's `balanceOf`.
+Those wallets are not deployed. No V3 address is listed because it depends on the agent public key. The old V2 predictions are void. Do not deploy `CitizenAccountV2`.
+
+Remaining limits:
+
+- Genesis `transferFrom` can still move an NFT into a contract that has no receiver hook. A deployed V3 wallet rejects `safeTransferFrom`. A raw `transferFrom` can leave the NFT inside the wallet. The wallet refuses to call the NFT contract, so that NFT cannot be moved back out. MON already in the wallet can still be spent by the agent. This is an NFT-trapping hazard, not a fund freeze, and it is not a reason to require custody.
+- The agent key can sign an exact call, including an approval, for any target except the wallet itself, its implementation, the zero address, and the Genesis contract. There is no numeric wallet-wide cap. ChogBank's demo caps are not copied into the wallet. A compromised agent key can spend what the wallet holds.
 - The wallet bytecode has not had an independent audit.
 - One logic bug would affect every wallet, and this treasury has no admin path to retarget a wallet after deployment.
 
-The current NFT owner could later operate a deployed wallet and move its contents. A former owner could not. This phase does not pay the current holder's account, and it does not display predicted wallet addresses as destinations. Until wallet bytecode is deployed and the hazards above are accepted, every on-chain distribution reverts and every production review stops at `accepted_not_executed`.
+This repository does not pay the current holder's account, and it does not display a predicted wallet as a deployed destination. Production reviews stay off-chain until a later authorized broadcast.
 
-Changing `CitizenAccountV2` or the factory after ChogBank is deployed strands the payout path. Funds already in the bank would have no admin rescue. Freeze that bytecode before broadcast, or accept that the funds can sit.
+Changing the V3 implementation or factory after ChogBank is deployed strands the payout path. Funds already in the bank would have no admin rescue. Choose the agent public key and freeze that bytecode before broadcast.
 
 ## Policy limits
 
@@ -106,9 +111,9 @@ The address is rejected when it is the NFT holder, the Genesis contract, the tok
 ## Known limits
 
 - The contract is not deployed and has not had an independent audit.
-- `distribute` reverts with `WalletFrozen` when the citizen wallet holds its NFT outside `deposit()`. That stops a further payout. It does not recover funds already sent into a frozen wallet. An unsafe `transferFrom` of the NFT into the wallet still has no recovery.
-- No authorizer key exists in this repository. Creating one and putting it in Vercel would be a mistake. The loader refuses that shape of secret, and it still would not sign.
-- Citizen wallets are not a safe payout destination today.
+- `WalletFrozen` is gone. `distribute` reverts with `WalletNotDeployed` when the wallet has no code, and with `InvalidRecipient` when the deployed code is not this citizen's V3 wallet. An unsafe `transferFrom` of the NFT into the wallet does not freeze MON. It can trap the NFT, because the wallet will not call Genesis.
+- No authorizer key and no agent key exist in this repository. Creating one and putting it in Vercel would be a mistake. The loader refuses `CHOG_BANK_AUTHORIZER_PRIVATE_KEY`, `CHOG_WALLET_AGENT_KEY`, and `CHOG_WALLET_AGENT_PRIVATE_KEY`.
+- Citizen wallets are not deployed. There is no payout destination today.
 - Caps are immutable after deployment. A wrong `$CHOG` integer cannot be patched.
 - A direct `$CHOG` transfer is visible on the token contract, not as a ChogBank `Funded` event.
 - The local Foundry fork test cannot create a Monad fork from an Ethereum EVM, so `testOfficialChogDecimalsOnMonad` skips. A separate read-only `decimals()` call on the official token returned 18. The application still rejects token amounts when a live read is missing or not 18.
@@ -129,7 +134,7 @@ forge test --root contracts --match-contract ChogBank
 ```
 
 3. Confirm chain 143 and that the official Genesis and `$CHOG` contracts have code. The script reverts with `CodeMissing` when they do not.
-4. Choose the authorizer address and the eight numeric parameters. Suggested MON caps, in wei, match the application review: per transaction `100000000000000000`, per citizen `1000000000000000000`, aggregate `2000000000000000000`. Choose `$CHOG` caps as raw 18-decimal integers. Suggested window `86400` and authorization lifetime `3600`.
+4. Choose the authorizer address and the eight numeric parameters. For a later native-MON test, the contract caps in [docs/hackathon-mainnet-launch.md](hackathon-mainnet-launch.md) are tighter than the application review: 0.01 MON per transaction and 0.05 MON per citizen and in aggregate. Do not copy those demo caps into the citizen wallet. `$CHOG` contract caps of 1 wei keep a leaked authorizer from moving a meaningful token balance. The application still rejects `$CHOG` while its own caps are 0. Suggested window `86400` and authorization lifetime `3600`. This document does not authorize that broadcast.
 5. The script reads `CHOG_BANK_AUTHORIZER`, `CHOG_BANK_WINDOW_SECONDS`, `CHOG_BANK_MAX_AUTHORIZATION_TTL`, `CHOG_BANK_MAX_PER_TX_MON`, `CHOG_BANK_MAX_CITIZEN_WINDOW_MON`, `CHOG_BANK_MAX_AGGREGATE_WINDOW_MON`, `CHOG_BANK_MAX_PER_TX_CHOG`, `CHOG_BANK_MAX_CITIZEN_WINDOW_CHOG`, and `CHOG_BANK_MAX_AGGREGATE_WINDOW_CHOG`.
 6. A simulation without a broadcast still reverts until `CHOG_BANK_AUTHORIZE_BROADCAST` equals the phrase in `DeployChogBank`. That phrase is the explicit authorization. After it is set, the broadcast command is:
 
@@ -145,8 +150,8 @@ Use a keystore or hardware signer for gas. Do not put that key, or the authorize
 
 7. The script checks the immutables and that both EIP-1967 slots are zero. Copy the logged address only after a separate read shows code there.
 8. Verify the source on Monadscan. This repository does not mark that step done in advance.
-9. Set `CHOG_BANK_CONTRACT_ADDRESS` to that deployed address only after a separate read shows code. Set `CHOG_BANK_DEPLOYMENT_TX` only after the receipt's `contractAddress` is that same address. Reload `/economy`. The funding address appears only if the checks pass. Do not send MON or `$CHOG` until `docs/hackathon-mainnet-launch.md` says the withdraw path is ready.
-10. Leave payout execution disabled until the wallet hazards are resolved and a reviewed signer, outside an environment private key, is intentionally enabled. This phase has no switch that turns it on.
+9. Set `CHOG_BANK_CONTRACT_ADDRESS` to that deployed address only after a separate read shows code. Set `CHOG_BANK_DEPLOYMENT_TX` only after the receipt's `contractAddress` is that same address. Reload `/economy`. The funding address appears only if the checks pass. Do not send MON or `$CHOG` until the launch document's checklist has been completed on chain 143. The NFT holder does not withdraw. The agent signature does.
+10. Leave payout execution disabled. The application has no switch that turns signing on. A later payout is a manual script, not an AI broadcast.
 
 ## Actions required before funds
 
