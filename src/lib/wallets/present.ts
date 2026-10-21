@@ -165,6 +165,8 @@ export type CitizenIssuanceView = {
   lifecycle: WalletLifecycle | null;
   rationale: string | null;
   decisionId: string | null;
+  /** False means the issue row was rejected. Omitted rows keep the proposal wording. */
+  openProposal?: boolean;
 };
 
 export type CitizenWalletView = {
@@ -251,6 +253,9 @@ function issuanceCopy(issuance: CitizenIssuanceView | null | undefined): string 
   if (issuance === null) return "No wallet-issuance decision is recorded.";
   const reason = issuance.rationale ? ` ${issuance.rationale}` : "";
   if (issuance.choice === "issue") {
+    if (issuance.openProposal === false) {
+      return `Wallet issuance was not accepted. No wallet was assigned.${reason}`;
+    }
     return `The AI proposed issuing a wallet. That proposal is not a deployed account.${reason}`;
   }
   if (issuance.choice === "defer") {

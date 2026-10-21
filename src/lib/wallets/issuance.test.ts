@@ -9,6 +9,9 @@ import {
   evaluateIssuanceDecision,
   issuanceDecisionId,
   lifecycleFromWalletStatus,
+  openIssuanceProposal,
+  promptLifecycle,
+  type IssuanceHistoryRow,
 } from "@/lib/wallets/issuance";
 
 const eligible = new Set(["104", "129"]);
@@ -144,11 +147,94 @@ describe("AI wallet issuance policy", () => {
         lifecycle: "wallet_assigned",
         rationale: "Predicted only.",
         decisionId: issuanceDecisionId("104"),
+        openProposal: true,
       },
     });
     expect(view.addressLabel).toBe("Predicted address");
     expect(view.note).toMatch(/not a deployed account/i);
     expect(view.issuanceText).toMatch(/not a deployed account/i);
+  });
+
+  it("does not let a later unnecessary decision remove an open issuance", () => {
+    const decisionId = issuanceDecisionId("104");
+    const cleared = decide({
+      choice: "unnecessary",
+      tokenId: "104",
+      rationale: "A purse is not needed.",
+      admittedDecisionIds: new Set([decisionId.toLowerCase()]),
+    });
+    expect(cleared.status).toBe("rejected");
+    expect(cleared.duplicate).toBe(true);
+    expect(cleared.decisionId).toBe(decisionId);
+    expect(cleared.lifecycle).toBe("wallet_issuance_proposed");
+    expect(cleared.executed).toBe(false);
+    expect(cleared.onchain).toBe(false);
+    const fromLifecycle = decide({
+      choice: "unnecessary",
+      tokenId: "104",
+      rationale: "A purse is not needed.",
+      lifecycleByToken: new Map([["104", "wallet_issuance_proposed"]]),
+    });
+    expect(fromLifecycle.status).toBe("rejected");
+    expect(fromLifecycle.lifecycle).toBe("wallet_issuance_proposed");
+    expect(fromLifecycle.executed).toBe(false);
+    const stillOpen = decide({ choice: "unnecessary", tokenId: "104", rationale: "A purse is not needed." });
+    expect(stillOpen.status).toBe("proposed");
+    expect(stillOpen.decisionId).toBeNull();
+  });
+
+  it("keeps an admitted issuance visible after a later unnecessary row", () => {
+    const decisionId = issuanceDecisionId("104");
+    const rows: IssuanceHistoryRow[] = [
+      {
+        status: "proposed",
+        choice: "unnecessary",
+        lifecycle: "citizen_active",
+        rationale: "No purse.",
+        decisionId: null,
+      },
+      {
+        status: "rejected",
+        choice: "defer",
+        lifecycle: "wallet_issuance_proposed",
+        rationale: "Wait.",
+        decisionId: null,
+      },
+      {
+        status: "proposed",
+        choice: "issue",
+        lifecycle: "wallet_issuance_proposed",
+        rationale: "The east road needs a purse.",
+        decisionId,
+      },
+    ];
+    expect(openIssuanceProposal(rows)?.choice).toBe("issue");
+    expect(openIssuanceProposal(rows)?.decisionId).toBe(decisionId);
+    expect(openIssuanceProposal([])).toBeNull();
+    const rejectedOnly: IssuanceHistoryRow = {
+      status: "rejected",
+      choice: "issue",
+      lifecycle: "citizen_active",
+      rationale: "Not accepted.",
+      decisionId,
+    };
+    expect(openIssuanceProposal([rejectedOnly])?.status).toBe("rejected");
+    expect(promptLifecycle("citizen_active", true)).toBe("wallet_issuance_proposed");
+    expect(promptLifecycle("wallet_ready", true)).toBe("wallet_ready");
+    expect(promptLifecycle("wallet_blocked", true)).toBe("wallet_blocked");
+    expect(promptLifecycle("citizen_active", false)).toBe("citizen_active");
+    const hidden = presentCitizenWallet({
+      citizenId: "citizen-104",
+      assignment: null,
+      persistence: "ready",
+      issuance: { choice: "issue", lifecycle: "citizen_active", rationale: "Rejected.", decisionId, openProposal: false },
+    });
+    expect(hidden.issuanceText).toMatch(/not accepted/i);
+    expect(hidden.issuanceText).not.toMatch(/proposed issuing/i);
+    const loader = readFileSync("src/lib/ai/wallet-db.ts", "utf8");
+    expect(loader).toContain("promptLifecycle");
+    expect(loader).toContain("openIssuanceProposal");
+    expect(loader).toContain("ADMITTED_ISSUANCE_STATUSES");
   });
 
   it("rejects a token that is not enrolled and a rationale that contains a URL", () => {

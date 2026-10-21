@@ -33,7 +33,35 @@ export type IssuanceVerdict = {
 };
 
 const ASSIGNED = new Set<WalletLifecycle>(["wallet_assigned", "wallet_deployed", "wallet_ready"]);
-const ADMITTED = new Set(["proposed", "accepted", "queued", "executed"]);
+export const ADMITTED_ISSUANCE_STATUSES = ["proposed", "accepted", "queued", "executed"] as const;
+const ADMITTED = new Set<string>(ADMITTED_ISSUANCE_STATUSES);
+
+export type IssuanceHistoryRow = {
+  status: string;
+  choice: IssuanceChoice | null;
+  lifecycle: WalletLifecycle | null;
+  rationale: string | null;
+  decisionId: string | null;
+};
+
+/** Registry lifecycle shown to the model. An admitted proposal is not still "no wallet considered". */
+export function promptLifecycle(registry: WalletLifecycle, openProposal: boolean): WalletLifecycle {
+  if (openProposal && registry === "citizen_active") return "wallet_issuance_proposed";
+  return registry;
+}
+
+/**
+ * Prefer an admitted issuance over a later deferral, rejection, or "unnecessary" row.
+ * Rows are newest first. An empty history has no decision.
+ */
+export function openIssuanceProposal(rowsNewestFirst: readonly IssuanceHistoryRow[]): IssuanceHistoryRow | null {
+  if (rowsNewestFirst.length === 0) return null;
+  return (
+    rowsNewestFirst.find((row) => row.choice === "issue" && row.decisionId !== null && isAdmittedIssuanceStatus(row.status)) ??
+    rowsNewestFirst[0] ??
+    null
+  );
+}
 
 /** Same encoding as DeployCitizenWallets: abi.encode(label, chainId, genesis, tokenId). */
 export const ISSUANCE_DECISION_LABEL = "chogos.wallet.issue.v3";
@@ -158,6 +186,7 @@ function unnecessary(
     tokenId: string | null;
     eligibleTokenIds: ReadonlySet<string>;
     lifecycleByToken: ReadonlyMap<string, WalletLifecycle>;
+    admittedDecisionIds: ReadonlySet<string>;
   },
   rationale: string,
 ): IssuanceVerdict {
@@ -178,6 +207,19 @@ function unnecessary(
       onchain: false,
       duplicate: false,
     };
+  }
+  if (tokenId && /^[0-9]+$/.test(tokenId) && input.eligibleTokenIds.has(tokenId)) {
+    const existing = issuanceDecisionId(tokenId);
+    if (current === "wallet_issuance_proposed" || input.admittedDecisionIds.has(existing.toLowerCase())) {
+      return reject(
+        "unnecessary",
+        tokenId,
+        "wallet_issuance_proposed",
+        "An issuance proposal is already recorded. Calling it unnecessary did not remove it and did not create a wallet.",
+        existing,
+        true,
+      );
+    }
   }
   return {
     status: "proposed",

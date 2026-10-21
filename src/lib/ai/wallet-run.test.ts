@@ -106,6 +106,35 @@ describe("wallet issuance consideration", () => {
     expect(rows[0]?.inputCommitment).toBeNull();
   });
 
+  it("rejects unnecessary after an admitted issuance and does not execute it", async () => {
+    const rows: WalletIssuanceInsert[] = [];
+    const decisionId = issuanceDecisionId("104");
+    const result = await considerWalletIssuance({
+      roster: [{ ...roster[0]!, lifecycle: "wallet_issuance_proposed" }],
+      admittedDecisionIds: new Set([decisionId.toLowerCase()]),
+      deploymentPathReady: false,
+      timeoutMs: 1000,
+      maxOutputTokens: 200,
+      provider: "gemini",
+      model: "test",
+      complete: async () =>
+        completion(JSON.stringify({ choice: "unnecessary", tokenId: "104", rationale: "A purse is not needed." })),
+      record: async (row) => {
+        rows.push(row);
+        return true;
+      },
+    });
+    expect(result.status).toBe("rejected");
+    expect(rows[0]?.status).toBe("rejected");
+    expect(rows[0]?.output.duplicate).toBe(true);
+    expect(rows[0]?.output.decisionId).toBe(decisionId);
+    expect(rows[0]?.output.lifecycle).toBe("wallet_issuance_proposed");
+    expect(rows[0]?.output.executed).toBe(false);
+    expect(rows[0]?.output.onchain).toBe(false);
+    expect(rows[0]?.output.address).toBeNull();
+    expect(rows[0]?.output.txHash).toBeNull();
+  });
+
   it("rejects a model that names an address", () => {
     const parsed = parseWalletIssuance(JSON.stringify({ choice: "issue", tokenId: "104", address: "0x1", rationale: "Pay here." }));
     expect(parsed.ok).toBe(false);
@@ -140,6 +169,9 @@ describe("wallet issuance consideration", () => {
     expect(runner).toContain("deploymentPathReady: false");
     expect(runner).not.toMatch(/sendTransaction|signTypedData|walletClient|eth_sendRawTransaction/);
     expect(readFileSync("src/lib/ai/context.ts", "utf8")).toContain("Do not return propose_economy or request_wallet_activation");
-    expect(readFileSync("src/lib/ai/wallet-run.ts", "utf8")).not.toMatch(/privateKey|signTypedData|sendTransaction/);
+    const prompt = readFileSync("src/lib/ai/wallet-run.ts", "utf8");
+    expect(prompt).not.toMatch(/privateKey|signTypedData|sendTransaction/);
+    expect(prompt).toContain("wallet_issuance_proposed");
+    expect(prompt).toContain("An open proposal stays until a wallet is assigned.");
   });
 });

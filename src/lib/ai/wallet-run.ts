@@ -73,6 +73,7 @@ export function walletIssuanceMessages(roster: readonly WalletRosterEntry[], dep
     "Do not issue a wallet only because the citizen exists.",
     "Do not name an address, a contract, a key, or a signature.",
     "This choice is not a deployment. The server can reject it, and it does not sign or broadcast.",
+    "If wallet is already wallet_issuance_proposed, do not return unnecessary for that citizen. An open proposal stays until a wallet is assigned.",
     "If no citizen needs a wallet now, return {\"choice\":\"unnecessary\",\"tokenId\":null,\"rationale\":\"why\"}.",
   ].join(" ");
   const user = JSON.stringify({
