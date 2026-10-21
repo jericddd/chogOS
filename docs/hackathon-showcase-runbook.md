@@ -14,7 +14,7 @@ The treasury contract is not deployed unless `/economy` shows a checked address 
    - https://chogos.vercel.app/economy
    - https://github.com/jericddd/chogOS/blob/cursor/phase-1-genesis-world-155c/contracts/src/ChogBank.sol
    - https://github.com/jericddd/chogOS/blob/cursor/phase-1-genesis-world-155c/contracts/src/CitizenAccountV3.sol
-2. On Economy, the funding address must say **Not ready**, the deployment transaction must say **Not recorded**, and payout execution must say it is disabled. If a later deploy has actually passed the checks, stop and do not use this script.
+2. On Economy, the funding address must say **Not ready**, the deployment transaction must say **Not recorded**, and payout execution must say it is disabled. Lower down, Discovered Mainnet Activity says **Mainnet activity could not be read** because Monad RPC is not configured. That is the expected empty scan. It is not a failed payout. If a later deploy has actually passed the checks, stop and do not use this script.
 3. On citizen 104, scroll to **Citizen wallet**. It should say no wallet is assigned and no issuance decision is recorded. If a proposal has appeared, say it is a proposal and not a deployed account. If the line says the decisions were not loaded, say that instead.
 4. Set the browser to a 1280-wide window. Hide bookmarks. Do not show `.env`, Vercel, Supabase, a private key, or a terminal.
 5. Do not open an old `$CHOG` transfer. `main` does not contain these contract files. Use the two links above.
@@ -49,11 +49,13 @@ Point at the allocation list.
 
 Say: "There is a rejected treasury review, and it says no payout transaction. That row is not a payment. This page does not show a Distributed event or a payout receipt."
 
+If Discovered Mainnet Activity is on screen, say: "This section says mainnet activity could not be read because the RPC is not configured. No logs were scanned. That is not a payout, and it is not a claim that no transfer exists." Otherwise leave it off screen.
+
 ### 1:50 Source, not a deployment
 
 Show `ChogBank.sol`, then `CitizenAccountV3.sol`, from the production branch.
 
-Say: "These files are source code. They are not deployed, so a judge cannot check them against live bytecode. ChogBank's source has no owner, no administrator, no upgrade, and no emergency withdrawal. The wallet source uses one agent key for every citizen wallet. That key can authorize a transfer or an approval, and the wallet has no numeric spending cap. The NFT holder cannot execute it. A signature would prove the public key signed. It would not prove that no person can reach the private key. This website refuses the signing keys, and it does not broadcast."
+Say: "These files are source code. They are not deployed, so a judge cannot check them against live bytecode. ChogBank's source has no owner, no administrator, no upgrade, and no emergency withdrawal. The wallet source uses one agent key for every citizen wallet. That key can authorize a transfer or an approval, and the wallet has no numeric spending cap. A signature would prove the public key signed. It would not prove that no person can reach the private key. This page says production signing stays off, and this server does not sign or broadcast."
 
 ### 2:25 Stop
 
