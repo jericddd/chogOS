@@ -106,6 +106,7 @@ The address is rejected when it is the NFT holder, the Genesis contract, the tok
 ## Known limits
 
 - The contract is not deployed and has not had an independent audit.
+- `distribute` reverts with `WalletFrozen` when the citizen wallet holds its NFT outside `deposit()`. That stops a further payout. It does not recover funds already sent into a frozen wallet. An unsafe `transferFrom` of the NFT into the wallet still has no recovery.
 - No authorizer key exists in this repository. Creating one and putting it in Vercel would be a mistake. The loader refuses that shape of secret, and it still would not sign.
 - Citizen wallets are not a safe payout destination today.
 - Caps are immutable after deployment. A wrong `$CHOG` integer cannot be patched.
@@ -115,6 +116,8 @@ The address is rejected when it is the NFT holder, the Genesis contract, the tok
 - Database rows are reviews. A transaction hash on a proposed row is not rendered as a payment.
 
 ## Deployment procedure
+
+The current sequence is [docs/hackathon-mainnet-launch.md](hackathon-mainnet-launch.md). Do not fund from the list below. The bank script now reverts unless the pinned factory, implementation, and the chosen citizen wallet already have code. A logged address is not a funding instruction.
 
 Do not run the broadcast form until the actions below are accepted.
 
@@ -142,7 +145,7 @@ Use a keystore or hardware signer for gas. Do not put that key, or the authorize
 
 7. The script checks the immutables and that both EIP-1967 slots are zero. Copy the logged address only after a separate read shows code there.
 8. Verify the source on Monadscan. This repository does not mark that step done in advance.
-9. Set `CHOG_BANK_CONTRACT_ADDRESS` to that deployed address. Set `CHOG_BANK_DEPLOYMENT_TX` only after the receipt's `contractAddress` is that same address. Reload `/economy`. The funding address appears only if the checks pass. Then send MON or `$CHOG` to that address, not to a wallet prediction and not to the NFT holder.
+9. Set `CHOG_BANK_CONTRACT_ADDRESS` to that deployed address only after a separate read shows code. Set `CHOG_BANK_DEPLOYMENT_TX` only after the receipt's `contractAddress` is that same address. Reload `/economy`. The funding address appears only if the checks pass. Do not send MON or `$CHOG` until `docs/hackathon-mainnet-launch.md` says the withdraw path is ready.
 10. Leave payout execution disabled until the wallet hazards are resolved and a reviewed signer, outside an environment private key, is intentionally enabled. This phase has no switch that turns it on.
 
 ## Actions required before funds

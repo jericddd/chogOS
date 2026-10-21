@@ -57,6 +57,7 @@ describe("public ownerless treasury", () => {
     expect(view.chogText).toBe("Not read");
     expect(view.summary).toContain("not deployed");
     expect(view.execution).toContain("disabled");
+    expect(view.policy.join(" ")).toContain("outside deposit()");
     expect(view.funding.join(" ")).toContain("No funding address");
     expect(view.warnings.join(" ")).not.toMatch(/0x[0-9a-fA-F]{40}/);
   });

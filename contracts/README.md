@@ -4,7 +4,7 @@ Local Foundry package. Nothing in this directory is a confirmed Mainnet deployme
 
 ## ChogBank
 
-`src/ChogBank.sol` is an ownerless MON and `$CHOG` treasury. It is not deployed. `forge script script/DeployChogBank.s.sol --root contracts` reverts unless the chain id is 143 and `CHOG_BANK_AUTHORIZE_BROADCAST` is the exact phrase in that script. Do not add `--broadcast` until that authorization is explicit. The pinned citizen-wallet factory is not a funding address. See [docs/phase-11-ownerless-chogbank.md](../docs/phase-11-ownerless-chogbank.md).
+`src/ChogBank.sol` is an ownerless MON and `$CHOG` treasury. It is not deployed. `forge script script/DeployChogBank.s.sol --root contracts` reverts unless the chain id is 143, `CHOG_BANK_AUTHORIZE_BROADCAST` is the exact phrase in that script, and the pinned citizen-wallet path already has code. Do not add `--broadcast` until that authorization is explicit. The factory, the implementation, and a citizen wallet are not funding addresses. See [docs/hackathon-mainnet-launch.md](../docs/hackathon-mainnet-launch.md).
 
 ## EventAnchor
 

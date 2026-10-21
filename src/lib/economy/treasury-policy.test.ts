@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   APPLICATION_TREASURY_LIMITS,
   applyAllocations,
+  citizenWalletPayoutGate,
   classifyPayout,
   evaluateProductionTreasuryAllocation,
   evaluateTreasuryAllocation,
@@ -253,5 +254,32 @@ describe("ownerless treasury policy", () => {
     expect(kept?.status).toBe("accepted_not_executed");
     expect(dropped?.status).toBe("duplicate");
     expect(dropped?.executed).toBe(false);
+  });
+
+  it("refuses a frozen or missing wallet even when execution flags are on", () => {
+    const wallet = "0xD3c8e7fAfF0750bd202F72EBaBDD46D197B47502";
+    const holder = "0x1111111111111111111111111111111111111111";
+    expect(citizenWalletPayoutGate({ codeBytes: 0, wallet, nftHolder: holder, custodyOpen: false }).state).toBe("missing");
+    expect(citizenWalletPayoutGate({ codeBytes: 100, wallet, nftHolder: wallet, custodyOpen: false }).state).toBe("frozen");
+    expect(citizenWalletPayoutGate({ codeBytes: 100, wallet, nftHolder: holder, custodyOpen: true }).state).toBe("inconsistent");
+    expect(citizenWalletPayoutGate({ codeBytes: null, wallet, nftHolder: holder, custodyOpen: false }).state).toBe("unread");
+    expect(citizenWalletPayoutGate({ codeBytes: 100, wallet, nftHolder: holder, custodyOpen: false }).state).toBe("ready");
+
+    const frozen = evaluateTreasuryAllocation({
+      draft: draft(),
+      limits: limits(),
+      nowMs: NOW,
+      eligibleTokenIds: ELIGIBLE,
+      spent: [],
+      monBalance: 10n ** 18n,
+      chogBalance: null,
+      chogDecimals: 18,
+      walletDeployed: true,
+      executionEnabled: true,
+      walletObservation: { codeBytes: 100, wallet, nftHolder: wallet, custodyOpen: false },
+    });
+    expect(frozen.status).toBe("rejected");
+    expect(frozen.executed).toBe(false);
+    expect(frozen.reason).toContain("frozen");
   });
 });
