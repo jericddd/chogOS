@@ -79,6 +79,16 @@ export type AppConfig = {
   chogBankGasAddress?: Address;
   /** Public asset-control address. Must differ from the gas-paying address. */
   chogBankAssetAddress?: Address;
+  /**
+   * Deployed ownerless ChogBank. Unset means the contract is not deployed.
+   * This is not CHOG_BANK_ASSET_ADDRESS and it is not a predicted wallet.
+   */
+  chogBankContractAddress?: Address;
+  /**
+   * Candidate deployment transaction. Shown only after a successful receipt
+   * created the checked ChogBank. Unset until that broadcast exists.
+   */
+  chogBankDeploymentTx?: `0x${string}`;
   chogBankObservationMaxAgeMs: number;
   /** Economic budgets. $CHOG limits are token base units and default to zero. */
   economyLimits: {
@@ -197,6 +207,15 @@ function readOptionalInteger(value: string | undefined, label: string): bigint |
 function optionalAddress(value: string | undefined, label: string): Address | undefined {
   const raw = blankToUndefined(value);
   return raw ? requireAddress(raw, label) : undefined;
+}
+
+function optionalTxHash(value: string | undefined, label: string): `0x${string}` | undefined {
+  const raw = blankToUndefined(value);
+  if (!raw) return undefined;
+  if (!/^0x[0-9a-fA-F]{64}$/.test(raw)) {
+    throw new Error(`Invalid ${label}. Use a 32-byte transaction hash.`);
+  }
+  return raw.toLowerCase() as `0x${string}`;
 }
 
 function readExpectedCount(value: string | undefined): number {
@@ -364,6 +383,8 @@ export function readAppConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     chogWatcherRpcRetryMs: readBoundedInt(env.CHOG_WATCHER_RPC_RETRY_MS, "CHOG_WATCHER_RPC_RETRY_MS", 400, 0, 10_000),
     chogBankGasAddress,
     chogBankAssetAddress,
+    chogBankContractAddress: optionalAddress(env.CHOG_BANK_CONTRACT_ADDRESS, "CHOG_BANK_CONTRACT_ADDRESS"),
+    chogBankDeploymentTx: optionalTxHash(env.CHOG_BANK_DEPLOYMENT_TX, "CHOG_BANK_DEPLOYMENT_TX"),
     chogBankObservationMaxAgeMs: readBoundedInt(
       env.CHOG_BANK_OBSERVATION_MAX_AGE_MS,
       "CHOG_BANK_OBSERVATION_MAX_AGE_MS",

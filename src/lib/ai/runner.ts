@@ -22,6 +22,8 @@ import { productionBankRuntime } from "@/lib/chogbank/runtime";
 import { readEconomyLedger, saveEconomyDecision } from "@/lib/economy/db";
 import { evaluateProductionEconomy } from "@/lib/economy/production";
 import { proposalFromDraft } from "@/lib/economy/proposal";
+import { considerTreasuryAllocation } from "@/lib/ai/treasury-run";
+import { loadTreasuryPrior, loadTreasuryRoster, recordTreasuryDecision } from "@/lib/ai/treasury-db";
 import { AiProviderError, type AiCompletion } from "@/lib/ai/types";
 import type { PersonalityTraits } from "@/lib/ai/personality";
 import { readAppConfig, type AppConfig } from "@/lib/config/env";
@@ -84,6 +86,7 @@ export type MindRunReport = {
   constructed: number;
   rejected: number;
   decisions: Array<{ tokenId: string; status: string; detail: string }>;
+  treasury?: { status: string; detail: string };
 };
 
 type Client = ReturnType<typeof createServiceRoleClient>;
@@ -400,6 +403,88 @@ export async function runAiMind(
     const startedAt = Date.now();
     let lastModelStartedAt = 0;
     let endRun = false;
+    let treasuryConsidered = false;
+
+    async function attachTreasury(): Promise<void> {
+      if (treasuryConsidered) return;
+      treasuryConsidered = true;
+      if (report.status === "halted" || report.status === "budget") {
+        report.treasury = {
+          status: "skipped",
+          detail: "The mind run is halted or out of budget, so no treasury allocation was requested.",
+        };
+        return;
+      }
+      if (timeoutWithinDeadline(startedAt, config.aiRequestTimeoutMs, Date.now(), deadlineMs) === null) {
+        report.treasury = { status: "skipped", detail: "Stopped before the host timeout. No treasury allocation was requested." };
+        return;
+      }
+      const gate = evaluateBudget(config, await readUsage(client));
+      if (!gate.ok) {
+        report.treasury = { status: "skipped", detail: gate.reason };
+        if (gate.code === "halted") {
+          report.status = "halted";
+          report.reason = gate.reason;
+        }
+        return;
+      }
+      const roster = await loadTreasuryRoster(client, config);
+      const prior = await loadTreasuryPrior(client);
+      if (roster == null || prior == null) {
+        report.treasury = { status: "failed", detail: "Earlier treasury records could not be read. The model was not called." };
+        return;
+      }
+      if (roster.length === 0) {
+        report.treasury = { status: "skipped", detail: "No enrolled citizen is eligible, so no allocation was requested." };
+        return;
+      }
+      const slot = await takeModelSlot();
+      if (!slot) {
+        report.treasury = { status: "skipped", detail: "No model time remained for a treasury allocation." };
+        return;
+      }
+      try {
+        const result = await considerTreasuryAllocation({
+          nowMs: Date.now(),
+          roster,
+          prior,
+          monBalance: null,
+          chogBalance: null,
+          chogDecimals: null,
+          timeoutMs: slot.timeoutMs,
+          maxOutputTokens: config.aiMaxOutputTokens,
+          provider: config.aiProvider,
+          model: config.aiModel ?? "",
+          complete: async (request) =>
+            provider.complete({
+              purpose: "treasury_allocation",
+              messages: [
+                { role: "system", content: request.system },
+                { role: "user", content: request.user },
+              ],
+              timeoutMs: request.timeoutMs,
+              maxOutputTokens: request.maxOutputTokens,
+            }),
+          record: (row) => recordTreasuryDecision(client, row),
+        });
+        if (result.promptChars > 0) {
+          await bumpUsage(client, result.promptChars, result.outputTokens);
+        }
+        report.treasury = { status: result.status, detail: result.detail };
+        if (result.halt) {
+          await haltScheduler(client, result.halt.until, result.halt.reason);
+          report.status = "halted";
+          report.reason = result.halt.reason;
+        }
+      } catch {
+        if (report.status !== "halted") {
+          report.treasury = {
+            status: "failed",
+            detail: "The treasury review failed before a payment. No transaction was created.",
+          };
+        }
+      }
+    }
 
     async function takeModelSlot(): Promise<{ timeoutMs: number } | null> {
       const slot = await awaitFreeTierSlot(
@@ -453,11 +538,13 @@ export async function runAiMind(
       const queue = (claimed ?? []) as Array<{ claimed_citizen_id: string; token_id: string }>;
       if (queue.length === 0) {
         if (report.claimed === 0) {
+          await attachTreasury();
           await client
             .from("ai_scheduler_state")
-            .update({ last_run_at: new Date().toISOString(), last_error: null })
+            .update({ last_run_at: new Date().toISOString(), last_error: report.reason ?? null })
             .eq("singleton", true);
-          return { ...report, status: "idle", reason: "No eligible citizens." };
+          if (report.status === "halted" || report.status === "budget") return report;
+          return { ...report, status: "idle", reason: report.reason ?? "No eligible citizens." };
         }
         break;
       }
@@ -1092,6 +1179,7 @@ export async function runAiMind(
       }
     }
 
+    await attachTreasury();
     const schedulerPatch: Record<string, unknown> = {
       last_run_at: new Date().toISOString(),
       last_error: report.reason ?? null,

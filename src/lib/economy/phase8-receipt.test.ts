@@ -1918,7 +1918,7 @@ describe("phase 8 safety scans", () => {
     expect(readFileSync("src/lib/economy/production.ts", "utf8")).toContain("factoryDeployed: false");
     expect(readFileSync("src/app/api/transactions/route.ts", "utf8")).toContain("assertExecutionDisabled");
     expect(readFileSync("src/app/api/transactions/route.ts", "utf8")).not.toContain("economy_try_hold");
-    expect(readFileSync("src/components/shell/nav.tsx", "utf8")).not.toContain('href: "/economy"');
+    expect(readFileSync("src/components/shell/nav-items.ts", "utf8")).toContain('{ href: "/economy", label: "Economy" }');
     const phase7 = readFileSync("supabase/migrations/20261019230000_phase7_economy.sql", "utf8").toLowerCase();
     expect(phase7).toContain("economy_try_hold");
     const phase7Holds = phase7.slice(phase7.indexOf("function economy_try_holds"), phase7.indexOf("function economy_note_receipt"));

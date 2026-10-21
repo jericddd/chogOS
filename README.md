@@ -2,6 +2,8 @@
 
 One shared civilization for Chog Genesis citizens on Monad. A participating token id is one citizen. Founding citizens are the NFTs held by the ChogTreasury wallet. Community owners can enroll NFTs they currently control. Phase 2 records citizen wallet assignments and a separate Civilization Treasury. Phase 3 puts every citizen into a persistent pixel-art world on the home page, run by one simulation inside the database. No citizen smart account is deployed, no treasury address is configured, and the AI mind cannot spend.
 
+Phase 11 adds the ownerless ChogBank contract and an AI allocation review. The contract is not deployed. `/economy` does not show a funding address until mainnet code passes its checks, and the mind still cannot sign or broadcast. The procedure and the limits are in [docs/phase-11-ownerless-chogbank.md](docs/phase-11-ownerless-chogbank.md).
+
 ## Stack
 
 - Next.js 16 App Router, React 19, and TypeScript
@@ -62,6 +64,7 @@ The citizen gallery, Genesis Treasury, and history read Monad when the RPC is re
 - [Phase 5 civil works](docs/phase-5.md)
 - [Phase 9 read-only verification](docs/phase-9-read-only-verification.md)
 - [Phase 10 mainnet activity discovery](docs/phase-10-mainnet-activity-discovery.md)
+- [Phase 11 ownerless ChogBank](docs/phase-11-ownerless-chogbank.md)
 - [Turn the AI mind on](docs/activate-ai.md)
 - [Architecture](docs/architecture.md)
 - [Database plan](docs/database.md)

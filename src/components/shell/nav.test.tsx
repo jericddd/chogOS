@@ -20,15 +20,15 @@ afterEach(() => {
 });
 
 describe("civilization nav", () => {
-  it("keeps working destinations and omits leftover Economy and Businesses", () => {
+  it("keeps working destinations, links Economy, and omits Businesses", () => {
     render(<CivilizationNav />);
     expect(screen.getByRole("link", { name: "World" }).getAttribute("href")).toBe("/");
     expect(screen.getByRole("link", { name: "Citizens" }).getAttribute("href")).toBe("/citizens");
     expect(screen.getByRole("link", { name: "History" }).getAttribute("href")).toBe("/activity");
     expect(screen.getByRole("link", { name: "Verify" }).getAttribute("href")).toBe("/verify");
     expect(screen.getByRole("link", { name: "Treasury" }).getAttribute("href")).toBe("/treasury");
+    expect(screen.getByRole("link", { name: "Economy" }).getAttribute("href")).toBe("/economy");
     expect(screen.getByRole("link", { name: "Enroll" }).getAttribute("href")).toBe("/enroll");
-    expect(screen.queryByRole("link", { name: "Economy" })).toBeNull();
     expect(screen.queryByRole("link", { name: "Businesses" })).toBeNull();
     const nav = screen.getByRole("navigation");
     expect(nav.className).toContain("flex-nowrap");
