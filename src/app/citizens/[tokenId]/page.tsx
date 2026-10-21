@@ -12,13 +12,12 @@ import { formatWorldTime } from "@/lib/world/clock";
 import { loadCitizenMind } from "@/lib/ai/load-mind";
 import { TRAIT_LABELS } from "@/lib/ai/personality";
 import { loadCitizenWorld, loadEventPage } from "@/lib/world/load";
-import { KIND_LABEL, ROLE_LABEL, citizenHref, describeCitizenNow } from "@/lib/world/present";
+import { homeDetail, loadCitizenStanding, socialDetail, wealthDetail } from "@/lib/civilization/standing";
+import { KIND_LABEL, ROLE_LABEL, citizenHref, describeCitizenNow, profileHref } from "@/lib/world/present";
 
 export const metadata: Metadata = {
   title: "Citizen",
 };
-
-const reserved = ["Social status", "Wealth", "Relationships"] as const;
 
 export default function CitizenPage({ params }: { params: Promise<{ tokenId: string }> }) {
   return (
@@ -126,19 +125,70 @@ async function CitizenLive({ tokenId }: { tokenId: string }) {
           </div>
         </section>
 
-        <section className="mt-8">
-          <h2 className="font-serif text-2xl">Reserved attributes</h2>
-          <ul className="mt-3 grid gap-2 sm:grid-cols-2">
-            {reserved.map((item) => (
-              <li key={item} className="rounded-xl border border-line px-3 py-3 text-sm">
-                <span className="text-muted">{item}</span>
-                <span className="mt-1 block">Not recorded</span>
-              </li>
-            ))}
-          </ul>
-        </section>
+        <CitizenStandingSection citizenId={citizen.citizenId} />
       </div>
     </div>
+  );
+}
+
+function partnerLabel(tokenId: string, names: Record<string, string>): string {
+  const name = names[tokenId];
+  if (!name) {
+    return `Chog #${tokenId}`;
+  }
+  if (name.toLowerCase() === `chog #${tokenId}`.toLowerCase()) {
+    return name;
+  }
+  return `${name} · #${tokenId}`;
+}
+
+async function CitizenStandingSection({ citizenId }: { citizenId: string | null }) {
+  const standing = await loadCitizenStanding(citizenId);
+  return (
+    <section className="mt-8">
+      <h2 className="font-serif text-2xl">Standing</h2>
+      <p className="mt-2 text-sm leading-6 text-muted">
+        Taken from recorded world events. Nothing here is a sample rank or a made-up balance.
+      </p>
+      {standing.status !== "ready" ? (
+        <p className="mt-3 text-sm leading-6 text-muted">{standing.detail}</p>
+      ) : (
+        <div className="mt-4 grid gap-4">
+          <div className="rounded-xl border border-line px-3 py-3 text-sm">
+            <h3 className="text-xs tracking-[0.14em] text-muted uppercase">Social status</h3>
+            <p className="mt-1">{standing.summary.label}</p>
+            <p className="mt-1 text-muted">{socialDetail(standing.summary)}</p>
+          </div>
+          <div className="rounded-xl border border-line px-3 py-3 text-sm">
+            <h3 className="text-xs tracking-[0.14em] text-muted uppercase">Wealth</h3>
+            <p className="mt-1">{homeDetail(standing.homeName)}</p>
+            <p className="mt-1 text-muted">{wealthDetail(standing.summary.rationsDrawn)}</p>
+          </div>
+          <div className="rounded-xl border border-line px-3 py-3 text-sm">
+            <h3 className="text-xs tracking-[0.14em] text-muted uppercase">Relationships</h3>
+            {standing.summary.relationships.length === 0 ? (
+              <p className="mt-1 text-muted">No relationship is recorded. A relationship is a citizen they have actually met.</p>
+            ) : (
+              <ul className="mt-2 divide-y divide-line border-y border-line">
+                {standing.summary.relationships.map((partner) => (
+                  <li key={partner.tokenId} className="py-2">
+                    <Link href={profileHref(partner.tokenId)} className="text-accent">
+                      {partnerLabel(partner.tokenId, standing.names)}
+                    </Link>
+                    <p className="text-muted">
+                      Met {partner.meetings === 1 ? "once" : `${partner.meetings} times`}
+                      {partner.place ? ` at ${partner.place}` : ""}
+                      {" · "}
+                      {formatUtc(partner.lastMetAt)}
+                    </p>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        </div>
+      )}
+    </section>
   );
 }
 
