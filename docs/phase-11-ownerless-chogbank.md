@@ -1,6 +1,6 @@
 # Phase 11 — Ownerless ChogBank
 
-Status: **implemented and tested in source. Not deployed.** There is no funding address. Production signing and broadcasting stay disabled. This work did not change production environment variables, did not write the production database, and did not broadcast a transaction.
+Status: **implemented and tested in source. Not deployed. Mainnet funding is NO-GO.** The live Genesis NFT lets `transferFrom` place the token inside its citizen wallet without a receiver hook, and that MON then has no spender. [docs/hackathon-mainnet-launch.md](hackathon-mainnet-launch.md) records the decision. There is no funding address. Production signing and broadcasting stay disabled. This work did not change production environment variables, did not write the production database, and did not broadcast a transaction.
 
 The ChogTreasury wallet `0x84113421A8a564b594ee9ae78c875310332d7023` holds Chog Genesis NFTs. It is not this treasury.
 
@@ -67,7 +67,7 @@ The only payout destination in the contract is the CREATE2 citizen wallet for th
 
 Those wallets are not deployed. V2 fixed the old session round-trip by requiring custody, and that fix is not a reason to send funds. The remaining hazards are unchanged:
 
-- An unsafe `transferFrom` of the NFT into the wallet can freeze it with no recovery.
+- An unsafe `transferFrom` of the NFT into the wallet can freeze it with no recovery. The verified Genesis source and a read-only mainnet simulation confirm that `transferFrom` skips the receiver hook. `safeTransferFrom` does not. A previous-holder rescue would be a theft path, so the wallet was left unchanged.
 - A non-standard approval can outlive a transfer.
 - A session budget trusts the token's `balanceOf`.
 - The wallet bytecode has not had an independent audit.
@@ -129,7 +129,7 @@ forge test --root contracts --match-contract ChogBank
 ```
 
 3. Confirm chain 143 and that the official Genesis and `$CHOG` contracts have code. The script reverts with `CodeMissing` when they do not.
-4. Choose the authorizer address and the eight numeric parameters. Suggested MON caps, in wei, match the application review: per transaction `100000000000000000`, per citizen `1000000000000000000`, aggregate `2000000000000000000`. Choose `$CHOG` caps as raw 18-decimal integers. Suggested window `86400` and authorization lifetime `3600`.
+4. Choose the authorizer address and the eight numeric parameters. For any later first MON test, use the smaller contract caps in [docs/hackathon-mainnet-launch.md](hackathon-mainnet-launch.md): 0.01 MON per transaction and 0.05 MON per citizen and per window, with `$CHOG` at 1 wei. The 0.1 / 1 / 2 MON figures in the table above are the application review limits, not the contract caps to deploy. Suggested window `86400` and authorization lifetime `3600`. The launch document's current decision is still NO-GO.
 5. The script reads `CHOG_BANK_AUTHORIZER`, `CHOG_BANK_WINDOW_SECONDS`, `CHOG_BANK_MAX_AUTHORIZATION_TTL`, `CHOG_BANK_MAX_PER_TX_MON`, `CHOG_BANK_MAX_CITIZEN_WINDOW_MON`, `CHOG_BANK_MAX_AGGREGATE_WINDOW_MON`, `CHOG_BANK_MAX_PER_TX_CHOG`, `CHOG_BANK_MAX_CITIZEN_WINDOW_CHOG`, and `CHOG_BANK_MAX_AGGREGATE_WINDOW_CHOG`.
 6. A simulation without a broadcast still reverts until `CHOG_BANK_AUTHORIZE_BROADCAST` equals the phrase in `DeployChogBank`. That phrase is the explicit authorization. After it is set, the broadcast command is:
 
@@ -145,10 +145,12 @@ Use a keystore or hardware signer for gas. Do not put that key, or the authorize
 
 7. The script checks the immutables and that both EIP-1967 slots are zero. Copy the logged address only after a separate read shows code there.
 8. Verify the source on Monadscan. This repository does not mark that step done in advance.
-9. Set `CHOG_BANK_CONTRACT_ADDRESS` to that deployed address only after a separate read shows code. Set `CHOG_BANK_DEPLOYMENT_TX` only after the receipt's `contractAddress` is that same address. Reload `/economy`. The funding address appears only if the checks pass. Do not send MON or `$CHOG` until `docs/hackathon-mainnet-launch.md` says the withdraw path is ready.
+9. Set `CHOG_BANK_CONTRACT_ADDRESS` to that deployed address only after a separate read shows code. Set `CHOG_BANK_DEPLOYMENT_TX` only after the receipt's `contractAddress` is that same address. Reload `/economy`. The funding address appears only if the checks pass. Do not send MON or `$CHOG` while `docs/hackathon-mainnet-launch.md` says NO-GO. That document does not currently say the withdraw path is safe.
 10. Leave payout execution disabled until the wallet hazards are resolved and a reviewed signer, outside an environment private key, is intentionally enabled. This phase has no switch that turns it on.
 
 ## Actions required before funds
+
+These actions stay closed. The Genesis `transferFrom` freeze has no safe repair, and the launch decision is NO-GO.
 
 1. Review and accept this contract.
 2. Choose authorizer custody that is not an application environment variable.

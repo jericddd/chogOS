@@ -7,7 +7,7 @@ Aim for two and a half minutes. One take. If a page is slow, read the sentence a
 ## Before you press record
 
 1. Open these tabs in order: the home page, one citizen, Economy, and the GitHub file `contracts/src/ChogBank.sol` on the production branch.
-2. Confirm Economy says the funding address is not ready, or, only after a real deploy, that it shows one address with a Monadscan link. Do not refresh into a half-loaded panel.
+2. Confirm Economy says the funding address is not ready. The mainnet decision in `docs/hackathon-mainnet-launch.md` is NO-GO, so the recording does not show a funded treasury. Do not refresh into a half-loaded panel.
 3. Set the browser to a 1280-wide window. Hide bookmarks. Do not show `.env`, Vercel, or a terminal that contains a key.
 4. If you already broadcast a payout, open that Monadscan transaction in a last tab. If you have not, do not open an old `$CHOG` transfer and do not call it a payout.
 
@@ -41,7 +41,7 @@ If a decision row is visible, read its reason and point at "No payout transactio
 
 Show `contracts/src/ChogBank.sol` on GitHub.
 
-Say: "ChogBank has no owner, no upgrade, and no emergency withdraw. An authorizer can sign a capped allocation, and the contract still checks the asset, the expiry, the replay id, and the recipient. The recipient is only that citizen's wallet. If the wallet is missing, or the NFT was unsafely pushed into it, the payment reverts. The authorizer cannot pay an arbitrary address and cannot change the rules."
+Say: "ChogBank has no owner, no upgrade, and no emergency withdraw. An authorizer can sign a capped allocation, and the contract still checks the asset, the expiry, the replay id, and the recipient. The recipient is only that citizen's wallet. If the wallet is missing, the payment reverts. If the NFT is pushed in with transferFrom, MON already in the wallet can become unreachable, and that is why I have not funded it. The authorizer cannot pay an arbitrary address and cannot change the rules."
 
 ### 2:10 What is real today
 
@@ -51,7 +51,7 @@ If, and only if, `/economy` shows a checked bank and a payout link, open that Mo
 
 ### 2:30 Stop
 
-End on the Economy page. The last sentence is: "The payment path is tested locally and stays off until the wallet is deployed, the bank is verified, and one small manual payout is confirmed on chain."
+End on the Economy page. The last sentence is: "The payment path is tested locally. It is not funded, because an NFT transferFrom into the citizen wallet can trap the MON, and the Genesis contract does not let us reject that transfer."
 
 ## Backup if the live site or the AI is down
 

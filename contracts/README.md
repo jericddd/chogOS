@@ -4,7 +4,7 @@ Local Foundry package. Nothing in this directory is a confirmed Mainnet deployme
 
 ## ChogBank
 
-`src/ChogBank.sol` is an ownerless MON and `$CHOG` treasury. It is not deployed. `forge script script/DeployChogBank.s.sol --root contracts` reverts unless the chain id is 143, `CHOG_BANK_AUTHORIZE_BROADCAST` is the exact phrase in that script, and the pinned citizen-wallet path already has code. Do not add `--broadcast` until that authorization is explicit. The factory, the implementation, and a citizen wallet are not funding addresses. See [docs/hackathon-mainnet-launch.md](../docs/hackathon-mainnet-launch.md).
+`src/ChogBank.sol` is an ownerless MON and `$CHOG` treasury. It is not deployed. `forge script script/DeployChogBank.s.sol --root contracts` reverts unless the chain id is 143, `CHOG_BANK_AUTHORIZE_BROADCAST` is the exact phrase in that script, and the pinned citizen-wallet path already has code. Do not add `--broadcast`. The current decision in [docs/hackathon-mainnet-launch.md](../docs/hackathon-mainnet-launch.md) is NO-GO, because Genesis `transferFrom` can freeze a citizen wallet with no recovery. The factory, the implementation, and a citizen wallet are not funding addresses.
 
 ## EventAnchor
 
