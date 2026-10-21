@@ -2,7 +2,12 @@ import type { ChogBankPublicView } from "@/lib/economy/treasury-public";
 
 export function ChogBankPanel({ view }: { view: ChogBankPublicView }) {
   return (
-    <section className="rounded-2xl border border-line bg-card px-5 py-5" data-testid="ownerless-chogbank" data-funding-ready={view.fundingReady ? "yes" : "no"}>
+    <section
+      className="rounded-2xl border border-line bg-card px-5 py-5"
+      data-testid="ownerless-chogbank"
+      data-funding-ready={view.fundingReady ? "yes" : "no"}
+      data-funding-scan={view.fundingScan}
+    >
       <p className="text-xs tracking-[0.16em] text-accent uppercase">Ownerless treasury</p>
       <h2 className="mt-2 font-serif text-3xl tracking-tight">ChogBank</h2>
       <p className="mt-3 max-w-3xl text-sm leading-6 text-muted">{view.summary}</p>

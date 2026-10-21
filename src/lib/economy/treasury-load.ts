@@ -1,18 +1,13 @@
 import "server-only";
 import { connection } from "next/server";
-import { getAddress, type Address, type Hex } from "viem";
+import { createPublicClient, getAddress, http, type Address, type Hex } from "viem";
 import { addresses } from "@/lib/blockchain/addresses";
+import { getChain } from "@/lib/blockchain/chains";
 import { createChainClient } from "@/lib/blockchain/public-client";
 import { readAppConfig, type AppConfig } from "@/lib/config/env";
+import { scanChogBankLogs, type BankLogRecord, type BankLogScan, type BankLogSource } from "@/lib/economy/bank-log-scan";
 import { openEconomyClient } from "@/lib/economy/db";
-import {
-  CHOG_BANK_EVENTS,
-  decodeBankLog,
-  decodeDirectChogTransfer,
-  withoutFundedTransfers,
-  type DecodedDistribution,
-  type DecodedFunding,
-} from "@/lib/economy/treasury-logs";
+import { CHOG_BANK_EVENTS } from "@/lib/economy/treasury-logs";
 import {
   knownAddressProblem,
   pendingInspection,
@@ -26,7 +21,9 @@ import {
 import { publicRpcError } from "@/lib/verify/anchor";
 
 const TIMEOUT_MS = 4_000;
-const LOG_SPAN = 99n;
+const SCAN_BUDGET_MS = 7_000;
+const LOG_TIMEOUT_MS = 2_500;
+const PUBLIC_MAINNET_RPC = "https://rpc.monad.xyz";
 
 const BANK_ABI = [
   { type: "function", name: "configuredChainId", stateMutability: "view", inputs: [], outputs: [{ type: "uint256" }] },
@@ -68,60 +65,56 @@ const CALLS = {
 export async function loadOwnerlessChogBank(): Promise<ChogBankPublicView> {
   await connection();
   const config = readAppConfig();
-  const [inspection, decisions, chainActivity] = await Promise.all([
-    inspectContract(config),
-    loadDecisions(),
-    Promise.resolve({ distributions: [] as DecodedDistribution[], funding: [] as DecodedFunding[], read: false }),
-  ]);
-  const activity =
-    inspection.codeBytes && inspection.codeBytes > 0 && inspection.configuredAddress
-      ? await within(readRecentActivity(config, getAddress(inspection.configuredAddress))).catch(() => ({
-          distributions: [] as DecodedDistribution[],
-          funding: [] as DecodedFunding[],
-          read: false,
-        }))
-      : chainActivity;
+  const started = Date.now();
+  const [found, decisions] = await Promise.all([inspectContract(config), loadDecisions()]);
+  const remaining = Math.max(1_000, SCAN_BUDGET_MS - (Date.now() - started));
+  const activity = await readPersistentActivity(config, found.inspection, found.deploymentBlock, remaining);
   return presentOwnerlessTreasury({
-    inspection,
+    inspection: found.inspection,
     decisions: decisions.rows,
     decisionsLoaded: decisions.loaded,
     distributions: activity.distributions,
     fundingRows: activity.funding,
-    fundingLogsRead: activity.read,
+    fundingScan: activity.status,
+    fundingScanCause: activity.cause === "no-start" ? "no-start" : undefined,
   });
 }
 
-async function inspectContract(config: AppConfig): Promise<OwnerlessInspection> {
+async function inspectContract(config: AppConfig): Promise<{ inspection: OwnerlessInspection; deploymentBlock: bigint | null }> {
   const inspection = pendingInspection(config.chainId);
   const raw = config.chogBankContractAddress;
-  if (!raw) return inspection;
+  if (!raw) return { inspection, deploymentBlock: null };
   inspection.configuredAddress = raw;
   inspection.blockedReason = knownAddressProblem(raw);
   if (config.chogBankGasAddress && raw.toLowerCase() === config.chogBankGasAddress.toLowerCase()) {
     inspection.blockedReason = "That address is the gas-paying address, not the ownerless treasury.";
   }
-  if (inspection.blockedReason || config.chainId !== 143) return inspection;
+  if (inspection.blockedReason || config.chainId !== 143) return { inspection, deploymentBlock: null };
 
   inspection.deploymentTx = config.chogBankDeploymentTx ?? null;
+  let deploymentBlock: bigint | null = null;
   try {
     const client = createChainClient(143, config.rpcUrl);
     const empty = await within(fillInspection(client, raw, inspection));
     if (!empty && inspection.codeBytes && inspection.codeBytes > 0 && config.chogBankDeploymentTx) {
-      inspection.deploymentTxVerified = await within(deploymentCreatedContract(client, config.chogBankDeploymentTx, raw)).catch(() => false);
+      const created = await within(deploymentCreatedContract(client, config.chogBankDeploymentTx, raw)).catch(() => null);
+      inspection.deploymentTxVerified = created?.verified === true;
+      deploymentBlock = created?.verified ? created.blockNumber : null;
     }
   } catch (error) {
     inspection.readError = inspection.readError ?? publicRpcError(error, "The chain read failed.");
   }
-  return inspection;
+  return { inspection, deploymentBlock };
 }
 
 async function deploymentCreatedContract(
   client: ReturnType<typeof createChainClient>,
   hash: `0x${string}`,
   bank: Address,
-): Promise<boolean> {
+): Promise<{ verified: boolean; blockNumber: bigint | null }> {
   const receipt = await client.getTransactionReceipt({ hash });
-  return receipt.status === "success" && receipt.contractAddress?.toLowerCase() === bank.toLowerCase();
+  const verified = receipt.status === "success" && receipt.contractAddress?.toLowerCase() === bank.toLowerCase();
+  return { verified, blockNumber: verified ? receipt.blockNumber : null };
 }
 
 async function fillInspection(client: ReturnType<typeof createChainClient>, raw: Address, inspection: OwnerlessInspection): Promise<boolean> {
@@ -226,51 +219,99 @@ async function probe(client: ReturnType<typeof createChainClient>, address: Addr
   }
 }
 
-async function readRecentActivity(config: AppConfig, bank: Address): Promise<{
-  distributions: DecodedDistribution[];
-  funding: DecodedFunding[];
-  read: boolean;
-}> {
-  const client = createChainClient(143, config.rpcUrl);
-  const latest = await client.getBlockNumber();
-  const fromBlock = latest > LOG_SPAN ? latest - LOG_SPAN : 0n;
-  const fundedAbi = CHOG_BANK_EVENTS[0];
-  const distributedAbi = CHOG_BANK_EVENTS[1];
-  const [fundedLogs, distributedLogs, transferLogs] = await Promise.all([
-    client.getLogs({ address: bank, event: fundedAbi, fromBlock, toBlock: latest }),
-    client.getLogs({ address: bank, event: distributedAbi, fromBlock, toBlock: latest }),
-    client.getLogs({ address: addresses.chogToken, event: TRANSFER_EVENT, args: { to: bank }, fromBlock, toBlock: latest }),
-  ]);
-  const receipts = new Map<string, Promise<boolean>>();
-  const accepted = (hash: Hex, blockNumber: bigint | null) => {
-    const key = hash.toLowerCase();
-    const cached = receipts.get(key);
-    if (cached) return cached;
-    const pending = client
-      .getTransactionReceipt({ hash })
-      .then((receipt) => receipt.status === "success" && blockNumber != null && receipt.blockNumber === blockNumber)
-      .catch(() => false);
-    receipts.set(key, pending);
-    return pending;
+async function readPersistentActivity(
+  config: AppConfig,
+  inspection: OwnerlessInspection,
+  deploymentBlock: bigint | null,
+  timeoutMs: number,
+): Promise<BankLogScan> {
+  if (!inspection.configuredAddress || !inspection.codeBytes || inspection.codeBytes < 1 || inspection.blockedReason || inspection.appChainId !== 143) {
+    return scanChogBankLogs({ deploymentBlock: null, source: unusedSource() });
+  }
+  try {
+    const client = createPublicClient({
+      chain: getChain(143),
+      transport: http(config.rpcUrl ?? PUBLIC_MAINNET_RPC, { timeout: LOG_TIMEOUT_MS, retryCount: 0 }),
+    });
+    const bank = getAddress(inspection.configuredAddress);
+    return await scanChogBankLogs({
+      deploymentBlock,
+      limits: { timeoutMs },
+      source: {
+        latestBlock: () => client.getBlockNumber(),
+        logs: async (query) => {
+          if (query.kind === "chog_transfer") {
+            const rows = await client.getLogs({
+              address: addresses.chogToken,
+              event: TRANSFER_EVENT,
+              args: { to: bank },
+              fromBlock: query.fromBlock,
+              toBlock: query.toBlock,
+            });
+            return rows.map(asRecord);
+          }
+          const event = query.kind === "funded" ? CHOG_BANK_EVENTS[0] : CHOG_BANK_EVENTS[1];
+          const rows = await client.getLogs({ address: bank, event, fromBlock: query.fromBlock, toBlock: query.toBlock });
+          return rows.map(asRecord);
+        },
+        receipt: async (hash) => {
+          const receipt = await client.getTransactionReceipt({ hash });
+          return { status: receipt.status === "success" ? "success" : "reverted", blockNumber: receipt.blockNumber };
+        },
+      },
+    });
+  } catch (error) {
+    return {
+      status: "unreadable",
+      cause: "rpc",
+      funding: [],
+      distributions: [],
+      fromBlock: deploymentBlock,
+      toBlock: null,
+      latestBlock: null,
+      pagesPlanned: 0,
+      pagesRead: 0,
+      coveredAll: false,
+      reason: publicRpcError(error, "The log scan failed."),
+    };
+  }
+}
+
+function unusedSource(): BankLogSource {
+  return {
+    latestBlock: () => Promise.reject(new Error("The log scan did not start.")),
+    logs: () => Promise.reject(new Error("The log scan did not start.")),
+    receipt: () => Promise.reject(new Error("The log scan did not start.")),
   };
-  const funding: DecodedFunding[] = [];
-  for (const log of fundedLogs.slice(0, 8)) {
-    const decoded = decodeBankLog(log);
-    if (!decoded || !("kind" in decoded)) continue;
-    if (await accepted(log.transactionHash, log.blockNumber)) funding.push(decoded);
-  }
-  for (const log of transferLogs.slice(0, 8)) {
-    const decoded = decodeDirectChogTransfer(log);
-    if (!decoded) continue;
-    if (await accepted(log.transactionHash, log.blockNumber)) funding.push(decoded);
-  }
-  const distributions: DecodedDistribution[] = [];
-  for (const log of distributedLogs.slice(0, 8)) {
-    const decoded = decodeBankLog(log);
-    if (!decoded || !("decisionId" in decoded)) continue;
-    if (await accepted(log.transactionHash, log.blockNumber)) distributions.push(decoded);
-  }
-  return { distributions, funding: withoutFundedTransfers(funding), read: true };
+}
+
+function asRecord(log: {
+  data: Hex;
+  topics: readonly Hex[];
+  transactionHash: Hex | null;
+  blockNumber: bigint | null;
+  logIndex: number | null;
+  removed?: boolean;
+}): BankLogRecord {
+  return {
+    data: log.data,
+    topics: log.topics,
+    transactionHash: log.transactionHash,
+    blockNumber: log.blockNumber,
+    logIndex: log.logIndex,
+    removed: log.removed,
+    args: transferArgs((log as { args?: unknown }).args),
+  };
+}
+
+function transferArgs(value: unknown): BankLogRecord["args"] {
+  if (!value || typeof value !== "object") return undefined;
+  const body = value as { from?: unknown; to?: unknown; value?: unknown };
+  return {
+    from: typeof body.from === "string" ? body.from : undefined,
+    to: typeof body.to === "string" ? body.to : undefined,
+    value: typeof body.value === "bigint" ? body.value : undefined,
+  };
 }
 
 async function loadDecisions(): Promise<{ loaded: boolean; rows: StoredTreasuryDecision[] }> {
