@@ -26,7 +26,7 @@ export default function EconomyPage({ searchParams }: { searchParams: Search }) 
     <div>
       <PageHeader
         title="Economy"
-        lede="ChogBank is the ownerless economic contract. Its address appears only after deployed Monad mainnet code passes the owner, proxy, chain, and asset checks. Until then there is no funding address. The operations panel below is a separate observer for an operator-configured address, and it is not this contract. Payout execution stays disabled. Discovered $CHOG transfers are chain evidence, not treasury payouts."
+        lede="ChogBank is the ownerless economic contract. Its address appears only after deployed Monad mainnet code passes the owner, proxy, chain, and asset checks. Until then there is no funding address. A citizen can exist with no wallet. A wallet-issuance row is a proposal, not a deployed account, and an allocation row is not a payment. The operations panel below is a separate observer for an operator-configured address, and it is not this contract. Payout execution stays disabled. Discovered $CHOG transfers are chain evidence, not treasury payouts."
       />
       <div className="space-y-6">
         <Suspense fallback={<p className="text-sm text-muted">Reading ChogBank…</p>}>

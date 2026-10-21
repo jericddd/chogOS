@@ -57,7 +57,7 @@ describe("public ownerless treasury", () => {
     expect(view.chogText).toBe("Not read");
     expect(view.summary).toContain("not deployed");
     expect(view.execution).toContain("disabled");
-    expect(view.policy.join(" ")).toContain("outside deposit()");
+    expect(view.policy.join(" ")).toContain("empty prediction");
     expect(view.funding.join(" ")).toContain("No funding address");
     expect(view.warnings.join(" ")).not.toMatch(/0x[0-9a-fA-F]{40}/);
   });
@@ -199,6 +199,35 @@ describe("public ownerless treasury", () => {
     expect(confirmed.decisions[0]?.txHref).toBe(`https://monadscan.com/tx/${HASH}`);
     expect(confirmed.decisions[0]?.recipient?.toLowerCase()).toContain("3333");
     expect(confirmed.decisions[0]?.detail).toContain("Distributed event");
+  });
+
+  it("shows a wallet-issuance proposal without a transaction", () => {
+    const view = presentOwnerlessTreasury({
+      inspection: pendingInspection(143),
+      decisionsLoaded: true,
+      decisions: [
+        {
+          id: "issue-1",
+          purpose: "wallet_issuance",
+          status: "proposed",
+          rationale: "The east road needs a purse.",
+          createdAt: null,
+          output: {
+            choice: "issue",
+            tokenId: "104",
+            stage: "proposed",
+            decisionId: DECISION,
+            txHash: HASH,
+          },
+        },
+      ],
+    });
+    expect(view.decisions).toHaveLength(1);
+    expect(view.decisions[0]?.headline).toContain("wallet issuance");
+    expect(view.decisions[0]?.txHash).toBeNull();
+    expect(view.decisions[0]?.txHref).toBeNull();
+    expect(view.decisions[0]?.detail).toMatch(/not a deployment/i);
+    expect(view.fundingAddress).toBeNull();
   });
 
   it("does not treat an unloaded decision query as an empty history", () => {

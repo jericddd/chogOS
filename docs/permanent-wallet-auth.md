@@ -1,6 +1,12 @@
 # Permanent citizen wallets
 
-One Chog NFT maps to one permanent citizen and one permanent smart-contract wallet. The wallet belongs to that NFT's identity. It does not belong to the current human owner, and it is not replaced when the NFT moves.
+**Current design: `CitizenAccountV3`.** A citizen is the enrolled token id and does not need a wallet. The AI proposes issuance. The factory binds one CREATE2 address to chain 143, Genesis `0xc96d31F8626c6D03Fae5dCD3d61e3FB9F4a73763`, and that token id. The only signer is the agent key fixed in the implementation. The NFT holder is not an owner. The wallet does not have to hold the NFT. Nothing in this design is deployed, and no V3 address is published here because the address depends on the agent public key, which has not been chosen.
+
+The V2 addresses below are void for the product. Do not fund them and do not deploy `CitizenAccountV2`. They still match that contract's bytecode, which is kept so the custody analysis can be checked. The rest of this file keeps that analysis: Genesis `transferFrom` does not notify the recipient, so a wallet whose authority depended on custody could freeze funds with no honest recovery.
+
+## Historical V2 custody model
+
+One Chog NFT maps to one permanent citizen and one permanent smart-contract wallet in the V2 design. That wallet belonged to that NFT's identity. It did not belong to the current human owner, and it was not replaced when the NFT moved. The human holder could still `execute` while they held the NFT, and an AI session required the wallet to hold the NFT. That coupling is not the product.
 
 Token 104 always maps to citizen 104 and wallet `0xD3c8e7fAfF0750bd202F72EBaBDD46D197B47502`. Token 129 always maps to citizen 129 and wallet `0x492905adbc786264f0195FAE4516F5275BB3b960`. Both addresses are CREATE2 predictions on Monad 143 for Chog Genesis `0xc96d31F8626c6D03Fae5dCD3d61e3FB9F4a73763`. Neither wallet is deployed. No factory in this design has been broadcast.
 

@@ -13,6 +13,7 @@ export function CitizenWalletPanel({ view }: { view: CitizenWalletView }) {
         <p className="mt-3 text-sm leading-6 text-muted">No wallet address is shown.</p>
       )}
       <p className="mt-3 text-sm leading-6 text-muted">{view.note}</p>
+      <p className="mt-3 text-sm leading-6 text-muted">{view.issuanceText}</p>
       <p className="mt-3 text-sm leading-6 text-muted">{view.authority}</p>
     </section>
   );

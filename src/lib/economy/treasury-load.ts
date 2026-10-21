@@ -278,8 +278,8 @@ async function loadDecisions(): Promise<{ loaded: boolean; rows: StoredTreasuryD
   if (!client) return { loaded: false, rows: [] };
   const { data, error } = await client
     .from("ai_decisions")
-    .select("id, status, rationale, output, created_at")
-    .eq("purpose", "treasury_allocation")
+    .select("id, purpose, status, rationale, output, created_at")
+    .in("purpose", ["treasury_allocation", "wallet_issuance"])
     .order("created_at", { ascending: false })
     .limit(20);
   if (error || !data) return { loaded: false, rows: [] };
@@ -287,6 +287,7 @@ async function loadDecisions(): Promise<{ loaded: boolean; rows: StoredTreasuryD
     loaded: true,
     rows: (data as Array<Record<string, unknown>>).map((row) => ({
       id: String(row.id),
+      purpose: typeof row.purpose === "string" ? row.purpose : undefined,
       status: String(row.status),
       rationale: typeof row.rationale === "string" ? row.rationale : null,
       createdAt: typeof row.created_at === "string" ? row.created_at : null,

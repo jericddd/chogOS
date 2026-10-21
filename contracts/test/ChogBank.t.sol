@@ -3,10 +3,10 @@ pragma solidity 0.8.28;
 
 import {Test, console2} from "forge-std/Test.sol";
 import {ChogBank} from "../src/ChogBank.sol";
-import {CitizenAccountFactoryV2} from "../src/CitizenAccountFactoryV2.sol";
-import {CitizenAccountV2} from "../src/CitizenAccountV2.sol";
+import {CitizenAccountFactoryV3} from "../src/CitizenAccountFactoryV3.sol";
+import {CitizenAccountV3} from "../src/CitizenAccountV3.sol";
 import {DeployChogBank} from "../script/DeployChogBank.s.sol";
-import {DeployCitizenAccountFactoryV2} from "../script/DeployCitizenAccountFactoryV2.s.sol";
+import {DeployCitizenAccountFactoryV3} from "../script/DeployCitizenAccountFactoryV3.s.sol";
 import {DeployCitizenWallets} from "../script/DeployCitizenWallets.s.sol";
 import {ChogBankPayout} from "../script/ChogBankPayout.s.sol";
 import {MockGenesisNFT} from "./MockGenesisNFT.sol";
@@ -122,30 +122,33 @@ contract ReenterChog {
 
 contract ChogBankTest is Test {
     uint256 internal constant AUTHORIZER_KEY = 0xA11CE;
+    uint256 internal constant AGENT_KEY = 0xA9E47;
     bytes32 internal constant EIP712_FIXTURE = 0x9e8d7964415e5c69eb7f07794a255765113711d7caf35f311dbfba4824464ee8;
     bytes32 internal constant REASON_BECAUSE = 0x28b81c8e4912ea69e000b26a50fadf183c10d66be8b43a192a361b6d38a1d464;
 
     address internal authorizer;
+    address internal agent;
     address internal alice = makeAddr("alice");
     address internal bob = makeAddr("bob");
     MockGenesisNFT internal nft;
     MockChog internal chog;
-    CitizenAccountV2 internal implementation;
-    CitizenAccountFactoryV2 internal factory;
+    CitizenAccountV3 internal implementation;
+    CitizenAccountFactoryV3 internal factory;
     ChogBank internal bank;
     address internal wallet104;
 
     function setUp() public {
         vm.chainId(143);
         authorizer = vm.addr(AUTHORIZER_KEY);
+        agent = vm.addr(AGENT_KEY);
         nft = new MockGenesisNFT();
         chog = new MockChog();
-        implementation = new CitizenAccountV2();
-        factory = new CitizenAccountFactoryV2(address(implementation));
+        implementation = new CitizenAccountV3(agent);
+        factory = new CitizenAccountFactoryV3(address(implementation));
         bank = _bank(address(nft), address(chog), 1 ether, 2 ether, 3 ether, 10 ether, 20 ether, 30 ether);
         nft.mint(alice, 104);
         nft.mint(alice, 129);
-        wallet104 = factory.create(143, address(nft), 104);
+        wallet104 = _create(104);
     }
 
     function testFundingMonAndChog() public {
@@ -185,7 +188,7 @@ contract ChogBankTest is Test {
         assertEq(nft.ownerOf(104), alice);
     }
 
-    function testHolderWithdrawsThePayoutAndANewHolderControlsWhatRemains() public {
+    function testHolderCannotSpendAndTheAgentCanAfterAnNftTransfer() public {
         vm.deal(address(bank), 1 ether);
         uint256 gasBefore = gasleft();
         _attempt(bank, keccak256("pay-104"), 104, address(0), 0.2 ether);
@@ -193,55 +196,77 @@ contract ChogBankTest is Test {
         assertEq(wallet104.balance, 0.2 ether);
         assertEq(bank.payoutRecipient(104), wallet104);
 
+        bytes memory wrong = _sign(keccak256("nope"), 104, address(0), 0.1 ether, block.timestamp + 1 hours, keccak256("x"));
         vm.prank(alice);
-        CitizenAccountV2(payable(wallet104)).execute(alice, 0.1 ether, hex"01020304");
-        assertEq(alice.balance, 0.1 ether);
-        assertEq(wallet104.balance, 0.1 ether);
+        vm.expectRevert(CitizenAccountV3.BadSigner.selector);
+        CitizenAccountV3(payable(wallet104)).execute(keccak256("alice"), alice, 0.1 ether, hex"", block.timestamp + 1 hours, wrong);
 
         vm.prank(alice);
         nft.transferFrom(alice, bob, 104);
         assertEq(bank.citizenWallet(104), wallet104);
-        vm.prank(alice);
-        vm.expectRevert(CitizenAccountV2.NotAuthorized.selector);
-        CitizenAccountV2(payable(wallet104)).execute(alice, 0.1 ether, hex"01020304");
+        assertEq(nft.ownerOf(104), bob);
+        _act(keccak256("spend"), alice, 0.1 ether, hex"");
+        assertEq(alice.balance, 0.1 ether);
+        assertEq(wallet104.balance, 0.1 ether);
         vm.prank(bob);
-        CitizenAccountV2(payable(wallet104)).execute(bob, 0.1 ether, hex"01020304");
-        assertEq(bob.balance, 0.1 ether);
-        assertEq(wallet104.balance, 0);
+        vm.expectRevert(CitizenAccountV3.BadSigner.selector);
+        CitizenAccountV3(payable(wallet104)).execute(keccak256("bob"), bob, 0.1 ether, hex"", block.timestamp + 1 hours, hex"");
     }
 
-    function testCustodyDepositStillAcceptsAndReleasesAPayout() public {
-        vm.startPrank(alice);
-        nft.approve(wallet104, 104);
-        CitizenAccountV2(payable(wallet104)).deposit();
-        vm.stopPrank();
+    function testIssuanceAndFundingAreAtomicAndABadIssuancePaysNothing() public {
         vm.deal(address(bank), 1 ether);
-        _attempt(bank, keccak256("custody-104"), 104, address(0), 0.05 ether);
+        uint256 ghost = 77;
+        nft.mint(alice, ghost);
+        assertEq(bank.citizenWallet(ghost).code.length, 0);
+        bytes32 payId = keccak256("atomic");
+        ChogBank.IssuancePermit memory missing = ChogBank.IssuancePermit(bytes32(0), block.timestamp + 20 minutes, hex"");
+        vm.expectRevert(CitizenAccountFactoryV3.Replay.selector);
+        this.attemptAtomic(ghost, payId, missing);
+        assertFalse(bank.usedDecision(payId));
+        assertEq(bank.citizenWallet(ghost).code.length, 0);
+
+        bytes32 issueId = keccak256("issue-77");
+        uint256 issueDeadline = block.timestamp + 30 minutes;
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(AGENT_KEY, factory.issuanceDigest(143, address(nft), ghost, issueId, issueDeadline));
+        this.attemptAtomic(ghost, payId, ChogBank.IssuancePermit(issueId, issueDeadline, abi.encodePacked(r, s, v)));
+        assertTrue(bank.usedDecision(payId));
+        assertEq(bank.citizenWallet(ghost).balance, 0.05 ether);
+        assertEq(bank.citizenWallet(ghost), factory.predict(143, address(nft), ghost));
+    }
+
+    function attemptAtomic(uint256 tokenId, bytes32 payId, ChogBank.IssuancePermit calldata permit) external {
+        uint256 deadline = block.timestamp + 20 minutes;
+        bytes32 reason = keccak256("x");
+        bank.distributeWithIssuance(
+            payId, tokenId, address(0), 0.05 ether, deadline, reason, _signFor(bank, payId, tokenId, address(0), 0.05 ether, deadline, reason), permit
+        );
+    }
+
+    function testPayoutDoesNotRequireNftCustody() public {
+        vm.deal(address(bank), 1 ether);
+        _attempt(bank, keccak256("no-custody"), 104, address(0), 0.05 ether);
         assertEq(wallet104.balance, 0.05 ether);
-        vm.prank(alice);
-        CitizenAccountV2(payable(wallet104)).execute(alice, 0.05 ether, hex"01020304");
+        assertEq(nft.ownerOf(104), alice);
+        _act(keccak256("return-mon"), alice, 0.05 ether, hex"");
         assertEq(wallet104.balance, 0);
     }
 
-    function testUnsafeNftTransferFreezesTheWalletAndDoesNotConsumeTheDecision() public {
+    function testUnsafeNftTransferDoesNotFreezeTheWalletOrConsumeAFailedPayout() public {
         vm.deal(address(bank), 1 ether);
-        _attempt(bank, keccak256("before-freeze"), 104, address(0), 0.05 ether);
+        _attempt(bank, keccak256("before-push"), 104, address(0), 0.05 ether);
         vm.prank(alice);
         nft.transferFrom(alice, wallet104, 104);
-        assertFalse(CitizenAccountV2(payable(wallet104)).custodyOpen());
-        bytes32 stuck = keccak256("after-freeze");
-        uint256 bankBefore = address(bank).balance;
-        uint256 walletBefore = wallet104.balance;
-        _expectAttempt(ChogBank.WalletFrozen.selector, bank, stuck, 104, address(0), 0.05 ether);
-        assertFalse(bank.usedDecision(stuck));
-        assertEq(address(bank).balance, bankBefore);
-        assertEq(wallet104.balance, walletBefore);
+        assertEq(nft.ownerOf(104), wallet104);
+        bytes32 nextId = keccak256("after-push");
+        _attempt(bank, nextId, 104, address(0), 0.05 ether);
+        assertTrue(bank.usedDecision(nextId));
+        assertEq(wallet104.balance, 0.1 ether);
+        _act(keccak256("still-works"), alice, 0.1 ether, hex"");
+        assertEq(wallet104.balance, 0);
+
+        vm.expectRevert(MockGenesisNFT.UnsafeReceiver.selector);
         vm.prank(alice);
-        vm.expectRevert(CitizenAccountV2.UntrackedCustody.selector);
-        CitizenAccountV2(payable(wallet104)).execute(alice, 0.01 ether, hex"01020304");
-        vm.prank(bob);
-        vm.expectRevert(CitizenAccountV2.UntrackedCustody.selector);
-        CitizenAccountV2(payable(wallet104)).execute(bob, 0.01 ether, hex"01020304");
+        nft.safeTransferFrom(alice, wallet104, 129);
     }
 
     function testAuthorizedChogDistributionUsesRawUnits() public {
@@ -328,7 +353,7 @@ contract ChogBankTest is Test {
         _attempt(bank, keccak256("second"), 104, address(0), 1 ether);
         _expectAttempt(ChogBank.CitizenCap.selector, bank, keccak256("third"), 104, address(0), 1 wei);
 
-        address wallet129 = factory.create(143, address(nft), 129);
+        address wallet129 = _create(129);
         _attempt(bank, keccak256("other-citizen"), 129, address(0), 1 ether);
         assertEq(wallet129.balance, 1 ether);
         _expectAttempt(ChogBank.AggregateCap.selector, bank, keccak256("over-aggregate"), 129, address(0), 1 wei);
@@ -426,7 +451,7 @@ contract ChogBankTest is Test {
     function testReentrancyCannotApplyASecondDistribution() public {
         ReenterChog hostile = new ReenterChog();
         ChogBank hostileBank = _bank(address(nft), address(hostile), 1 ether, 2 ether, 3 ether, 10 ether, 20 ether, 30 ether);
-        address wallet129 = factory.create(143, address(nft), 129);
+        address wallet129 = _create(129);
         hostile.mint(address(hostileBank), 20 ether);
         bytes32 second = keccak256("reenter-second");
         uint256 deadline = block.timestamp + 20 minutes;
@@ -584,6 +609,21 @@ contract ChogBankTest is Test {
         target.distribute(decisionId, tokenId, asset, amount, deadline, reason, signature);
     }
 
+    function _create(uint256 tokenId) internal returns (address) {
+        bytes32 decisionId = keccak256(abi.encode("issue", tokenId, address(factory)));
+        uint256 deadline = block.timestamp + 1 hours;
+        (uint8 v, bytes32 r, bytes32 s) =
+            vm.sign(AGENT_KEY, factory.issuanceDigest(143, address(nft), tokenId, decisionId, deadline));
+        return factory.create(143, address(nft), tokenId, decisionId, deadline, abi.encodePacked(r, s, v));
+    }
+
+    function _act(bytes32 actionId, address target, uint256 value, bytes memory data) internal {
+        uint256 deadline = block.timestamp + 30 minutes;
+        bytes32 digest = CitizenAccountV3(payable(wallet104)).actionDigest(actionId, target, value, keccak256(data), deadline);
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(AGENT_KEY, digest);
+        CitizenAccountV3(payable(wallet104)).execute(actionId, target, value, data, deadline, abi.encodePacked(r, s, v));
+    }
+
     function _sign(bytes32 decisionId, uint256 tokenId, address asset, uint256 amount, uint256 deadline, bytes32 reason)
         internal
         view
@@ -685,11 +725,15 @@ contract ChogBankScriptTest is Test {
 
         vm.etch(0xc96d31F8626c6D03Fae5dCD3d61e3FB9F4a73763, hex"00");
         vm.etch(0x350035555E10d9AfAF1566AaebfCeD5BA6C27777, hex"00");
+        vm.setEnv("CHOG_WALLET_AGENT", "0x0000000000000000000000000000000000000004");
         vm.expectRevert(DeployChogBank.WalletPathMissing.selector);
         bankScript.run();
 
         vm.setEnv("CHOG_BANK_AUTHORIZE_WALLETS", "yes-deploy-citizen-wallets-on-monad-mainnet");
         vm.setEnv("CHOG_BANK_DEMO_TOKEN_ID", "104");
+        address agent = vm.addr(0xA9E47);
+        vm.setEnv("CHOG_WALLET_AGENT_KEY", "695879");
+        vm.setEnv("CHOG_WALLET_AGENT", vm.toString(agent));
         address deployer = 0x4e59b44847b379578588920cA78FbF26c0B4956C;
         if (deployer.code.length == 0) {
             vm.etch(
@@ -699,7 +743,7 @@ contract ChogBankScriptTest is Test {
         }
         address wallet = wallets.run();
         assertGt(wallet.code.length, 0);
-        assertEq(wallet, new DeployCitizenAccountFactoryV2().predictAccount(143, 0xc96d31F8626c6D03Fae5dCD3d61e3FB9F4a73763, 104));
+        assertEq(wallet, new DeployCitizenAccountFactoryV3().predictAccount(143, 0xc96d31F8626c6D03Fae5dCD3d61e3FB9F4a73763, 104, agent));
     }
 }
 

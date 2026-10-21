@@ -4,7 +4,11 @@ Local Foundry package. Nothing in this directory is a confirmed Mainnet deployme
 
 ## ChogBank
 
-`src/ChogBank.sol` is an ownerless MON and `$CHOG` treasury. It is not deployed. `forge script script/DeployChogBank.s.sol --root contracts` reverts unless the chain id is 143, `CHOG_BANK_AUTHORIZE_BROADCAST` is the exact phrase in that script, and the pinned citizen-wallet path already has code. Do not add `--broadcast` until that authorization is explicit. The factory, the implementation, and a citizen wallet are not funding addresses. See [docs/hackathon-mainnet-launch.md](../docs/hackathon-mainnet-launch.md).
+`src/ChogBank.sol` is an ownerless MON and `$CHOG` treasury. It is not deployed. It pays a deployed `CitizenAccountV3` wallet for one token id. It does not read `ownerOf`, and it does not pay an empty predicted address. `distributeWithIssuance` can ask `CitizenAccountFactoryV3` to create that wallet and then pay it in the same transaction. A failed create reverts the payout.
+
+`CitizenAccountV3` is not an NFT custodian. Its only signer is the agent key fixed in the implementation. There is no public `execute` for the NFT holder and no upgrade. `CitizenAccountV2` remains in the repository as the old custody model. Do not deploy it. Its CREATE2 addresses are void for this design and are listed as such in the launch document. A V3 address cannot be predicted until the agent public key is chosen, so this file does not list one.
+
+`forge script script/DeployChogBank.s.sol --root contracts` reverts unless the chain id is 143, `CHOG_BANK_AUTHORIZE_BROADCAST` is the exact phrase in that script, and the V3 wallet path already has code. Do not add `--broadcast` until that authorization is explicit. The factory, the implementation, and a citizen wallet are not funding addresses. See [docs/hackathon-mainnet-launch.md](../docs/hackathon-mainnet-launch.md).
 
 ## EventAnchor
 

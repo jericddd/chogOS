@@ -2,6 +2,7 @@ import { formatUnits } from "viem";
 import { formatUtc } from "@/lib/civilization/labels";
 import type { FundingStatus } from "@/lib/wallets/funding";
 import { describeNftWalletAuthority, walletStatusCopy, type TreasuryVerification, type WalletAssignment, type WalletStatus } from "@/lib/wallets/lifecycle";
+import type { WalletLifecycle } from "@/lib/wallets/issuance";
 import type { StoredFunding, StoredTreasury } from "@/lib/wallets/store";
 
 export type BalanceLine = {
@@ -159,12 +160,20 @@ function fundingSummary(row: StoredFunding): string {
   return `${row.status} · ${amount} · ${when}. ${row.detail ?? ""}`.trim();
 }
 
+export type CitizenIssuanceView = {
+  choice: "issue" | "defer" | "unnecessary" | null;
+  lifecycle: WalletLifecycle | null;
+  rationale: string | null;
+  decisionId: string | null;
+};
+
 export type CitizenWalletView = {
   statusText: string;
   addressLabel: string | null;
   address: string | null;
   authority: string;
   note: string;
+  issuanceText: string;
 };
 
 export function presentCitizenWallet(input: {
@@ -172,8 +181,11 @@ export function presentCitizenWallet(input: {
   assignment: WalletAssignment | null;
   persistence: CivilizationTreasuryView["persistence"];
   detail?: string;
+  /** Undefined means the issuance table was not read. Null means it was read and had no row. */
+  issuance?: CitizenIssuanceView | null;
 }): CitizenWalletView {
   const authority = describeNftWalletAuthority();
+  const issuanceText = issuanceCopy(input.issuance);
   if (!input.citizenId) {
     return {
       statusText: "No wallet record",
@@ -181,6 +193,7 @@ export function presentCitizenWallet(input: {
       address: null,
       authority,
       note: "This citizen is not persisted, so no wallet assignment exists.",
+      issuanceText,
     };
   }
   if (input.persistence === "not_persisted") {
@@ -190,6 +203,7 @@ export function presentCitizenWallet(input: {
       address: null,
       authority,
       note: "Supabase is not configured, so citizen wallets are not stored.",
+      issuanceText,
     };
   }
   if (input.persistence === "migration_pending") {
@@ -199,6 +213,7 @@ export function presentCitizenWallet(input: {
       address: null,
       authority,
       note: "The Phase 2 wallet table is not in the database yet. No address has been predicted or deployed.",
+      issuanceText,
     };
   }
   if (input.persistence === "unavailable") {
@@ -208,6 +223,7 @@ export function presentCitizenWallet(input: {
       address: null,
       authority,
       note: input.detail ?? "The wallet record could not be read.",
+      issuanceText,
     };
   }
   if (!input.assignment) {
@@ -216,7 +232,8 @@ export function presentCitizenWallet(input: {
       addressLabel: null,
       address: null,
       authority,
-      note: "No assignment is stored for this citizen on the configured chain.",
+      note: "No wallet is assigned. This citizen is active without one.",
+      issuanceText,
     };
   }
   return {
@@ -225,7 +242,24 @@ export function presentCitizenWallet(input: {
     address: displayAddress(input.assignment),
     authority,
     note: assignmentNote(input.assignment.status),
+    issuanceText,
   };
+}
+
+function issuanceCopy(issuance: CitizenIssuanceView | null | undefined): string {
+  if (issuance === undefined) return "Wallet-issuance decisions were not loaded.";
+  if (issuance === null) return "No wallet-issuance decision is recorded.";
+  const reason = issuance.rationale ? ` ${issuance.rationale}` : "";
+  if (issuance.choice === "issue") {
+    return `The AI proposed issuing a wallet. That proposal is not a deployed account.${reason}`;
+  }
+  if (issuance.choice === "defer") {
+    return `The AI deferred wallet issuance. The citizen stays active without a new wallet.${reason}`;
+  }
+  if (issuance.choice === "unnecessary") {
+    return `The AI recorded that a wallet is unnecessary for now.${reason}`;
+  }
+  return `A wallet decision is stored, and it did not assign an address.${reason}`;
 }
 
 function addressLabelFor(status: WalletStatus): string | null {
@@ -259,7 +293,7 @@ function assignmentNote(status: WalletStatus): string {
     return "Verification required matching contract code. NFT ownership still does not move a conventional Safe owner.";
   }
   if (status === "not_configured") {
-    return "No smart-account address is stored for this citizen.";
+    return "This citizen is active without a wallet.";
   }
   return "The record does not claim a deployed wallet.";
 }

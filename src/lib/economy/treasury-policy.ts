@@ -327,39 +327,29 @@ export function keepFirstDecision(verdicts: readonly AllocationVerdict[]): Alloc
 export type WalletObservation = {
   codeBytes: number | null;
   wallet: string | null;
-  nftHolder: string | null;
-  custodyOpen: boolean | null;
+  /** True when the deployed wallet's stored token id, NFT contract, and chain match this citizen. */
+  identityMatches: boolean | null;
 };
 
-export type WalletPayoutState = "unread" | "missing" | "ready" | "frozen" | "inconsistent";
+export type WalletPayoutState = "unread" | "missing" | "ready" | "inconsistent";
 
-/** Mirrors ChogBank.payoutRecipient. Unread or frozen is not a payable wallet. */
+/** Mirrors ChogBank.payoutRecipient. An empty prediction is not a payable wallet. NFT custody is not required. */
 export function citizenWalletPayoutGate(input: WalletObservation): { state: WalletPayoutState; reason: string } {
-  if (input.codeBytes == null || input.wallet == null || input.nftHolder == null || input.custodyOpen == null) {
-    return { state: "unread", reason: "Wallet custody was not read. No payout is authorized from an unread wallet." };
+  if (input.codeBytes == null || input.wallet == null || input.identityMatches == null) {
+    return { state: "unread", reason: "Wallet code and identity were not read. No payout is authorized from an unread wallet." };
   }
   if (input.codeBytes < 1) {
     return { state: "missing", reason: "The citizen wallet has no code. A predicted address is not a recipient." };
   }
-  const holderIsWallet = input.nftHolder.toLowerCase() === input.wallet.toLowerCase();
-  if (holderIsWallet && !input.custodyOpen) {
-    return {
-      state: "frozen",
-      reason: "The NFT was transferred into the wallet outside deposit(). That wallet is frozen, so the bank must not pay it.",
-    };
-  }
-  if (input.custodyOpen && !holderIsWallet) {
+  if (!input.identityMatches) {
     return {
       state: "inconsistent",
-      reason: "Custody is open but the wallet does not hold the NFT. The bank must not pay it.",
+      reason: "The contract at that address is not the wallet for this citizen. The bank must not pay it.",
     };
-  }
-  if (input.custodyOpen) {
-    return { state: "ready", reason: "The controller deposited the NFT and can withdraw with execute." };
   }
   return {
     state: "ready",
-    reason: "The current NFT holder can withdraw with execute. A later holder can withdraw funds that are still in the wallet.",
+    reason: "The deployed wallet matches this citizen. The NFT holder does not have to custody the NFT, and does not control the wallet.",
   };
 }
 
