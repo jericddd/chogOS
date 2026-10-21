@@ -523,7 +523,7 @@ export function WorldCanvas({ snapshot, skewMs, selection, follow, onSelect, onU
       tabIndex={0}
       onKeyDown={onKeyDown}
       role="application"
-      aria-label="Map of chogOS. Arrow keys pan, plus and minus zoom, 0 resets the view, Escape clears the selection. The day and civilization details are in the panel inside the map."
+      aria-label="Map of chogOS. Arrow keys pan, plus and minus zoom, 0 resets the view, Escape clears the selection. The day, civilization, town growth, and activity are in the panels inside this screen."
       className="relative h-full w-full overflow-hidden outline-none focus-visible:ring-2 focus-visible:ring-accent"
     >
       <canvas ref={canvasRef} className="block touch-none select-none" style={{ cursor: "grab", imageRendering: "pixelated" }} />

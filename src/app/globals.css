@@ -116,3 +116,135 @@ h2.font-serif {
   margin: 0;
   padding: 0;
 }
+
+/* One screen: map plus town, growth, and activity.
+   Wide screens show all three panels. Narrow screens keep one readable pane at a time. */
+.world-stage {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+}
+
+.world-map {
+  position: relative;
+  min-height: 0;
+  flex: 1 1 0%;
+}
+
+.world-lower {
+  display: flex;
+  min-height: 0;
+  flex: 1.08 1 0%;
+  flex-direction: column;
+  gap: 0.4rem;
+  padding: 0.35rem 0.65rem 0.65rem;
+}
+
+.world-tabs {
+  display: grid;
+  flex: none;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.35rem;
+}
+
+.world-tabs button {
+  margin: 0;
+  cursor: pointer;
+  border: 2px solid var(--line);
+  background: var(--card);
+  color: var(--muted);
+  font-family: var(--font-press), ui-monospace, monospace;
+  font-size: 0.55rem;
+  line-height: 1.45;
+  letter-spacing: 0.03em;
+  padding: 0.5rem 0.15rem;
+}
+
+.world-tabs button[aria-selected="true"] {
+  border-color: var(--pixel-gold);
+  background: var(--accent);
+  color: var(--pixel-ink);
+}
+
+.world-feeds {
+  display: contents;
+}
+
+.world-town,
+.world-growth,
+.world-activity {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  flex: 1 1 0%;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--card);
+}
+
+.is-inactive {
+  display: none;
+}
+
+.world-scroll {
+  scrollbar-color: var(--pixel-gold) transparent;
+  scrollbar-width: thin;
+}
+
+@media (min-width: 768px) {
+  .world-stage {
+    display: block;
+  }
+
+  .world-map {
+    position: absolute;
+    inset: 0;
+    flex: none;
+  }
+
+  .world-lower {
+    display: contents;
+  }
+
+  .world-tabs {
+    display: none;
+  }
+
+  .world-town {
+    position: absolute;
+    z-index: 10;
+    top: 0.75rem;
+    right: 0.75rem;
+    bottom: 0.75rem;
+    width: 22rem;
+    flex: none;
+  }
+
+  .world-town.is-inactive,
+  .world-growth.is-inactive,
+  .world-activity.is-inactive {
+    display: flex;
+  }
+
+  .world-feeds {
+    position: absolute;
+    z-index: 10;
+    bottom: 0.75rem;
+    left: 0.75rem;
+    display: grid;
+    width: calc(100% - 24.25rem);
+    height: min(17.5rem, 42%);
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr);
+    gap: 0.75rem;
+    pointer-events: none;
+  }
+
+  .world-growth,
+  .world-activity {
+    flex: none;
+    grid-row: auto;
+    grid-column: auto;
+    pointer-events: auto;
+  }
+}
