@@ -17,6 +17,7 @@ contract DeployChogBank is Script {
     error BroadcastDisabled();
     error WrongChain();
     error CodeMissing();
+    error WalletPathMissing();
     error InvariantFailed();
 
     function run() external returns (ChogBank bank) {
@@ -39,6 +40,9 @@ contract DeployChogBank is Script {
         address factory = wallets.predictFactory();
         address implementation = wallets.predictImplementation();
         if (GENESIS.code.length == 0 || CHOG.code.length == 0) revert CodeMissing();
+        if (!_walletPathReady(factory, implementation)) revert WalletPathMissing();
+        uint256 demoTokenId = vm.envUint("CHOG_BANK_DEMO_TOKEN_ID");
+        if (wallets.predictAccount(block.chainid, GENESIS, demoTokenId).code.length == 0) revert WalletPathMissing();
 
         vm.startBroadcast();
         bank = new ChogBank(
@@ -61,13 +65,18 @@ contract DeployChogBank is Script {
         vm.stopBroadcast();
 
         assertOwnerless(bank, authorizer, windowSeconds, maxTtl, perTxMon, citizenMon, aggregateMon, perTxChog, citizenChog, aggregateChog);
-        console2.log("ChogBank deployed. Confirm code on Monadscan before funding:");
+        console2.log("ChogBank deployed. Confirm code on Monadscan. Do not fund from this log:");
         console2.logAddress(address(bank));
         console2.log("Pinned citizen-wallet factory (not a funding address):");
         console2.logAddress(factory);
-        if (factory.code.length == 0) {
-            console2.log("Factory has no code. Distributions revert until that factory and a citizen wallet are deployed.");
-        }
+    }
+
+    function _walletPathReady(address factory, address implementation) internal view returns (bool) {
+        if (factory.code.length == 0 || implementation.code.length == 0) return false;
+        (bool versionOk, bytes memory versionData) = implementation.staticcall(abi.encodeWithSignature("codeVersion()"));
+        if (!versionOk || versionData.length < 32 || abi.decode(versionData, (uint256)) != 1) return false;
+        (bool implOk, bytes memory implData) = factory.staticcall(abi.encodeWithSignature("implementation()"));
+        return implOk && implData.length >= 32 && abi.decode(implData, (address)) == implementation;
     }
 
     function assertOwnerless(

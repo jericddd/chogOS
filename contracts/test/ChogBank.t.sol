@@ -1,11 +1,14 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.28;
 
-import {Test} from "forge-std/Test.sol";
+import {Test, console2} from "forge-std/Test.sol";
 import {ChogBank} from "../src/ChogBank.sol";
 import {CitizenAccountFactoryV2} from "../src/CitizenAccountFactoryV2.sol";
 import {CitizenAccountV2} from "../src/CitizenAccountV2.sol";
 import {DeployChogBank} from "../script/DeployChogBank.s.sol";
+import {DeployCitizenAccountFactoryV2} from "../script/DeployCitizenAccountFactoryV2.s.sol";
+import {DeployCitizenWallets} from "../script/DeployCitizenWallets.s.sol";
+import {ChogBankPayout} from "../script/ChogBankPayout.s.sol";
 import {MockGenesisNFT} from "./MockGenesisNFT.sol";
 
 contract MockChog {
@@ -180,6 +183,65 @@ contract ChogBankTest is Test {
         assertEq(address(bank).balance, 1.6 ether);
         assertTrue(bank.usedDecision(id));
         assertEq(nft.ownerOf(104), alice);
+    }
+
+    function testHolderWithdrawsThePayoutAndANewHolderControlsWhatRemains() public {
+        vm.deal(address(bank), 1 ether);
+        uint256 gasBefore = gasleft();
+        _attempt(bank, keccak256("pay-104"), 104, address(0), 0.2 ether);
+        console2.log("local distribute gas", gasBefore - gasleft());
+        assertEq(wallet104.balance, 0.2 ether);
+        assertEq(bank.payoutRecipient(104), wallet104);
+
+        vm.prank(alice);
+        CitizenAccountV2(payable(wallet104)).execute(alice, 0.1 ether, hex"01020304");
+        assertEq(alice.balance, 0.1 ether);
+        assertEq(wallet104.balance, 0.1 ether);
+
+        vm.prank(alice);
+        nft.transferFrom(alice, bob, 104);
+        assertEq(bank.citizenWallet(104), wallet104);
+        vm.prank(alice);
+        vm.expectRevert(CitizenAccountV2.NotAuthorized.selector);
+        CitizenAccountV2(payable(wallet104)).execute(alice, 0.1 ether, hex"01020304");
+        vm.prank(bob);
+        CitizenAccountV2(payable(wallet104)).execute(bob, 0.1 ether, hex"01020304");
+        assertEq(bob.balance, 0.1 ether);
+        assertEq(wallet104.balance, 0);
+    }
+
+    function testCustodyDepositStillAcceptsAndReleasesAPayout() public {
+        vm.startPrank(alice);
+        nft.approve(wallet104, 104);
+        CitizenAccountV2(payable(wallet104)).deposit();
+        vm.stopPrank();
+        vm.deal(address(bank), 1 ether);
+        _attempt(bank, keccak256("custody-104"), 104, address(0), 0.05 ether);
+        assertEq(wallet104.balance, 0.05 ether);
+        vm.prank(alice);
+        CitizenAccountV2(payable(wallet104)).execute(alice, 0.05 ether, hex"01020304");
+        assertEq(wallet104.balance, 0);
+    }
+
+    function testUnsafeNftTransferFreezesTheWalletAndDoesNotConsumeTheDecision() public {
+        vm.deal(address(bank), 1 ether);
+        _attempt(bank, keccak256("before-freeze"), 104, address(0), 0.05 ether);
+        vm.prank(alice);
+        nft.transferFrom(alice, wallet104, 104);
+        assertFalse(CitizenAccountV2(payable(wallet104)).custodyOpen());
+        bytes32 stuck = keccak256("after-freeze");
+        uint256 bankBefore = address(bank).balance;
+        uint256 walletBefore = wallet104.balance;
+        _expectAttempt(ChogBank.WalletFrozen.selector, bank, stuck, 104, address(0), 0.05 ether);
+        assertFalse(bank.usedDecision(stuck));
+        assertEq(address(bank).balance, bankBefore);
+        assertEq(wallet104.balance, walletBefore);
+        vm.prank(alice);
+        vm.expectRevert(CitizenAccountV2.UntrackedCustody.selector);
+        CitizenAccountV2(payable(wallet104)).execute(alice, 0.01 ether, hex"01020304");
+        vm.prank(bob);
+        vm.expectRevert(CitizenAccountV2.UntrackedCustody.selector);
+        CitizenAccountV2(payable(wallet104)).execute(bob, 0.01 ether, hex"01020304");
     }
 
     function testAuthorizedChogDistributionUsesRawUnits() public {
@@ -587,24 +649,27 @@ contract TwoPayouts {
 }
 
 contract ChogBankScriptTest is Test {
-    function testBroadcastStaysDisabled() public {
-        vm.chainId(143);
-        vm.setEnv("CHOG_BANK_AUTHORIZE_BROADCAST", "disabled");
-        DeployChogBank script = new DeployChogBank();
-        vm.expectRevert(DeployChogBank.BroadcastDisabled.selector);
-        script.run();
-    }
-
-    function testWrongChainRevertsBeforeThePhrase() public {
+    function testDeploymentGatesStayClosedUntilEachPhraseAndTheWalletPath() public {
+        DeployChogBank bankScript = new DeployChogBank();
         vm.chainId(1);
         vm.setEnv("CHOG_BANK_AUTHORIZE_BROADCAST", "yes-deploy-chogbank-on-monad-mainnet");
-        DeployChogBank script = new DeployChogBank();
         vm.expectRevert(DeployChogBank.WrongChain.selector);
-        script.run();
-    }
+        bankScript.run();
 
-    function testAuthorizedPhraseStillRefusesEmptyOfficialCode() public {
         vm.chainId(143);
+        vm.setEnv("CHOG_BANK_AUTHORIZE_BROADCAST", "disabled");
+        vm.expectRevert(DeployChogBank.BroadcastDisabled.selector);
+        bankScript.run();
+
+        vm.setEnv("CHOG_BANK_AUTHORIZE_WALLETS", "no");
+        vm.setEnv("CHOG_BANK_AUTHORIZE_PAYOUT", "no");
+        DeployCitizenWallets wallets = new DeployCitizenWallets();
+        vm.expectRevert(DeployCitizenWallets.BroadcastDisabled.selector);
+        wallets.run();
+        ChogBankPayout payout = new ChogBankPayout();
+        vm.expectRevert(ChogBankPayout.BroadcastDisabled.selector);
+        payout.run();
+
         vm.setEnv("CHOG_BANK_AUTHORIZE_BROADCAST", "yes-deploy-chogbank-on-monad-mainnet");
         vm.setEnv("CHOG_BANK_AUTHORIZER", "0x0000000000000000000000000000000000000001");
         vm.setEnv("CHOG_BANK_WINDOW_SECONDS", "86400");
@@ -615,9 +680,26 @@ contract ChogBankScriptTest is Test {
         vm.setEnv("CHOG_BANK_MAX_PER_TX_CHOG", "1");
         vm.setEnv("CHOG_BANK_MAX_CITIZEN_WINDOW_CHOG", "1");
         vm.setEnv("CHOG_BANK_MAX_AGGREGATE_WINDOW_CHOG", "1");
-        DeployChogBank script = new DeployChogBank();
         vm.expectRevert(DeployChogBank.CodeMissing.selector);
-        script.run();
+        bankScript.run();
+
+        vm.etch(0xc96d31F8626c6D03Fae5dCD3d61e3FB9F4a73763, hex"00");
+        vm.etch(0x350035555E10d9AfAF1566AaebfCeD5BA6C27777, hex"00");
+        vm.expectRevert(DeployChogBank.WalletPathMissing.selector);
+        bankScript.run();
+
+        vm.setEnv("CHOG_BANK_AUTHORIZE_WALLETS", "yes-deploy-citizen-wallets-on-monad-mainnet");
+        vm.setEnv("CHOG_BANK_DEMO_TOKEN_ID", "104");
+        address deployer = 0x4e59b44847b379578588920cA78FbF26c0B4956C;
+        if (deployer.code.length == 0) {
+            vm.etch(
+                deployer,
+                hex"7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffe03601600081602082378035828234f58015156039578182fd5b8082525050506014600cf3"
+            );
+        }
+        address wallet = wallets.run();
+        assertGt(wallet.code.length, 0);
+        assertEq(wallet, new DeployCitizenAccountFactoryV2().predictAccount(143, 0xc96d31F8626c6D03Fae5dCD3d61e3FB9F4a73763, 104));
     }
 }
 

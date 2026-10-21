@@ -172,6 +172,7 @@ function applicationPolicy(): string[] {
     `MON per transaction ${formatTokenAmount(limits.maxPerTxMon.toString(10), 18, "MON")}. Per citizen ${formatTokenAmount(limits.maxCitizenWindowMon.toString(10), 18, "MON")}. Aggregate ${formatTokenAmount(limits.maxAggregateWindowMon.toString(10), 18, "MON")}.`,
     "$CHOG application caps are 0. No token price was assumed, so token allocations stay closed.",
     "A model cannot raise these limits. Production signing stays off, so a passing review is not a signature.",
+    "A payout also reverts unless that citizen's wallet has code and is not holding its NFT outside deposit(). An unsafe transfer into the wallet freezes it. Production does not sign or broadcast.",
   ];
 }
 

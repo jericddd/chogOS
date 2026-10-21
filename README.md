@@ -2,7 +2,7 @@
 
 One shared civilization for Chog Genesis citizens on Monad. A participating token id is one citizen. Founding citizens are the NFTs held by the ChogTreasury wallet. Community owners can enroll NFTs they currently control. Phase 2 records citizen wallet assignments and a separate Civilization Treasury. Phase 3 puts every citizen into a persistent pixel-art world on the home page, run by one simulation inside the database. No citizen smart account is deployed, no treasury address is configured, and the AI mind cannot spend.
 
-Phase 11 adds the ownerless ChogBank contract and an AI allocation review. The contract is not deployed. `/economy` does not show a funding address until mainnet code passes its checks, and the mind still cannot sign or broadcast. The procedure and the limits are in [docs/phase-11-ownerless-chogbank.md](docs/phase-11-ownerless-chogbank.md).
+Phase 11 adds the ownerless ChogBank contract and an AI allocation review. The contract is not deployed. `/economy` does not show a funding address until mainnet code passes its checks, and the mind still cannot sign or broadcast. The launch sequence is [docs/hackathon-mainnet-launch.md](docs/hackathon-mainnet-launch.md). The recording script is [docs/hackathon-showcase-runbook.md](docs/hackathon-showcase-runbook.md).
 
 ## Stack
 

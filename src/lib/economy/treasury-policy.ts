@@ -97,6 +97,7 @@ export function evaluateTreasuryAllocation(input: {
   chogDecimals: number | null;
   walletDeployed: boolean;
   executionEnabled: boolean;
+  walletObservation?: WalletObservation;
 }): AllocationVerdict {
   const draft = input.draft;
   const fail = (status: AllocationStatus, reason: string): AllocationVerdict => ({
@@ -147,6 +148,12 @@ export function evaluateTreasuryAllocation(input: {
     return fail("budget_exhausted", "The amount is above the per-transaction cap.");
   }
 
+  if (input.walletObservation) {
+    const gate = citizenWalletPayoutGate(input.walletObservation);
+    if (gate.state !== "ready") {
+      return fail("rejected", gate.reason);
+    }
+  }
   const windowId = treasuryWindowId(input.nowMs, input.limits.windowSeconds);
   const decisionId = treasuryDecisionId(draft.tokenId, draft.asset, windowId);
   const sameWindow = input.spent.filter((row) => row.windowId === windowId && row.asset === draft.asset);
@@ -315,6 +322,45 @@ export function keepFirstDecision(verdicts: readonly AllocationVerdict[]): Alloc
     seen.add(verdict.decisionId);
     return verdict;
   });
+}
+
+export type WalletObservation = {
+  codeBytes: number | null;
+  wallet: string | null;
+  nftHolder: string | null;
+  custodyOpen: boolean | null;
+};
+
+export type WalletPayoutState = "unread" | "missing" | "ready" | "frozen" | "inconsistent";
+
+/** Mirrors ChogBank.payoutRecipient. Unread or frozen is not a payable wallet. */
+export function citizenWalletPayoutGate(input: WalletObservation): { state: WalletPayoutState; reason: string } {
+  if (input.codeBytes == null || input.wallet == null || input.nftHolder == null || input.custodyOpen == null) {
+    return { state: "unread", reason: "Wallet custody was not read. No payout is authorized from an unread wallet." };
+  }
+  if (input.codeBytes < 1) {
+    return { state: "missing", reason: "The citizen wallet has no code. A predicted address is not a recipient." };
+  }
+  const holderIsWallet = input.nftHolder.toLowerCase() === input.wallet.toLowerCase();
+  if (holderIsWallet && !input.custodyOpen) {
+    return {
+      state: "frozen",
+      reason: "The NFT was transferred into the wallet outside deposit(). That wallet is frozen, so the bank must not pay it.",
+    };
+  }
+  if (input.custodyOpen && !holderIsWallet) {
+    return {
+      state: "inconsistent",
+      reason: "Custody is open but the wallet does not hold the NFT. The bank must not pay it.",
+    };
+  }
+  if (input.custodyOpen) {
+    return { state: "ready", reason: "The controller deposited the NFT and can withdraw with execute." };
+  }
+  return {
+    state: "ready",
+    reason: "The current NFT holder can withdraw with execute. A later holder can withdraw funds that are still in the wallet.",
+  };
 }
 
 export function recoveryAction(

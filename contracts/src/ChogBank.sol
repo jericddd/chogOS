@@ -4,6 +4,10 @@ pragma solidity 0.8.28;
 import {CitizenAccountV2} from "./CitizenAccountV2.sol";
 import {CitizenWalletProxy} from "./CitizenWalletProxy.sol";
 
+interface IGenesisOwner {
+    function ownerOf(uint256 tokenId) external view returns (address);
+}
+
 /// @title ChogBank
 /// @notice Ownerless treasury for native MON and one pinned ERC-20, intended to be the official $CHOG token.
 /// There is no owner, administrator, proxy, upgrade path, rescue, or delegatecall.
@@ -11,6 +15,7 @@ import {CitizenWalletProxy} from "./CitizenWalletProxy.sol";
 /// the contract still enforces the asset, the caps, the expiry, the nonce, and the recipient.
 /// The recipient is only the permanent citizen wallet for one Chog Genesis token id.
 /// If that wallet has no code, the transfer reverts. An empty predicted address is never paid.
+/// If the wallet holds its NFT outside deposit(), the transfer reverts. That state authorizes nobody.
 /// A leaked authorizer key can spend only inside these caps, and only to those wallets.
 /// It cannot change this contract or withdraw to an arbitrary address.
 /// This contract is not deployed. Deploying it does not deploy citizen wallets.
@@ -36,6 +41,7 @@ contract ChogBank {
     error AggregateCap();
     error InsufficientBalance();
     error WalletNotDeployed();
+    error WalletFrozen();
     error InvalidRecipient();
     error TransferFailed();
 
@@ -177,8 +183,6 @@ contract ChogBank {
 
     /// @notice Permanent wallet for this token id. The address is empty until that wallet is created.
     /// Changing the NFT holder does not change this address.
-    /// @notice Permanent wallet for this token id. The address is empty until that wallet is created.
-    /// Changing the NFT holder does not change this address.
     function citizenWallet(uint256 tokenId) public view returns (address) {
         bytes32 salt = keccak256(abi.encode(configuredChainId, genesis, tokenId));
         return address(uint160(uint256(keccak256(abi.encodePacked(bytes1(0xff), walletFactory, salt, walletInitHash(tokenId))))));
@@ -201,7 +205,7 @@ contract ChogBank {
         _checkFresh(decisionId, amount, deadline, asset);
         _requireAuthorizer(allocationDigest(decisionId, tokenId, asset, amount, deadline, reasonHash), signature);
         _reserve(decisionId, tokenId, asset, amount);
-        address recipient = _requireWallet(tokenId);
+        address recipient = payoutRecipient(tokenId);
         _pay(asset, recipient, amount);
         emit Distributed(decisionId, tokenId, recipient, asset, amount, deadline, reasonHash);
     }
@@ -233,12 +237,25 @@ contract ChogBank {
         spentInWindow[windowKey] = nextWindow;
     }
 
-    function _requireWallet(uint256 tokenId) private view returns (address recipient) {
+    /// @notice Recipient used by distribute. Reverts when the wallet is missing or frozen.
+    /// Frozen means the wallet holds the NFT and custody is closed. deposit() is the only opening.
+    function payoutRecipient(uint256 tokenId) public view returns (address recipient) {
         recipient = citizenWallet(tokenId);
         if (recipient == address(this) || recipient == authorizer || recipient == chogToken || recipient == genesis) {
             revert InvalidRecipient();
         }
         if (recipient.code.length == 0) revert WalletNotDeployed();
+        address holder;
+        try IGenesisOwner(genesis).ownerOf(tokenId) returns (address owner) {
+            holder = owner;
+        } catch {
+            revert InvalidRecipient();
+        }
+        (bool ok, bytes memory data) = recipient.staticcall(abi.encodeWithSignature("custodyOpen()"));
+        if (!ok || data.length < 32) revert WalletFrozen();
+        bool custody = abi.decode(data, (bool));
+        if (holder == recipient && !custody) revert WalletFrozen();
+        if (custody && holder != recipient) revert WalletFrozen();
     }
 
     function _pay(address asset, address recipient, uint256 amount) private {
