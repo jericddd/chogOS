@@ -2,14 +2,22 @@
 
 Record against https://chogos.vercel.app. Keep it between two and three minutes. One take. If a page is slow, read the sentence and move on.
 
-The treasury contract is not deployed unless `/economy` shows a checked address and a Monadscan contract link. A review row is not a payment. A wallet-issuance row is not a deployed wallet. A `$CHOG` transfer on the token contract is not a ChogBank payout. Local tests are not mainnet proof.
+Checked on production on 21 October 2026: the world was live, citizen 104 had no wallet, and Economy said the funding address was not ready. The clock and the activity feed move. Read what is on the screen. Do not invent a later deployment.
+
+The treasury contract is not deployed unless `/economy` shows a checked address and a Monadscan contract link. A review row is not a payment. A wallet-issuance row is not a deployed wallet. A `$CHOG` transfer on the token contract is not a ChogBank payout. Local tests are not mainnet proof. Source code is not deployed bytecode.
 
 ## Before you press record
 
-1. Open these tabs in order: the home page, one enrolled citizen, Economy, and the GitHub file `contracts/src/CitizenAccountV3.sol` on the branch that contains this runbook.
-2. Confirm Economy says the funding address is not ready. If a later deploy has actually passed the checks, the page shows one address with a Monadscan link. Do not refresh into a half-loaded panel and do not invent the other case.
-3. Set the browser to a 1280-wide window. Hide bookmarks. Do not show `.env`, Vercel, a private key, or a terminal.
-4. If you have not broadcast a payout, do not open an old `$CHOG` transfer and do not call it a payout.
+1. Open these tabs, in this order:
+   - https://chogos.vercel.app/
+   - https://chogos.vercel.app/citizens/104
+   - https://chogos.vercel.app/economy
+   - https://github.com/jericddd/chogOS/blob/cursor/phase-1-genesis-world-155c/contracts/src/ChogBank.sol
+   - https://github.com/jericddd/chogOS/blob/cursor/phase-1-genesis-world-155c/contracts/src/CitizenAccountV3.sol
+2. On Economy, the funding address must say **Not ready**, the deployment transaction must say **Not recorded**, and payout execution must say it is disabled. Lower down, Discovered Mainnet Activity says **Mainnet activity could not be read** because Monad RPC is not configured. That is the expected empty scan. It is not a failed payout. If a later deploy has actually passed the checks, stop and do not use this script.
+3. On citizen 104, scroll to **Citizen wallet**. It should say no wallet is assigned and no issuance decision is recorded. If a proposal has appeared, say it is a proposal and not a deployed account. If the line says the decisions were not loaded, say that instead.
+4. Set the browser to a 1280-wide window. Hide bookmarks. Do not show `.env`, Vercel, Supabase, a private key, or a terminal.
+5. Do not open an old `$CHOG` transfer. `main` does not contain these contract files. Use the two links above.
 
 ## Spoken track
 
@@ -17,60 +25,50 @@ The treasury contract is not deployed unless `/economy` shows a checked address 
 
 Open https://chogos.vercel.app/
 
-Say: "chogOS is one shared civilization for Chog Genesis citizens on Monad. Each enrolled token id is a citizen. The world keeps that citizen's life, goals, and history. The AI mind writes decisions for those citizens."
+Say: "chogOS is one shared civilization for Chog Genesis citizens on Monad. Each enrolled token id is a citizen. The world on this page is live. Citizens are moving, and the clock is advancing. The page says this activity is not a balance, a trade, or an on-chain action."
 
-Show the world moving. If it is still loading, open https://chogos.vercel.app/citizens and choose the first enrolled citizen.
+Point at the live clock and one line in the activity feed. The feed marks those lines Simulation.
 
-### 0:30 A citizen without a wallet
+### 0:25 Citizen 104
 
-On the citizen page, show the token id and the current owner.
+Open https://chogos.vercel.app/citizens/104
 
-Say: "This token id is the permanent identity. The current owner is metadata. Selling the NFT updates that line and does not reset the citizen, and it does not hand the owner a wallet."
+Say: "This is token 104. The NFT name is CHOG #1565. Token 104 is the permanent citizen. The current owner is metadata from ownerOf. Selling the NFT changes that line. It does not reset the citizen, and it does not give the new holder a wallet."
 
-Point at the citizen wallet section.
+Scroll until the heading **Citizen wallet** is on screen.
 
-Say: "A citizen is valid with no wallet. The AI can propose one, defer it, or decide it is unnecessary. A proposal is not a deployed account. No address on this page is a place to send funds unless the page says the account has code."
+Say: "The page says no wallet is assigned, no address has been predicted or deployed, and no issuance decision is recorded. This citizen is active without a wallet. There is no address here to send funds to. A proposal, if one shows up later, is not a deployed account."
 
-If the section says no issuance is recorded, say that. Do not imply a decision you cannot see.
-
-### 1:10 The treasury proposal
+### 1:15 Economy
 
 Open https://chogos.vercel.app/economy
 
-Say: "The AI can propose an allocation: which citizen, which asset, how much, and why. The server checks the cap. The model cannot raise the cap, and this website does not sign or broadcast. A proposal is a payment only when a ChogBank Distributed event exists on Monad mainnet, chain 143."
+Say: "The funding address says Not ready. The deployment transaction is not recorded. Payout execution is disabled. The $CHOG application caps are 0. These are application limits, not caps of a deployed contract."
 
-Point at the spending policy. Read that `$CHOG` application caps are 0, and that an empty prediction is not paid. Point at "Not ready" if there is no funding address.
+Point at the allocation list.
 
-If a decision row is visible, read its reason and whether it says no payout transaction. If the list is empty, say: "No treasury payment has been recorded. An empty list is not a fake receipt."
+Say: "There is a rejected treasury review, and it says no payout transaction. That row is not a payment. This page does not show a Distributed event or a payout receipt."
 
-### 1:45 Ownerless bank and the wallet rule
+If Discovered Mainnet Activity is on screen, say: "This section says mainnet activity could not be read because the RPC is not configured. No logs were scanned. That is not a payout, and it is not a claim that no transfer exists." Otherwise leave it off screen.
 
-Show `contracts/src/ChogBank.sol`, then `contracts/src/CitizenAccountV3.sol`.
+### 1:50 Source, not a deployment
 
-Say: "ChogBank has no owner, no upgrade, and no emergency withdraw. An authorizer can sign a capped allocation. The contract still checks the asset, the expiry, the replay id, and the recipient. The recipient is that citizen's deployed wallet, not the NFT holder."
+Show `ChogBank.sol`, then `CitizenAccountV3.sol`, from the production branch.
 
-Say: "The wallet's signer is an agent key fixed in the contract. The NFT holder cannot execute it. A factory transaction can be submitted by a relayer. The sender of that transaction is not the decision-maker, and the signature is what ties the action to the agent public key. A signature does not prove that no human can reach the key."
+Say: "These files are source code. They are not deployed, so a judge cannot check them against live bytecode. ChogBank's source has no owner, no administrator, no upgrade, and no emergency withdrawal. The wallet source uses one agent key for every citizen wallet. That key can authorize a transfer or an approval, and the wallet has no numeric spending cap. A signature would prove the public key signed. It would not prove that no person can reach the private key. This page says production signing stays off, and this server does not sign or broadcast."
 
-### 2:20 What is real today
+### 2:25 Stop
 
-Say: "What you can verify today is the living civilization, the permanent citizen, the wallet decision on the citizen page, and this policy. What is not done is a deployed factory, a funded treasury, and an automatic payout. I will not show an old token transfer as if the bank sent it, and I will not call a local test a mainnet receipt."
+Return to Economy.
 
-If, and only if, `/economy` shows a checked bank and a payout link, open that Monadscan transaction and read the contract address, the `Distributed` event, and the success status. Otherwise stop.
+Say: "What is real today is the living simulation, citizen 104 with no wallet, and a treasury page that is not ready. What is not real is a deployed factory, a funded bank, or a mainnet payout. I will not show an old token transfer, a predicted address, or a local test as a receipt."
 
-### 2:40 Stop
-
-End on the Economy page. The last sentence is: "The payment path is tested locally. It stays off until a reviewed deployment puts code on chain 143, the site shows that checked address, and one small manual payout is confirmed."
+Stop. Do not open Monadscan.
 
 ## Backup if the live site is down
 
-Record the same sentences over stills. Label each still out loud.
-
-1. A screenshot of https://chogos.vercel.app/ saved before the outage. Say "this is the production site."
-2. A screenshot of `/economy` showing "Not ready" and "Not read." Say "this is the treasury page with no contract deployed. It is not a zero balance."
-3. The local test name `testHolderCannotSpendAndTheAgentCanAfterAnNftTransfer`. Say "this is a local proof that the NFT holder cannot spend the wallet and the agent still can after a transfer. It is not a mainnet transaction."
-
-Do not use a discovered `$CHOG` transfer, a predicted address, or a screenshot that shows a transaction hash, as evidence of a ChogBank payout.
+Do not record until you have looked at the three production URLs yourself. If they fail to load, say the site was down and do not fill the gap with a local test or an old transfer.
 
 ## After a real payout exists
 
-Add ten seconds. From `/economy`, click "View payout receipt." Read the decision id, the citizen token id, the amount, and the word Confirmed. Then say the replay rule: running the same decision again cannot pay twice. Skip this segment until that link exists. Do not say the NFT holder withdrew the funds.
+Do not use that ending unless `/economy` shows a checked bank address and a payout link. From that page, open the receipt, and read the decision id, the citizen token id, the amount, and the word Confirmed. Then say the same decision cannot pay twice. Do not say the NFT holder withdrew the funds.
