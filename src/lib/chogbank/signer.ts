@@ -14,6 +14,7 @@ const REFUSED_KEYS = [
   "CHOG_BANK_RELAYER_PRIVATE_KEY",
   "CHOG_BANK_SIGNER_KEY",
   "CHOG_BANK_TREASURY_PRIVATE_KEY",
+  "CHOG_BANK_AUTHORIZER_PRIVATE_KEY",
 ] as const;
 
 export function loadProtectedSigner(
@@ -24,7 +25,7 @@ export function loadProtectedSigner(
       return {
         kind: "none",
         address: null,
-        reason: `${name} is set; this milestone refuses to load relayer keys from the environment`,
+        reason: `${name} is set; this milestone refuses to load signing keys from the environment`,
       };
     }
   }

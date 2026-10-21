@@ -904,7 +904,7 @@ describe("proposals, identity, and presentation", () => {
     expect(holdFn).not.toContain("execution_enabled");
     expect(sql).not.toContain("private_key");
     expect(sql).not.toMatch(/0x[0-9a-f]{64}/);
-    expect(readFileSync("src/components/shell/nav.tsx", "utf8")).not.toContain('href: "/economy"');
+    expect(readFileSync("src/components/shell/nav-items.ts", "utf8")).toContain('{ href: "/economy", label: "Economy" }');
     expect(readFileSync("src/app/api/transactions/route.ts", "utf8")).not.toContain("economy_try_hold");
   });
 });

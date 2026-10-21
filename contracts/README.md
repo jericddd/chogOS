@@ -2,6 +2,10 @@
 
 Local Foundry package. Nothing in this directory is a confirmed Mainnet deployment. Predicted CREATE2 addresses are not live contracts.
 
+## ChogBank
+
+`src/ChogBank.sol` is an ownerless MON and `$CHOG` treasury. It is not deployed. `forge script script/DeployChogBank.s.sol --root contracts` reverts unless the chain id is 143 and `CHOG_BANK_AUTHORIZE_BROADCAST` is the exact phrase in that script. Do not add `--broadcast` until that authorization is explicit. The pinned citizen-wallet factory is not a funding address. See [docs/phase-11-ownerless-chogbank.md](../docs/phase-11-ownerless-chogbank.md).
+
 ## EventAnchor
 
 Minimal Monad commitment contract for chogOS Merkle batch roots. It does not hold funds, mint tokens, or judge whether simulation events were truthful.

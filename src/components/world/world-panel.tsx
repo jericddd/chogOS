@@ -912,6 +912,7 @@ function WorldOverview({ snapshot, onPick }: { snapshot: WorldSnapshot; onPick: 
         submits a validated intent. Nothing here is a balance, a trade, or an onchain action.{" "}
         <Link href="/citizens" className="text-accent">Citizens</Link> ·{" "}
         <Link href="/treasury" className="text-accent">Genesis Treasury</Link> ·{" "}
+        <Link href="/economy" className="text-accent">ChogBank</Link> ·{" "}
         <Link href="/activity" className="text-accent">Civilization History</Link>
       </p>
     </div>

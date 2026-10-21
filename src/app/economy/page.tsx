@@ -2,6 +2,7 @@ import Link from "next/link";
 import { connection } from "next/server";
 import { Suspense } from "react";
 import type { Metadata } from "next";
+import { ChogBankPanel } from "@/components/economy/chog-bank-panel";
 import { DiscoveredActivityPanel } from "@/components/economy/discovered-activity";
 import { EconomicOperationsPanel } from "@/components/economy/operations-panel";
 import { CivilizationTreasuryPanel } from "@/components/treasury/civilization-treasury";
@@ -11,6 +12,7 @@ import { addresses } from "@/lib/blockchain/addresses";
 import { recordedCheck } from "@/lib/blockchain/recorded-check";
 import { loadDiscoveredActivity } from "@/lib/economy/discover-load";
 import { loadEconomicOperations } from "@/lib/economy/load";
+import { loadOwnerlessChogBank } from "@/lib/economy/treasury-load";
 import { loadCivilizationTreasury } from "@/lib/wallets/load";
 
 export const metadata: Metadata = {
@@ -24,9 +26,12 @@ export default function EconomyPage({ searchParams }: { searchParams: Search }) 
     <div>
       <PageHeader
         title="Economy"
-        lede="The economic treasury is an operator-configured public address on Monad mainnet. The Civilization Treasury record and the ChogTreasury NFT wallet are different addresses. Execution is disabled. A stored hash is not a fresh mainnet verification, and opening this page does not settle a proposal. Discovered $CHOG transfers are chain evidence, not treasury totals."
+        lede="ChogBank is the ownerless economic contract. Its address appears only after deployed Monad mainnet code passes the owner, proxy, chain, and asset checks. Until then there is no funding address. The operations panel below is a separate observer for an operator-configured address, and it is not this contract. Payout execution stays disabled. Discovered $CHOG transfers are chain evidence, not treasury payouts."
       />
       <div className="space-y-6">
+        <Suspense fallback={<p className="text-sm text-muted">Reading ChogBank…</p>}>
+          <OwnerlessBankLive />
+        </Suspense>
         <Suspense fallback={<p className="text-sm text-muted">Reading the economic treasury…</p>}>
           <EconomicOperationsLive searchParams={searchParams} />
         </Suspense>
@@ -56,6 +61,12 @@ export default function EconomyPage({ searchParams }: { searchParams: Search }) 
       </div>
     </div>
   );
+}
+
+async function OwnerlessBankLive() {
+  await connection();
+  const view = await loadOwnerlessChogBank();
+  return <ChogBankPanel view={view} />;
 }
 
 async function EconomicOperationsLive({ searchParams }: { searchParams: Search }) {

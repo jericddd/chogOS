@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { connection } from "next/server";
 import { Suspense } from "react";
 import type { Metadata } from "next";
@@ -36,6 +37,12 @@ async function TreasuryLive() {
         title="Genesis Treasury"
         lede="These are Chog Genesis NFTs held by the ChogTreasury wallet. They are founding citizen identities, not a $CHOG token balance. The Civilization Treasury below is a different wallet."
       />
+      <p className="text-sm leading-6 text-muted">
+        <Link href="/economy" className="text-accent">
+          ChogBank
+        </Link>{" "}
+        is the economic contract. It is separate from this NFT roster, and it has no funding address until its code is deployed and checked.
+      </p>
       <CivilizationTreasuryPanel view={treasury} action={<RecordWallets locked={world.syncSecretRequired} />} />
       <section className="grid gap-4 md:grid-cols-2">
         <Fact label="Treasury wallet" value={world.treasury} mono />

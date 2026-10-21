@@ -1,0 +1,451 @@
+import { addresses } from "@/lib/blockchain/addresses";
+import { explorerAddressUrl, explorerTxUrl } from "@/lib/blockchain/explorer";
+import { APPLICATION_TREASURY_LIMITS } from "@/lib/economy/treasury-policy";
+import { formatTokenAmount } from "@/lib/wallets/present";
+
+export const EIP1967_IMPLEMENTATION_SLOT = "0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc";
+export const EIP1967_ADMIN_SLOT = "0xb53127684a568b3173ae13b9f8a6016e243e63b6e8ee1178d6a717850b5d6103";
+
+const HASH = /^0x[0-9a-fA-F]{64}$/;
+const DECIMAL = /^(0|[1-9][0-9]{0,19})$/;
+const ZERO = "0x0000000000000000000000000000000000000000";
+
+export type CallResult = "reverted" | "returned" | "unread";
+
+export type ChainCaps = {
+  windowSeconds: number;
+  maxAuthorizationTtl: number;
+  maxPerTxMon: bigint;
+  maxCitizenWindowMon: bigint;
+  maxAggregateWindowMon: bigint;
+  maxPerTxChog: bigint;
+  maxCitizenWindowChog: bigint;
+  maxAggregateWindowChog: bigint;
+};
+
+export type OwnerlessInspection = {
+  appChainId: number;
+  configuredAddress: string | null;
+  blockedReason: string | null;
+  codeBytes: number | null;
+  observedChainId: number | null;
+  genesis: string | null;
+  chogToken: string | null;
+  authorizer: string | null;
+  implementationSlot: string | null;
+  adminSlot: string | null;
+  ownerCall: CallResult;
+  adminCall: CallResult;
+  implementationCall: CallResult;
+  upgradeCall: CallResult;
+  monRaw: bigint | null;
+  chogRaw: bigint | null;
+  chogDecimals: number | null;
+  chainCaps: ChainCaps | null;
+  /** Present only after a receipt check. A bare hash is not a deployment record. */
+  deploymentTx: string | null;
+  deploymentTxVerified: boolean;
+  readError: string | null;
+};
+
+export type StoredTreasuryDecision = {
+  id: string;
+  status: string;
+  rationale: string | null;
+  createdAt: string | null;
+  output: unknown;
+};
+
+export type VerifiedDistribution = {
+  decisionId: string;
+  tokenId: string;
+  recipient: string;
+  asset: "MON" | "CHOG";
+  amountRaw: string;
+  txHash: string;
+  blockNumber: string;
+};
+
+export type VerifiedFunding = {
+  txHash: string;
+  blockNumber: string;
+  from: string;
+  asset: "MON" | "CHOG";
+  amountRaw: string;
+  kind: "funded_event" | "direct_chog_transfer";
+};
+
+export type PublicTreasuryDecision = {
+  id: string;
+  statusLabel: "Proposed" | "Rejected" | "Authorized" | "Submitted" | "Confirmed" | "Failed" | "Pending";
+  headline: string;
+  detail: string;
+  amountText: string | null;
+  citizen: string | null;
+  recipient: string | null;
+  txHash: string | null;
+  txHref: string | null;
+};
+
+export type ChogBankPublicView = {
+  deploymentState: "pending" | "rejected" | "unreadable" | "live";
+  fundingReady: false | true;
+  fundingAddress: string | null;
+  explorerContractHref: string | null;
+  deploymentTxHref: string | null;
+  sourceVerified: false;
+  sourceNote: string;
+  networkLabel: string;
+  ownerStatus: string;
+  proxyStatus: string;
+  authorizerStatus: string;
+  monText: string;
+  chogText: string;
+  execution: string;
+  policy: string[];
+  funding: string[];
+  fundingRows: Array<VerifiedFunding & { amountText: string; href: string | null; label: string }>;
+  fundingNote: string;
+  decisions: PublicTreasuryDecision[];
+  decisionsNote: string;
+  warnings: string[];
+  summary: string;
+};
+
+export function pendingInspection(appChainId: number): OwnerlessInspection {
+  return {
+    appChainId,
+    configuredAddress: null,
+    blockedReason: null,
+    codeBytes: null,
+    observedChainId: null,
+    genesis: null,
+    chogToken: null,
+    authorizer: null,
+    implementationSlot: null,
+    adminSlot: null,
+    ownerCall: "unread",
+    adminCall: "unread",
+    implementationCall: "unread",
+    upgradeCall: "unread",
+    monRaw: null,
+    chogRaw: null,
+    chogDecimals: null,
+    chainCaps: null,
+    deploymentTx: null,
+    deploymentTxVerified: false,
+    readError: null,
+  };
+}
+
+export function knownAddressProblem(address: string): string | null {
+  const lower = address.toLowerCase();
+  if (lower === ZERO) return "The zero address is not a treasury.";
+  if (lower === addresses.chogTreasury.toLowerCase()) return "That address is the ChogTreasury NFT holder, not the economic treasury.";
+  if (lower === addresses.chogGenesis.toLowerCase()) return "That address is the Chog Genesis NFT contract.";
+  if (lower === addresses.chogToken.toLowerCase()) return "That address is the official $CHOG token.";
+  return null;
+}
+
+function zeroSlot(value: string | null): boolean {
+  if (!value) return false;
+  const body = value.toLowerCase().replace(/^0x/, "");
+  return /^[0-9a-f]{64}$/.test(body) && /^0+$/.test(body);
+}
+
+function sameAddress(left: string | null, right: string): boolean {
+  return left != null && left.toLowerCase() === right.toLowerCase();
+}
+
+function deploymentHref(fundingReady: boolean, inspection: OwnerlessInspection): string | null {
+  if (!fundingReady || !inspection.deploymentTxVerified || !inspection.deploymentTx || !HASH.test(inspection.deploymentTx)) {
+    return null;
+  }
+  return explorerTxUrl(143, inspection.deploymentTx);
+}
+
+function applicationPolicy(): string[] {
+  const limits = APPLICATION_TREASURY_LIMITS;
+  return [
+    "These are application review limits. They are not caps of a deployed contract.",
+    `Chain ${limits.chainId}. Window ${limits.windowSeconds} seconds. Authorization lifetime at most ${limits.maxAuthorizationTtl} seconds.`,
+    `MON per transaction ${formatTokenAmount(limits.maxPerTxMon.toString(10), 18, "MON")}. Per citizen ${formatTokenAmount(limits.maxCitizenWindowMon.toString(10), 18, "MON")}. Aggregate ${formatTokenAmount(limits.maxAggregateWindowMon.toString(10), 18, "MON")}.`,
+    "$CHOG application caps are 0. No token price was assumed, so token allocations stay closed.",
+    "A model cannot raise these limits. Production signing stays off, so a passing review is not a signature.",
+  ];
+}
+
+function chainPolicy(caps: ChainCaps): string[] {
+  return [
+    "These values were read from the deployed contract. No function in the contract changes them.",
+    `Window ${caps.windowSeconds} seconds. Signed authorization lifetime at most ${caps.maxAuthorizationTtl} seconds.`,
+    `MON per transaction ${formatTokenAmount(caps.maxPerTxMon.toString(10), 18, "MON")}. Per citizen ${formatTokenAmount(caps.maxCitizenWindowMon.toString(10), 18, "MON")}. Aggregate ${formatTokenAmount(caps.maxAggregateWindowMon.toString(10), 18, "MON")}.`,
+    `$CHOG per transaction ${caps.maxPerTxChog.toString(10)} base units. Per citizen ${caps.maxCitizenWindowChog.toString(10)}. Aggregate ${caps.maxAggregateWindowChog.toString(10)}.`,
+  ];
+}
+
+type Output = {
+  stage?: string;
+  tokenId?: string;
+  asset?: string;
+  amountRaw?: string;
+  reason?: string;
+  expectedOutcome?: string;
+  decisionId?: string;
+  txHash?: string;
+  blockNumber?: string;
+  chainId?: number;
+  onchain?: boolean;
+  verified?: boolean;
+  recipient?: string;
+};
+
+function readOutput(value: unknown): Output {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  const body = value as Record<string, unknown>;
+  const text = (key: string) => (typeof body[key] === "string" ? body[key] : undefined);
+  return {
+    stage: text("stage"),
+    tokenId: text("tokenId") ?? (typeof body.tokenId === "number" ? String(body.tokenId) : undefined),
+    asset: text("asset"),
+    amountRaw: text("amountRaw"),
+    reason: text("reason"),
+    expectedOutcome: text("expectedOutcome"),
+    decisionId: text("decisionId"),
+    txHash: text("txHash"),
+    blockNumber: text("blockNumber"),
+    chainId: typeof body.chainId === "number" ? body.chainId : undefined,
+    onchain: body.onchain === true,
+    verified: body.verified === true,
+    recipient: text("recipient"),
+  };
+}
+
+function amountText(asset: string | undefined, amountRaw: string | undefined, decimals: number | null): string | null {
+  if ((asset !== "MON" && asset !== "CHOG") || !amountRaw || !/^[0-9]+$/.test(amountRaw)) return null;
+  if (asset === "MON") return formatTokenAmount(amountRaw, 18, "MON");
+  if (decimals !== 18) return `${amountRaw} base units of $CHOG`;
+  return formatTokenAmount(amountRaw, 18, "$CHOG");
+}
+
+function offchainDecision(row: StoredTreasuryDecision, decimals: number | null): PublicTreasuryDecision {
+  const output = readOutput(row.output);
+  const reason = output.reason || row.rationale || "No reason was stored.";
+  const expected = output.expectedOutcome ? ` Expected outcome: ${output.expectedOutcome}` : "";
+  const citizen = output.tokenId && /^[0-9]+$/.test(output.tokenId) ? `Citizen token ${output.tokenId}` : null;
+  const confirmed =
+    (output.stage === "confirmed" || row.status === "confirmed" || row.status === "executed") &&
+    output.onchain === true &&
+    output.verified === true &&
+    output.chainId === 143 &&
+    !!output.txHash &&
+    HASH.test(output.txHash) &&
+    !!output.blockNumber &&
+    DECIMAL.test(output.blockNumber);
+  let statusLabel: PublicTreasuryDecision["statusLabel"] = "Pending";
+  if (confirmed) statusLabel = "Confirmed";
+  else if (output.stage === "failed" || row.status === "failed") statusLabel = "Failed";
+  else if (output.stage === "rejected" || row.status === "rejected") statusLabel = "Rejected";
+  else if (output.stage === "authorized") statusLabel = "Authorized";
+  else if (output.stage === "submitted") statusLabel = "Submitted";
+  else if (output.stage === "proposed" || row.status === "proposed" || row.status === "accepted") statusLabel = "Proposed";
+  const storedHash = output.txHash && HASH.test(output.txHash) ? output.txHash : null;
+  return {
+    id: row.id,
+    statusLabel,
+    headline: citizen ? `${statusLabel} review for ${citizen}` : `${statusLabel} treasury review`,
+    detail: `${reason}${expected}`,
+    amountText: amountText(output.asset, output.amountRaw, decimals),
+    citizen,
+    recipient: confirmed && output.recipient ? output.recipient : null,
+    txHash: confirmed ? storedHash : null,
+    txHref: confirmed ? explorerTxUrl(143, storedHash) : null,
+  };
+}
+
+function chainDecision(row: VerifiedDistribution, decimals: number | null, db: StoredTreasuryDecision | undefined): PublicTreasuryDecision {
+  const output = db ? readOutput(db.output) : {};
+  const reason = output.reason || db?.rationale;
+  const detail = reason
+    ? `${reason} The database status was ${db?.status ?? "missing"}. The Distributed event is the payment record.`
+    : "This payout is on Monad mainnet. The application database does not yet have a matching row.";
+  return {
+    id: row.decisionId,
+    statusLabel: "Confirmed",
+    headline: `Confirmed payout for citizen token ${row.tokenId}`,
+    detail,
+    amountText: amountText(row.asset, row.amountRaw, decimals),
+    citizen: `Citizen token ${row.tokenId}`,
+    recipient: row.recipient,
+    txHash: row.txHash,
+    txHref: explorerTxUrl(143, row.txHash),
+  };
+}
+
+export function presentOwnerlessTreasury(input: {
+  inspection: OwnerlessInspection;
+  decisions: readonly StoredTreasuryDecision[];
+  decisionsLoaded: boolean;
+  distributions?: readonly VerifiedDistribution[];
+  fundingRows?: readonly VerifiedFunding[];
+  fundingLogsRead?: boolean;
+}): ChogBankPublicView {
+  const inspection = input.inspection;
+  const warnings: string[] = [];
+  const policy = applicationPolicy();
+  const execution = "Payout execution is disabled. The AI can record a review. This server does not sign or broadcast.";
+  const sourceNote = "Source-code verification: not checked.";
+  let deploymentState: ChogBankPublicView["deploymentState"] = "pending";
+  let fundingReady = false;
+  let summary = "ChogBank is not deployed. There is no funding address and no live balance.";
+
+  if (!inspection.configuredAddress) {
+    warnings.push("CHOG_BANK_CONTRACT_ADDRESS is unset. No predicted address is shown in its place.");
+  } else if (inspection.appChainId !== 143) {
+    deploymentState = "rejected";
+    warnings.push(`The app chain is ${inspection.appChainId}. This treasury is valid only on Monad mainnet, chain 143. ${inspection.configuredAddress} is not a funding address.`);
+    summary = "The app is not pointed at chain 143, so no funding address is shown.";
+  } else if (inspection.blockedReason || knownAddressProblem(inspection.configuredAddress)) {
+    deploymentState = "rejected";
+    const reason = inspection.blockedReason ?? knownAddressProblem(inspection.configuredAddress);
+    warnings.push(`${inspection.configuredAddress} is not a funding address. ${reason}`);
+    summary = "The configured address is a known contract that is not ChogBank.";
+  } else if (inspection.readError && inspection.codeBytes == null) {
+    deploymentState = "unreadable";
+    warnings.push(`${inspection.configuredAddress} was not verified. ${inspection.readError} It is not a funding address.`);
+    summary = "The configured address could not be verified on Monad mainnet.";
+  } else if (inspection.codeBytes === 0) {
+    deploymentState = "rejected";
+    warnings.push(`${inspection.configuredAddress} has no contract code on Monad mainnet. It is not a funding address.`);
+    summary = "The configured address is empty. An empty address is not a treasury.";
+  } else if (inspection.codeBytes == null || inspection.codeBytes < 1) {
+    deploymentState = "unreadable";
+    warnings.push("Contract code was not read. No funding address is shown.");
+  } else {
+    const problems: string[] = [];
+    const unread: string[] = [];
+    if (inspection.observedChainId == null) unread.push("configured chain id");
+    else if (inspection.observedChainId !== 143) problems.push("The contract's configured chain id is not 143.");
+    if (!inspection.genesis) unread.push("Genesis address");
+    else if (!sameAddress(inspection.genesis, addresses.chogGenesis)) problems.push("The pinned Genesis address does not match the official collection.");
+    if (!inspection.chogToken) unread.push("token address");
+    else if (!sameAddress(inspection.chogToken, addresses.chogToken)) problems.push("The pinned token does not match official $CHOG.");
+    if (!inspection.authorizer) unread.push("authorizer");
+    else if (sameAddress(inspection.authorizer, ZERO) || sameAddress(inspection.authorizer, inspection.configuredAddress)) {
+      problems.push("The authorizer is missing or is the contract itself.");
+    }
+    if (!inspection.implementationSlot || !inspection.adminSlot) unread.push("proxy slots");
+    else if (!zeroSlot(inspection.implementationSlot) || !zeroSlot(inspection.adminSlot)) problems.push("An EIP-1967 implementation or admin slot is set.");
+    const calls: Array<[string, CallResult]> = [
+      ["owner()", inspection.ownerCall],
+      ["admin()", inspection.adminCall],
+      ["implementation()", inspection.implementationCall],
+      ["upgradeTo(address)", inspection.upgradeCall],
+    ];
+    if (calls.some(([, result]) => result === "unread")) unread.push("privileged-function checks");
+    for (const [name, result] of calls) {
+      if (result === "returned") problems.push(`${name} returned data on a read-only call.`);
+    }
+    if (!inspection.chainCaps) unread.push("spending caps");
+    if (problems.length > 0) {
+      deploymentState = "rejected";
+      warnings.push(`${inspection.configuredAddress} failed the ownerless checks. It is not a funding address. ${problems.join(" ")}`);
+      summary = "Deployed code was found, and it did not pass the ownerless checks.";
+    } else if (unread.length > 0) {
+      deploymentState = "unreadable";
+      warnings.push(`${inspection.configuredAddress} is not a funding address. These checks did not finish: ${unread.join(", ")}.`);
+      summary = "Deployed code was found, and the ownerless checks did not finish.";
+    } else if (inspection.chainCaps) {
+      deploymentState = "live";
+      fundingReady = true;
+      summary = "Deployed code on Monad mainnet passed the owner, proxy, chain, and asset checks. Payout execution is still disabled.";
+      policy.push(...chainPolicy(inspection.chainCaps));
+      if (inspection.deploymentTx && !inspection.deploymentTxVerified) {
+        warnings.push("A deployment transaction was configured, and it is not linked. The receipt must be a successful creation of this contract.");
+      }
+    }
+  }
+
+  const decimals = inspection.chogDecimals;
+  const distributions = fundingReady ? (input.distributions ?? []) : [];
+  const seen = new Set(distributions.map((row) => row.decisionId.toLowerCase()));
+  const decisions: PublicTreasuryDecision[] = [];
+  for (const row of distributions) {
+    if (!HASH.test(row.txHash) || !HASH.test(row.decisionId) || !DECIMAL.test(row.blockNumber) || !/^[0-9]+$/.test(row.tokenId)) continue;
+    const db = input.decisions.find((item) => readOutput(item.output).decisionId?.toLowerCase() === row.decisionId.toLowerCase());
+    decisions.push(chainDecision(row, decimals, db));
+  }
+  if (input.decisionsLoaded) {
+    for (const row of input.decisions) {
+      const decisionId = readOutput(row.output).decisionId;
+      if (decisionId && seen.has(decisionId.toLowerCase())) continue;
+      decisions.push(offchainDecision(row, decimals));
+    }
+  }
+
+  const fundingRows = fundingReady
+    ? (input.fundingRows ?? []).flatMap((row) => {
+        if (!HASH.test(row.txHash) || !DECIMAL.test(row.blockNumber)) return [];
+        const text = amountText(row.asset, row.amountRaw, decimals);
+        if (!text) return [];
+        return [
+          {
+            ...row,
+            amountText: text,
+            href: explorerTxUrl(143, row.txHash),
+            label: row.kind === "direct_chog_transfer" ? "Direct $CHOG transfer" : "ChogBank Funded event",
+          },
+        ];
+      })
+    : [];
+
+  return {
+    deploymentState,
+    fundingReady,
+    fundingAddress: fundingReady ? inspection.configuredAddress : null,
+    explorerContractHref: fundingReady ? explorerAddressUrl(143, inspection.configuredAddress) : null,
+    deploymentTxHref: deploymentHref(fundingReady, inspection),
+    sourceVerified: false,
+    sourceNote,
+    networkLabel: "Monad mainnet · chain id 143",
+    ownerStatus: fundingReady
+      ? "No owner call returned an address. owner(), admin(), implementation(), and upgradeTo() reverted on read-only calls. This is not a formal audit."
+      : "Owner and admin status cannot be claimed until deployed code passes the checks.",
+    proxyStatus: fundingReady
+      ? "The EIP-1967 implementation and admin slots are zero. No proxy was observed by those slots."
+      : "Proxy status is not claimed. A missing contract is not the same as an immutable contract.",
+    authorizerStatus: fundingReady
+      ? `Spending authorizer ${inspection.authorizer}. This address can sign allocations inside the contract caps and only to a deployed citizen wallet. It cannot change caps, upgrade the contract, or pay an arbitrary address. It is a privileged spending authority.`
+      : "No spending authorizer is published because the contract is not an accepted treasury.",
+    monText: fundingReady && inspection.monRaw != null ? formatTokenAmount(inspection.monRaw.toString(10), 18, "MON") : "Not read",
+    chogText:
+      fundingReady && inspection.chogRaw != null && decimals === 18
+        ? formatTokenAmount(inspection.chogRaw.toString(10), 18, "$CHOG")
+        : "Not read",
+    execution,
+    policy,
+    funding: fundingReady
+      ? [
+          `Send native MON to ${inspection.configuredAddress}. A token approval is not required.`,
+          `Send $CHOG with a normal token transfer to ${inspection.configuredAddress}. The official token uses ${decimals ?? "unread"} decimals.`,
+          "A direct $CHOG transfer raises the token balance without a ChogBank event. depositChog emits Funded for the amount the contract actually receives.",
+          "Do not send funds to a predicted citizen wallet, a predicted factory, the Genesis NFT contract, or the ChogTreasury NFT holder.",
+        ]
+      : [
+          "No funding address is ready.",
+          "Do not send MON or $CHOG to a predicted wallet, a predicted factory, the ChogTreasury NFT holder, the Genesis contract, or the token contract.",
+        ],
+    fundingRows,
+    fundingNote: !fundingReady
+      ? "No funding transaction is shown because this address is not a verified treasury."
+      : input.fundingLogsRead
+        ? "The rows are recent successful receipts. They are not a complete history. The balances above are separate chain-state reads."
+        : "Funding logs were not read. The balances above are chain-state reads when they say an amount. No funding transaction was invented.",
+    decisions,
+    decisionsNote: input.decisionsLoaded
+      ? "A proposed row is an off-chain review. It is a payment only when a confirmed Distributed event on Monad mainnet is shown with a transaction link."
+      : "Treasury decisions were not loaded. An empty list is not a claim that none exist.",
+    warnings,
+    summary,
+  };
+}
