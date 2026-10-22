@@ -8,7 +8,7 @@ export function ChogBankPanel({ view }: { view: ChogBankPublicView }) {
       data-funding-ready={view.fundingReady ? "yes" : "no"}
       data-funding-scan={view.fundingScan}
     >
-      <p className="text-xs tracking-[0.16em] text-accent uppercase">Ownerless treasury</p>
+      <p className="text-xs tracking-[0.16em] text-accent uppercase">Ownerless contract</p>
       <h2 className="mt-2 font-serif text-3xl tracking-tight">ChogBank</h2>
       <p className="mt-3 max-w-3xl text-sm leading-6 text-muted">{view.summary}</p>
       <dl className="mt-5 grid gap-4 md:grid-cols-2">
