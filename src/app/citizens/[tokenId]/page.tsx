@@ -358,7 +358,7 @@ async function CitizenHistory({
         ) : (
           <ul className="mt-3 divide-y divide-line border-y border-line">
             {page.events.map((event) => (
-              <EventItem key={event.id} event={event} now={0} citizenName={() => null} />
+              <EventItem key={event.id} event={event} now={0} />
             ))}
           </ul>
         )
