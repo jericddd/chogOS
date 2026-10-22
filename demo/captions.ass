@@ -1,0 +1,29 @@
+[Script Info]
+ScriptType: v4.00+
+PlayResX: 1920
+PlayResY: 1080
+WrapStyle: 0
+ScaledBorderAndShadow: yes
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+Style: Cap,Inter,42,&H00C1E7F6,&H000000FF,&H0012182B,&HE012182B,0,0,0,0,100,100,0,0,3,14,0,2,90,90,42,1
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+Dialogue: 0,0:00:06.00,0:00:14.00,Cap,,0,0,0,,Day 478 on chogos.vercel.app. Sixty founding citizens. The clock is live.
+Dialogue: 0,0:00:14.00,0:00:22.00,Cap,,0,0,0,,Six completed road spurs. No critical shortage. The map's storehouse is\Nlabeled simulated.
+Dialogue: 0,0:00:22.00,0:00:28.00,Cap,,0,0,0,,Workshop E is an AI decision.\NThe sentence under it is the model's own reason.
+Dialogue: 0,0:00:28.00,0:00:34.00,Cap,,0,0,0,,The column beside it says Simulation.\NA simulated food batch is not a balance.
+Dialogue: 0,0:00:34.00,0:00:42.00,Cap,,0,0,0,,Token 104 is CHOG #1565.\NownerOf on this request is 0xEf6f…577F.
+Dialogue: 0,0:00:42.00,0:00:50.00,Cap,,0,0,0,,No AI decision is stored for this citizen. These shifts are simulation. The\Nrecord stays with the token.
+Dialogue: 0,0:00:50.00,0:00:56.00,Cap,,0,0,0,,History, filtered to AI.\NThese construction rows are stored model decisions.
+Dialogue: 0,0:00:56.00,0:01:02.00,Cap,,0,0,0,,Workshop E, House 18, and South Meadows Plot.\NEach line keeps the reason the model gave.
+Dialogue: 0,0:01:02.00,0:01:10.00,Cap,,0,0,0,,The browser recomputes the hash.\NThis page says the event is not a blockchain transaction.
+Dialogue: 0,0:01:10.00,0:01:18.00,Cap,,0,0,0,,Source AI. Chain status offchain. Both hashes start 0xe15a85e8. No Merkle\Nbatch, and no anchor.
+Dialogue: 0,0:01:30.00,0:01:40.00,Cap,,0,0,0,,ChogBank is not deployed. No funding address. This server does not sign or\Nbroadcast.
+Dialogue: 0,0:01:40.00,0:01:48.00,Cap,,0,0,0,,MON and $CHOG were not read. These limits are application rules, not a live\Ncontract. $CHOG is closed.
+Dialogue: 0,0:02:00.00,0:02:06.00,Cap,,0,0,0,,Watcher rows for Genesis transfers.\NThe row we checked is token 1021, block 113457077.
+Dialogue: 0,0:02:06.00,0:02:14.00,Cap,,0,0,0,,The page says the application has not independently verified this transaction.
+Dialogue: 0,0:02:14.00,0:02:18.00,Cap,,0,0,0,,Token 1021 moved in block 113457077. The hash chain matches. This is not an\Nonchain anchor.
+Dialogue: 0,0:02:18.00,0:02:22.00,Cap,,0,0,0,,Receipt check: not read. Hash 0x8f97aafb…02c4536b. Log 82. Token 1021.
