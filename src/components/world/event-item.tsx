@@ -24,15 +24,20 @@ export function SourceBadge({ source }: { source: EventSource }) {
   );
 }
 
+function unnamedCitizen(): null {
+  return null;
+}
+
 export function EventItem({
   event,
   now,
-  citizenName,
+  citizenName = unnamedCitizen,
   compact = false,
 }: {
   event: WorldEventView;
   now: number;
-  citizenName: (tokenId: string) => string | null;
+  /** Optional. A server page must omit this; a function cannot cross into this client component. */
+  citizenName?: (tokenId: string) => string | null;
   compact?: boolean;
 }) {
   const segments = eventSegments(event, citizenName);
