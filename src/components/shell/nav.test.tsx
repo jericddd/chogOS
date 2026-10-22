@@ -26,7 +26,7 @@ describe("civilization nav", () => {
     expect(screen.getByRole("link", { name: "Citizens" }).getAttribute("href")).toBe("/citizens");
     expect(screen.getByRole("link", { name: "History" }).getAttribute("href")).toBe("/activity");
     expect(screen.getByRole("link", { name: "Verify" }).getAttribute("href")).toBe("/verify");
-    expect(screen.getByRole("link", { name: "Treasury" }).getAttribute("href")).toBe("/treasury");
+    expect(screen.queryByRole("link", { name: "Treasury" })).toBeNull();
     expect(screen.getByRole("link", { name: "Economy" }).getAttribute("href")).toBe("/economy");
     expect(screen.getByRole("link", { name: "Enroll" }).getAttribute("href")).toBe("/enroll");
     expect(screen.queryByRole("link", { name: "Businesses" })).toBeNull();
