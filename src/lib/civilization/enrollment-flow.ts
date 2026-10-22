@@ -8,46 +8,46 @@ import { parseTokenId } from "@/lib/civilization/token-id";
 import type { SyncPlan } from "@/lib/civilization/types";
 
 const MAX_TOKEN_IDS = 50;
+/** Genesis supply is under this. Listing uses the contract's tokensOfOwner, not a typed id. */
+const MAX_LISTED_TOKENS = 2_500;
 const CHALLENGE_MS = 10 * 60 * 1000;
 
 export type DiscoverResult =
   | {
       ok: true;
-      source: "tokensOfOwner" | "manual";
+      source: "tokensOfOwner" | "selected";
       owned: Array<{ tokenId: string; owner: Address }>;
       rejected: Array<{ tokenId: string; reason: string }>;
     }
-  | { ok: false; error: string; manualTokenIdsRequired: boolean };
+  | { ok: false; error: string };
 
 export async function discoverOwnedTokens(input: {
   reader: GenesisChainReader;
   wallet: Address;
-  manualTokenIds: string[] | null;
+  /** Specific ids to re-check with ownerOf. Null asks the contract for tokensOfOwner. */
+  onlyTokenIds: string[] | null;
 }): Promise<DiscoverResult> {
-  let source: "tokensOfOwner" | "manual";
+  let source: "tokensOfOwner" | "selected";
   let tokenIds: string[];
 
-  if (input.manualTokenIds) {
-    const parsed = parseIdList(input.manualTokenIds);
+  if (input.onlyTokenIds) {
+    const parsed = parseIdList(input.onlyTokenIds, MAX_TOKEN_IDS);
     if (!parsed.ok) {
-      return { ok: false, error: parsed.error, manualTokenIdsRequired: false };
+      return { ok: false, error: parsed.error };
     }
-    source = "manual";
+    source = "selected";
     tokenIds = parsed.tokenIds;
   } else {
     const inventory = await input.reader.readOwnedInventory(input.wallet);
     if (!inventory.tokensOfOwner) {
       return {
         ok: false,
-        error:
-          inventory.tokensOfOwnerError ??
-          "The NFT contract did not return tokensOfOwner. Enter the token ids you own.",
-        manualTokenIdsRequired: true,
+        error: inventory.tokensOfOwnerError ?? "The NFT contract did not list this wallet's Chogs.",
       };
     }
-    const parsed = parseIdList(inventory.tokensOfOwner);
+    const parsed = parseIdList(inventory.tokensOfOwner, MAX_LISTED_TOKENS);
     if (!parsed.ok) {
-      return { ok: false, error: parsed.error, manualTokenIdsRequired: true };
+      return { ok: false, error: parsed.error };
     }
     source = "tokensOfOwner";
     tokenIds = parsed.tokenIds;
@@ -87,7 +87,7 @@ export async function createEnrollmentChallenge(input: {
 }): Promise<
   { ok: true; message: string; nonce: string; expiresAt: string; tokenIds: string[] } | { ok: false; error: string }
 > {
-  const parsed = parseIdList(input.tokenIds);
+  const parsed = parseIdList(input.tokenIds, MAX_TOKEN_IDS);
   if (!parsed.ok) {
     return parsed;
   }
@@ -98,7 +98,7 @@ export async function createEnrollmentChallenge(input: {
   const discovered = await discoverOwnedTokens({
     reader: input.reader,
     wallet: input.wallet,
-    manualTokenIds: parsed.tokenIds,
+    onlyTokenIds: parsed.tokenIds,
   });
   if (!discovered.ok) {
     return { ok: false, error: discovered.error };
@@ -232,9 +232,12 @@ function absorbDecision(plan: SyncPlan, decision: EnrollmentDecision, unchanged:
   }
 }
 
-function parseIdList(values: string[]): { ok: true; tokenIds: string[] } | { ok: false; error: string } {
-  if (values.length > MAX_TOKEN_IDS) {
-    return { ok: false, error: `Enrollment accepts at most ${MAX_TOKEN_IDS} token ids at a time.` };
+function parseIdList(
+  values: string[],
+  max: number,
+): { ok: true; tokenIds: string[] } | { ok: false; error: string } {
+  if (values.length > max) {
+    return { ok: false, error: `Enrollment accepts at most ${max} token ids at a time.` };
   }
   const tokenIds: string[] = [];
   for (const value of values) {

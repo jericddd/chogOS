@@ -1,9 +1,19 @@
 "use client";
 
-import { useState } from "react";
+import { useRouter } from "next/navigation";
+import { useEffect, useState } from "react";
+import { CitizenPortrait, MetadataName } from "@/components/citizens/portrait";
+import { formatUtc } from "@/lib/civilization/labels";
 
-type OwnedToken = { tokenId: string; owner: string };
-type RejectedToken = { tokenId: string; reason: string };
+type OwnedToken = {
+  tokenId: string;
+  owner: string;
+  heldByTreasury: boolean;
+  enrolledAt: string | null;
+  enrollmentStatus: string | null;
+  origin: "founding_treasury" | "community" | null;
+  citizenId: string | null;
+};
 
 const chains: Record<number, { name: string; rpc: string; explorer: string }> = {
   143: {
@@ -39,21 +49,58 @@ function hexMessage(message: string): string {
   return `0x${[...bytes].map((byte) => byte.toString(16).padStart(2, "0")).join("")}`;
 }
 
+function joined(token: OwnedToken): boolean {
+  return token.enrollmentStatus === "active" && Boolean(token.citizenId);
+}
+
 export function EnrollPanel({
   chainId,
   persistenceReady,
+  focusedTokenId,
 }: {
   chainId: number;
   persistenceReady: boolean;
+  focusedTokenId: string | null;
 }) {
+  const router = useRouter();
   const [address, setAddress] = useState<string | null>(null);
   const [walletChain, setWalletChain] = useState<number | null>(null);
   const [owned, setOwned] = useState<OwnedToken[]>([]);
-  const [rejected, setRejected] = useState<RejectedToken[]>([]);
-  const [selected, setSelected] = useState<string[]>([]);
-  const [manual, setManual] = useState("");
+  const [selectedId, setSelectedId] = useState<string | null>(focusedTokenId);
   const [status, setStatus] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    const ethereum = provider();
+    if (!ethereum) {
+      return;
+    }
+    let cancelled = false;
+    void ethereum
+      .request({ method: "eth_accounts" })
+      .then(async (accounts) => {
+        const list = accounts as string[];
+        const chainHex = (await ethereum.request({ method: "eth_chainId" })) as string;
+        if (cancelled) {
+          return;
+        }
+        setAddress(list[0] ?? null);
+        setWalletChain(Number(chainHex));
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!address) {
+      return;
+    }
+    void discover(address);
+    // discover is recreated each render; the wallet address is the trigger.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [address]);
 
   async function connect() {
     const ethereum = provider();
@@ -113,36 +160,50 @@ export function EnrollPanel({
     setWalletChain(Number(chainHex));
   }
 
-  async function discover(manualIds: string[] | null) {
-    if (!address) {
-      return;
-    }
+  async function discover(wallet: string, prefer?: string) {
     setBusy(true);
     setStatus(null);
     try {
       const response = await fetch("/api/enroll/discover", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ address, tokenIds: manualIds ?? undefined }),
+        body: JSON.stringify({ address: wallet }),
       });
       const body = (await response.json()) as {
         ok?: boolean;
         error?: string;
-        manualTokenIdsRequired?: boolean;
         owned?: OwnedToken[];
-        rejected?: RejectedToken[];
       };
       if (!body.ok) {
         setOwned([]);
-        setRejected([]);
         setStatus(body.error ?? "Discovery failed.");
         return;
       }
-      setOwned(body.owned ?? []);
-      setRejected(body.rejected ?? []);
-      setSelected((body.owned ?? []).map((token) => token.tokenId));
-      if ((body.owned ?? []).length === 0) {
-        setStatus("No Chog Genesis NFTs for this wallet passed ownerOf.");
+      const tokens = body.owned ?? [];
+      setOwned(tokens);
+      const preferred = [prefer, focusedTokenId].find((id) => id && tokens.some((token) => token.tokenId === id));
+      setSelectedId((current) => {
+        if (preferred) {
+          return preferred;
+        }
+        if (current && tokens.some((token) => token.tokenId === current)) {
+          return current;
+        }
+        return tokens[0]?.tokenId ?? null;
+      });
+      if (tokens.length === 0) {
+        setStatus("This wallet does not hold a Chog Genesis NFT.");
+        if (focusedTokenId) {
+          router.replace("/enroll", { scroll: false });
+        }
+        return;
+      }
+      const focusedOwned = Boolean(focusedTokenId && tokens.some((token) => token.tokenId === focusedTokenId));
+      const onlyJoined = tokens.length === 1 && joined(tokens[0]) ? tokens[0] : null;
+      if (onlyJoined && focusedTokenId !== onlyJoined.tokenId) {
+        router.replace(`/enroll?token=${onlyJoined.tokenId}`, { scroll: false });
+      } else if (focusedTokenId && !focusedOwned) {
+        router.replace("/enroll", { scroll: false });
       }
     } catch {
       setStatus("Discovery could not reach the server.");
@@ -151,9 +212,31 @@ export function EnrollPanel({
     }
   }
 
+  function choose(token: OwnedToken) {
+    setSelectedId(token.tokenId);
+    if (joined(token)) {
+      if (focusedTokenId !== token.tokenId) {
+        router.replace(`/enroll?token=${token.tokenId}`, { scroll: false });
+      }
+      return;
+    }
+    if (focusedTokenId) {
+      router.replace("/enroll", { scroll: false });
+    }
+  }
+
   async function enroll() {
-    if (!address || selected.length === 0) {
-      setStatus("Select at least one verified token.");
+    const selected = owned.find((token) => token.tokenId === selectedId) ?? null;
+    if (!address || !selected) {
+      setStatus("Choose a Chog from this wallet.");
+      return;
+    }
+    if (selected.heldByTreasury) {
+      setStatus("ChogTreasury already holds this NFT. It stays a founding citizen.");
+      return;
+    }
+    if (joined(selected)) {
+      setStatus(`Chog #${selected.tokenId} joined ${formatUtc(selected.enrolledAt)}.`);
       return;
     }
     if (!persistenceReady) {
@@ -173,7 +256,7 @@ export function EnrollPanel({
       const challengeResponse = await fetch("/api/enroll/challenge", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ address, tokenIds: selected }),
+        body: JSON.stringify({ address, tokenIds: [selected.tokenId] }),
       });
       const challenge = (await challengeResponse.json()) as {
         ok?: boolean;
@@ -205,12 +288,16 @@ export function EnrollPanel({
         return;
       }
       const enrolled = confirmed.enrolled ?? [];
-      const unchanged = confirmed.unchanged?.length ?? 0;
+      const unchanged = confirmed.unchanged ?? [];
+      const tokenId = enrolled[0] ?? unchanged[0] ?? selected.tokenId;
       setStatus(
         enrolled.length > 0
-          ? `Enrolled token ${enrolled.join(", ")} in chogOS.`
-          : `${unchanged} token${unchanged === 1 ? "" : "s"} already enrolled for this owner.`,
+          ? `Chog #${tokenId} joined chogOS.`
+          : `Chog #${tokenId} is already enrolled for this owner.`,
       );
+      router.replace(`/enroll?token=${tokenId}`, { scroll: false });
+      router.refresh();
+      await discover(address, tokenId);
     } catch {
       setStatus("The wallet did not sign, or the server could not finish enrollment.");
     } finally {
@@ -219,6 +306,7 @@ export function EnrollPanel({
   }
 
   const onChain = walletChain === chainId;
+  const selected = owned.find((token) => token.tokenId === selectedId) ?? null;
 
   return (
     <div className="space-y-6">
@@ -243,82 +331,67 @@ export function EnrollPanel({
           Wallet network {walletChain ?? "unknown"}. chogOS expects chain {chainId}.
           {onChain ? " Network matches." : " Switch before signing."}
         </p>
-      ) : null}
+      ) : (
+        <p className="text-sm leading-6 text-muted">
+          Connect the wallet that holds the NFT. Its Chogs appear here, and you choose which one joins.
+        </p>
+      )}
       {!persistenceReady ? (
         <p className="text-sm leading-6 text-warning">
-          The database is not configured, so enrollment cannot be stored. Discovery can still check ownerOf.
+          The database is not configured, so enrollment cannot be stored. The wallet can still show the NFTs it holds.
         </p>
       ) : null}
-      {address ? (
-        <div className="flex flex-wrap gap-3">
-          <button
-            type="button"
-            disabled={busy}
-            onClick={() => void discover(null)}
-            className="rounded-full border border-line px-4 py-2 text-sm"
-          >
-            Discover owned Chogs
-          </button>
-          <button
-            type="button"
-            disabled={busy || manual.trim().length === 0}
-            onClick={() => void discover(manual.split(/[\s,]+/).filter(Boolean))}
-            className="rounded-full border border-line px-4 py-2 text-sm"
-          >
-            Check token ids
-          </button>
-        </div>
-      ) : null}
-      <label className="block text-sm text-muted">
-        Manual token ids
-        <input
-          value={manual}
-          onChange={(event) => setManual(event.target.value)}
-          placeholder="7, 52, 86"
-          className="mt-2 w-full rounded-xl border border-line bg-background px-3 py-2 text-foreground"
-        />
-      </label>
       {owned.length > 0 ? (
         <fieldset>
-          <legend className="text-sm text-muted">Verified by ownerOf</legend>
-          <ul className="mt-3 space-y-2">
-            {owned.map((token) => (
-              <li key={token.tokenId}>
-                <label className="flex items-center gap-2 text-sm">
-                  <input
-                    type="checkbox"
-                    checked={selected.includes(token.tokenId)}
-                    onChange={(event) => {
-                      setSelected((current) =>
-                        event.target.checked
-                          ? [...current, token.tokenId]
-                          : current.filter((id) => id !== token.tokenId),
-                      );
-                    }}
-                  />
-                  Chog #{token.tokenId}
-                </label>
-              </li>
-            ))}
+          <legend className="text-sm text-muted">Chogs in this wallet</legend>
+          <ul className="mt-3 grid gap-3 sm:grid-cols-2">
+            {owned.map((token) => {
+              const active = selectedId === token.tokenId;
+              return (
+                <li key={token.tokenId}>
+                  <button
+                    type="button"
+                    data-testid="owned-chog"
+                    aria-pressed={active}
+                    onClick={() => choose(token)}
+                    className={`w-full rounded-2xl border p-3 text-left ${active ? "border-accent" : "border-line"}`}
+                  >
+                    <div className="portrait-frame aspect-square overflow-hidden rounded-xl border border-line">
+                      <CitizenPortrait tokenId={token.tokenId} />
+                    </div>
+                    <p className="mt-3 font-serif text-xl">
+                      <MetadataName tokenId={token.tokenId} fallback={`Chog #${token.tokenId}`} />
+                    </p>
+                    <p className="mt-1 text-sm text-muted">Token {token.tokenId}</p>
+                    <p className="mt-1 text-sm text-muted">
+                      {token.heldByTreasury
+                        ? "Held by ChogTreasury. Founding citizen."
+                        : joined(token)
+                          ? `Joined ${formatUtc(token.enrolledAt)}`
+                          : "Not joined yet."}
+                    </p>
+                  </button>
+                </li>
+              );
+            })}
           </ul>
-          <button
-            type="button"
-            disabled={busy || selected.length === 0}
-            onClick={() => void enroll()}
-            className="mt-4 rounded-full bg-accent px-4 py-2 text-sm font-medium text-[#062117] disabled:opacity-60"
-          >
-            Sign and enroll
-          </button>
+          {selected && !selected.heldByTreasury && !joined(selected) ? (
+            <button
+              type="button"
+              data-testid="join-chog"
+              disabled={busy}
+              onClick={() => void enroll()}
+              className="mt-4 rounded-full bg-accent px-4 py-2 text-sm font-medium text-[#062117] disabled:opacity-60"
+            >
+              Join Chog #{selected.tokenId}
+            </button>
+          ) : null}
+          {selected && joined(selected) && focusedTokenId === selected.tokenId ? (
+            <p className="mt-4 text-sm text-muted">
+              Joined {formatUtc(selected.enrolledAt)}. The profile below is the same record as the citizen page.
+            </p>
+          ) : null}
         </fieldset>
-      ) : null}
-      {rejected.length > 0 ? (
-        <ul className="text-sm leading-6 text-warning">
-          {rejected.map((token) => (
-            <li key={token.tokenId}>
-              Token {token.tokenId}: {token.reason}
-            </li>
-          ))}
-        </ul>
       ) : null}
       {status ? <p className="text-sm leading-6 text-muted">{status}</p> : null}
     </div>
