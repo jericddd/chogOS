@@ -323,25 +323,6 @@ export function EventVerifier({ bundle }: { bundle: VerifyBundle }) {
       </section>
 
       <section className="rounded-2xl border border-line bg-card px-4 py-4">
-        <h2 className="font-serif text-2xl">Deployment artifacts</h2>
-        <p className="mt-2 text-sm leading-6 text-muted">
-          Creation-code hashes kept by this repository. A predicted address is not a deployed wallet.
-        </p>
-        <div className="mt-4 space-y-3">
-          {bundle.artifacts.map((artifact) => (
-            <div key={artifact.id}>
-              <p className="text-sm">{artifact.label}</p>
-              <dl className="mt-2 grid gap-2">
-                {artifact.hash ? <HashField label={artifact.hashKind} value={artifact.hash} /> : null}
-                <HashField label="Address" value={artifact.address} href={artifact.explorerUrl} linkLabel="Address on explorer" />
-              </dl>
-              <p className="mt-1 text-xs leading-5 text-muted">{artifact.codeLabel}</p>
-            </div>
-          ))}
-        </div>
-      </section>
-
-      <section className="rounded-2xl border border-line bg-card px-4 py-4">
         <h2 className="font-serif text-2xl">Source</h2>
         <p className="mt-2 text-sm leading-6 text-muted">
           {bundle.provenance.revision.sha ? bundle.provenance.revision.label : "Build revision unavailable"}

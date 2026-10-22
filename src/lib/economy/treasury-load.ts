@@ -1,11 +1,12 @@
 import "server-only";
 import { connection } from "next/server";
-import { createPublicClient, getAddress, http, type Address, type Hex } from "viem";
+import { createPublicClient, getAddress, hexToString, http, toHex, type Address, type Hex } from "viem";
 import { addresses } from "@/lib/blockchain/addresses";
 import { getChain } from "@/lib/blockchain/chains";
 import { createChainClient } from "@/lib/blockchain/public-client";
 import { readAppConfig, type AppConfig } from "@/lib/config/env";
 import { scanChogBankLogs, type BankLogRecord, type BankLogScan, type BankLogSource } from "@/lib/economy/bank-log-scan";
+import { ERC20_TRANSFER_TOPIC, scanHeldTokens, transferToTopic, type HeldTokenLog, type HeldTokenScan } from "@/lib/economy/held-tokens";
 import { openEconomyClient } from "@/lib/economy/db";
 import { CHOG_BANK_EVENTS } from "@/lib/economy/treasury-logs";
 import {
@@ -45,6 +46,9 @@ const TOKEN_ABI = [
   { type: "function", name: "decimals", stateMutability: "view", inputs: [], outputs: [{ type: "uint8" }] },
 ] as const;
 
+const SYMBOL_ABI = [{ type: "function", name: "symbol", stateMutability: "view", inputs: [], outputs: [{ type: "string" }] }] as const;
+const SYMBOL_BYTES_ABI = [{ type: "function", name: "symbol", stateMutability: "view", inputs: [], outputs: [{ type: "bytes32" }] }] as const;
+
 const TRANSFER_EVENT = {
   type: "event",
   name: "Transfer",
@@ -68,7 +72,10 @@ export async function loadOwnerlessChogBank(): Promise<ChogBankPublicView> {
   const started = Date.now();
   const [found, decisions] = await Promise.all([inspectContract(config), loadDecisions()]);
   const remaining = Math.max(1_000, SCAN_BUDGET_MS - (Date.now() - started));
-  const activity = await readPersistentActivity(config, found.inspection, found.deploymentBlock, remaining);
+  const [activity, heldTokens] = await Promise.all([
+    readPersistentActivity(config, found.inspection, found.deploymentBlock, remaining),
+    readHeldTokens(config, found.inspection, found.deploymentBlock, Math.min(remaining, 4_000)),
+  ]);
   return presentOwnerlessTreasury({
     inspection: found.inspection,
     decisions: decisions.rows,
@@ -77,6 +84,7 @@ export async function loadOwnerlessChogBank(): Promise<ChogBankPublicView> {
     fundingRows: activity.funding,
     fundingScan: activity.status,
     fundingScanCause: activity.cause === "no-start" ? "no-start" : undefined,
+    heldTokens,
   });
 }
 
@@ -275,6 +283,95 @@ async function readPersistentActivity(
       reason: publicRpcError(error, "The log scan failed."),
     };
   }
+}
+
+async function readHeldTokens(
+  config: AppConfig,
+  inspection: OwnerlessInspection,
+  deploymentBlock: bigint | null,
+  timeoutMs: number,
+): Promise<HeldTokenScan> {
+  if (!inspection.configuredAddress || !inspection.codeBytes || inspection.codeBytes < 1 || inspection.blockedReason || inspection.appChainId !== 143) {
+    return { status: "unread", rows: [] };
+  }
+  const bankTopic = transferToTopic(inspection.configuredAddress);
+  if (!bankTopic) return { status: "unread", rows: [] };
+  try {
+    const client = createPublicClient({
+      chain: getChain(143),
+      transport: http(config.rpcUrl ?? PUBLIC_MAINNET_RPC, { timeout: LOG_TIMEOUT_MS, retryCount: 0 }),
+    });
+    const bank = getAddress(inspection.configuredAddress);
+    return await scanHeldTokens({
+      bank,
+      deploymentBlock,
+      skip: [addresses.chogToken],
+      limits: { timeoutMs, maxPages: 32, maxTokens: 8 },
+      source: {
+        latestBlock: () => client.getBlockNumber(),
+        logs: async (query) => {
+          const rows = await client.request({
+            method: "eth_getLogs",
+            params: [
+              {
+                fromBlock: toHex(query.fromBlock),
+                toBlock: toHex(query.toBlock),
+                topics: [ERC20_TRANSFER_TOPIC, null, bankTopic],
+              },
+            ],
+          });
+          return asHeldLogs(rows);
+        },
+        token: async (token) => {
+          const contract = getAddress(token);
+          const [balance, symbol, decimals] = await Promise.all([
+            client.readContract({ address: contract, abi: TOKEN_ABI, functionName: "balanceOf", args: [bank] }).catch(() => null),
+            readSymbol(client, contract),
+            client.readContract({ address: contract, abi: TOKEN_ABI, functionName: "decimals" }).catch(() => null),
+          ]);
+          return {
+            balance: typeof balance === "bigint" ? balance : null,
+            symbol,
+            decimals: decimals == null ? null : Number(decimals),
+          };
+        },
+      },
+    });
+  } catch {
+    return { status: "unread", rows: [] };
+  }
+}
+
+async function readSymbol(client: ReturnType<typeof createPublicClient>, token: Address): Promise<string | null> {
+  try {
+    const value = await client.readContract({ address: token, abi: SYMBOL_ABI, functionName: "symbol" });
+    return typeof value === "string" ? value : null;
+  } catch {
+    try {
+      const value = await client.readContract({ address: token, abi: SYMBOL_BYTES_ABI, functionName: "symbol" });
+      if (typeof value !== "string") return null;
+      const text = hexToString(value as Hex, { size: 32 }).replaceAll("\u0000", "").trim();
+      return text || null;
+    } catch {
+      return null;
+    }
+  }
+}
+
+function asHeldLogs(value: unknown): HeldTokenLog[] {
+  if (!Array.isArray(value)) return [];
+  const logs: HeldTokenLog[] = [];
+  for (const item of value) {
+    if (!item || typeof item !== "object") continue;
+    const row = item as { address?: unknown; topics?: unknown; removed?: unknown };
+    if (typeof row.address !== "string" || !Array.isArray(row.topics)) continue;
+    logs.push({
+      address: row.address,
+      topics: row.topics.filter((topic): topic is string => typeof topic === "string"),
+      removed: row.removed === true,
+    });
+  }
+  return logs;
 }
 
 function unusedSource(): BankLogSource {

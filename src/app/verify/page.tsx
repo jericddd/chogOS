@@ -9,7 +9,6 @@ import { explorerAddressUrl } from "@/lib/blockchain/explorer";
 import { formatUtc } from "@/lib/civilization/labels";
 import { readAppConfig } from "@/lib/config/env";
 import { OFFCHAIN_ROOT_SENTENCE } from "@/lib/verify/anchor";
-import { artifactsWithCode } from "@/lib/verify/artifacts";
 import { EVENT_HASH_ALG, EVENT_INTEGRITY_SCHEMA } from "@/lib/verify/canonical";
 import { TREE_FORMAT } from "@/lib/verify/merkle";
 import { buildPublicProvenance } from "@/lib/verify/provenance";
@@ -42,7 +41,6 @@ async function VerifyLive() {
   const config = readAppConfig();
   const anchored = Boolean(config.eventAnchorAddress);
   const provenance = buildPublicProvenance();
-  const artifacts = await artifactsWithCode(config.rpcUrl, 143);
 
   return (
     <div>
@@ -56,7 +54,6 @@ async function VerifyLive() {
       <div className="mt-8">
         <ProvenancePanel
           provenance={provenance}
-          artifacts={artifacts}
           anchorAddress={config.eventAnchorAddress ?? null}
           anchorChainId={config.eventAnchorChainId ?? null}
           anchorExplorerUrl={explorerAddressUrl(config.eventAnchorChainId ?? config.chainId, config.eventAnchorAddress)}
