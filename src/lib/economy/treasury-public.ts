@@ -87,6 +87,7 @@ export type PublicTreasuryDecision = {
   recipient: string | null;
   txHash: string | null;
   txHref: string | null;
+  txLabel: string | null;
 };
 
 export type FundingScan = "empty" | "complete" | "unreadable";
@@ -187,7 +188,7 @@ function fundingCopy(fundingReady: boolean, scan: FundingScan | undefined, cause
 function decisionCopy(loaded: boolean, fundingReady: boolean, scan: FundingScan | undefined): string {
   if (!loaded) return "Treasury decisions were not loaded. An empty list is not a claim that none exist.";
   const base =
-    "A proposed allocation is an off-chain review. It is a payment only when a confirmed Distributed event on Monad mainnet is shown with a transaction link. A wallet-issuance row is a proposal to create a wallet. It is not a deployment and not a payment.";
+    "A proposed allocation is an off-chain review. It is a payment only when a confirmed Distributed event on Monad mainnet is shown with a transaction link. A wallet-issuance row is a decision to create a wallet. It is a deployment only when that row shows a confirmed Monad transaction. The website does not hold the signing key.";
   if (!fundingReady) return base;
   if (scan === "empty") return `${base} The scan from the deployment block through the latest block found no Distributed event.`;
   if (scan !== "complete") {
@@ -204,7 +205,7 @@ function applicationPolicy(): string[] {
     `MON per transaction ${formatTokenAmount(limits.maxPerTxMon.toString(10), 18, "MON")}. Per citizen ${formatTokenAmount(limits.maxCitizenWindowMon.toString(10), 18, "MON")}. Aggregate ${formatTokenAmount(limits.maxAggregateWindowMon.toString(10), 18, "MON")}.`,
     "$CHOG application caps are 0. No token price was assumed, so token allocations stay closed.",
     "A model cannot raise these limits. Production signing stays off, so a passing review is not a signature.",
-    "A payout reverts unless that citizen's wallet has code and its stored token id matches. An empty prediction is not paid. The NFT holder does not control the wallet. A wallet-issuance proposal is not a deployment. Production does not sign or broadcast.",
+    "A payout reverts unless that citizen's wallet has code and its stored token id matches. An empty prediction is not paid. The NFT holder does not control the wallet. A wallet-issuance proposal is not a deployment until its Monad transaction is confirmed. The website does not sign or broadcast.",
   ];
 }
 
@@ -232,6 +233,7 @@ type Output = {
   verified?: boolean;
   recipient?: string;
   choice?: string;
+  address?: string;
 };
 
 function readOutput(value: unknown): Output {
@@ -253,6 +255,7 @@ function readOutput(value: unknown): Output {
     verified: body.verified === true,
     recipient: text("recipient"),
     choice: text("choice"),
+    address: text("address"),
   };
 }
 
@@ -268,20 +271,34 @@ function issuanceDecision(row: StoredTreasuryDecision): PublicTreasuryDecision {
   const choice = output.choice === "issue" || output.choice === "defer" || output.choice === "unnecessary" ? output.choice : "recorded";
   const reason = output.reason || row.rationale || "No reason was stored.";
   const citizen = output.tokenId && /^[0-9]+$/.test(output.tokenId) ? `Citizen token ${output.tokenId}` : null;
+  const confirmed =
+    output.onchain === true &&
+    output.verified === true &&
+    output.chainId === 143 &&
+    (output.stage === "executed" || row.status === "executed");
+  const txHash = output.txHash && HASH.test(output.txHash) ? output.txHash : null;
   let statusLabel: PublicTreasuryDecision["statusLabel"] = "Pending";
   if (output.stage === "failed" || row.status === "failed") statusLabel = "Failed";
   else if (output.stage === "rejected" || row.status === "rejected") statusLabel = "Rejected";
+  else if (confirmed) statusLabel = "Confirmed";
   else if (output.stage === "proposed" || row.status === "proposed") statusLabel = "Proposed";
+  const linked = confirmed && txHash != null;
+  const detail = linked
+    ? `${choice}. ${reason} Monad transaction ${txHash} created this wallet.`
+    : confirmed && output.address
+      ? `${choice}. ${reason} Wallet code is on Monad at ${output.address}. This record did not broadcast a new transaction.`
+      : `${choice}. ${reason} This record is not a deployment and not a payment.`;
   return {
     id: row.id,
     statusLabel,
     headline: citizen ? `${statusLabel} wallet issuance for ${citizen}` : `${statusLabel} wallet issuance`,
-    detail: `${choice}. ${reason} This record is not a deployment and not a payment.`,
+    detail,
     amountText: null,
     citizen,
-    recipient: null,
-    txHash: null,
-    txHref: null,
+    recipient: output.address ?? null,
+    txHash: linked ? txHash : null,
+    txHref: linked && txHash ? explorerTxUrl(143, txHash) : null,
+    txLabel: linked && txHash ? "View wallet transaction" : null,
   };
 }
 
@@ -317,6 +334,7 @@ function offchainDecision(row: StoredTreasuryDecision, decimals: number | null):
     recipient: confirmed && output.recipient ? output.recipient : null,
     txHash: confirmed ? storedHash : null,
     txHref: confirmed ? explorerTxUrl(143, storedHash) : null,
+    txLabel: confirmed ? "View payout receipt" : null,
   };
 }
 
@@ -336,6 +354,7 @@ function chainDecision(row: VerifiedDistribution, decimals: number | null, db: S
     recipient: row.recipient,
     txHash: row.txHash,
     txHref: explorerTxUrl(143, row.txHash),
+    txLabel: "View payout receipt",
   };
 }
 

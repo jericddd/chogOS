@@ -83,7 +83,7 @@ describe("wallet issuance consideration", () => {
     expect(rows[1]?.output.executed).toBe(false);
   });
 
-  it("records a deferral without a deployment id", async () => {
+  it("issues a permanent wallet when the model asks to defer", async () => {
     const rows: WalletIssuanceInsert[] = [];
     const result = await considerWalletIssuance({
       roster,
@@ -100,10 +100,33 @@ describe("wallet issuance consideration", () => {
       },
     });
     expect(result.status).toBe("proposed");
-    expect(rows[0]?.output.choice).toBe("defer");
-    expect(rows[0]?.output.decisionId).toBeNull();
-    expect(rows[0]?.output.lifecycle).toBe("citizen_active");
-    expect(rows[0]?.inputCommitment).toBeNull();
+    expect(rows[0]?.output.choice).toBe("issue");
+    expect(rows[0]?.output.decisionId).toBe(issuanceDecisionId("104"));
+    expect(rows[0]?.output.executed).toBe(false);
+    expect(rows[0]?.output.txHash).toBeNull();
+    expect(rows[0]?.output.address).toBeNull();
+  });
+
+  it("queues at most five permanent wallets, lowest token id first", async () => {
+    const rows: WalletIssuanceInsert[] = [];
+    const tokens = ["1911", "7", "52", "86", "89", "91", "97"];
+    const result = await considerWalletIssuance({
+      roster: tokens.map((tokenId) => ({ tokenId, name: `CHOG #${tokenId}`, goal: null, lifecycle: "citizen_active" as const })),
+      admittedDecisionIds: new Set(),
+      deploymentPathReady: false,
+      timeoutMs: 1000,
+      maxOutputTokens: 200,
+      provider: "gemini",
+      model: "test",
+      complete: async () => completion(JSON.stringify({ choice: "defer", tokenId: null, rationale: "Wait." })),
+      record: async (row) => {
+        rows.push(row);
+        return true;
+      },
+    });
+    expect(result.status).toBe("proposed");
+    expect(rows.map((row) => row.output.tokenId)).toEqual(["7", "52", "86", "89", "91"]);
+    expect(rows.every((row) => row.output.choice === "issue" && row.output.executed === false)).toBe(true);
   });
 
   it("rejects unnecessary after an admitted issuance and does not execute it", async () => {
@@ -140,7 +163,7 @@ describe("wallet issuance consideration", () => {
     expect(parsed.ok).toBe(false);
   });
 
-  it("halts on a provider quota error and stores no wallet", async () => {
+  it("halts on a provider quota error after recording the wallet decision", async () => {
     const rows: WalletIssuanceInsert[] = [];
     const result = await considerWalletIssuance({
       roster,
@@ -159,8 +182,35 @@ describe("wallet issuance consideration", () => {
       },
     });
     expect(result.status).toBe("halt");
+    expect(rows[0]?.output.choice).toBe("issue");
     expect(rows[0]?.output.executed).toBe(false);
+    expect(rows[0]?.output.onchain).toBe(false);
     expect(rows[0]?.output.address).toBeNull();
+    expect(rows[0]?.output.decisionId).toBe(issuanceDecisionId("104"));
+  });
+
+  it("queues a permanent wallet when the model says the citizen does not need one", async () => {
+    const rows: WalletIssuanceInsert[] = [];
+    const result = await considerWalletIssuance({
+      roster: [
+        roster[0]!,
+        { tokenId: "7", name: "CHOG #7", goal: null, lifecycle: "citizen_active", citizenId: "citizen-7" },
+      ],
+      admittedDecisionIds: new Set(),
+      deploymentPathReady: false,
+      timeoutMs: 1000,
+      maxOutputTokens: 200,
+      provider: "gemini",
+      model: "test",
+      complete: async () => completion(JSON.stringify({ choice: "unnecessary", tokenId: null, rationale: "No purse is needed." })),
+      record: async (row) => {
+        rows.push(row);
+        return true;
+      },
+    });
+    expect(result.status).toBe("proposed");
+    expect(rows.map((row) => row.output.tokenId)).toEqual(["7", "104"]);
+    expect(rows.every((row) => row.output.choice === "issue" && row.output.executed === false && row.output.txHash === null)).toBe(true);
   });
 
   it("keeps wallet issuance out of the growth prompt and out of the signer", () => {
@@ -173,5 +223,11 @@ describe("wallet issuance consideration", () => {
     expect(prompt).not.toMatch(/privateKey|signTypedData|sendTransaction/);
     expect(prompt).toContain("wallet_issuance_proposed");
     expect(prompt).toContain("An open proposal stays until a wallet is assigned.");
+    const walletDb = readFileSync("src/lib/ai/wallet-db.ts", "utf8");
+    expect(walletDb).toContain("enrollment_status");
+    expect(walletDb).toContain("AI_ISSUED_SCHEME");
+    expect(walletDb).not.toContain("loadTreasuryRoster");
+    expect(runner).not.toContain("issue-wallet-decisions");
+    expect(runner).not.toContain("WALLET_ISSUER_AGENT_KEY");
   });
 });

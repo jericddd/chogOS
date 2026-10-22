@@ -314,27 +314,30 @@ function transferArgs(value: unknown): BankLogRecord["args"] {
   };
 }
 
+function mapDecision(row: Record<string, unknown>): StoredTreasuryDecision {
+  return {
+    id: String(row.id),
+    purpose: typeof row.purpose === "string" ? row.purpose : undefined,
+    status: String(row.status),
+    rationale: typeof row.rationale === "string" ? row.rationale : null,
+    createdAt: typeof row.created_at === "string" ? row.created_at : null,
+    output: row.output,
+  };
+}
+
 async function loadDecisions(): Promise<{ loaded: boolean; rows: StoredTreasuryDecision[] }> {
   const client = openEconomyClient();
   if (!client) return { loaded: false, rows: [] };
-  const { data, error } = await client
-    .from("ai_decisions")
-    .select("id, purpose, status, rationale, output, created_at")
-    .in("purpose", ["treasury_allocation", "wallet_issuance"])
-    .order("created_at", { ascending: false })
-    .limit(20);
-  if (error || !data) return { loaded: false, rows: [] };
-  return {
-    loaded: true,
-    rows: (data as Array<Record<string, unknown>>).map((row) => ({
-      id: String(row.id),
-      purpose: typeof row.purpose === "string" ? row.purpose : undefined,
-      status: String(row.status),
-      rationale: typeof row.rationale === "string" ? row.rationale : null,
-      createdAt: typeof row.created_at === "string" ? row.created_at : null,
-      output: row.output,
-    })),
-  };
+  const columns = "id, purpose, status, rationale, output, created_at";
+  const [wallets, treasury] = await Promise.all([
+    client.from("ai_decisions").select(columns).eq("purpose", "wallet_issuance").order("created_at", { ascending: false }).limit(400),
+    client.from("ai_decisions").select(columns).eq("purpose", "treasury_allocation").order("created_at", { ascending: false }).limit(20),
+  ]);
+  if (wallets.error || treasury.error || !wallets.data || !treasury.data) return { loaded: false, rows: [] };
+  const rows = [...(wallets.data as Array<Record<string, unknown>>), ...(treasury.data as Array<Record<string, unknown>>)]
+    .map(mapDecision)
+    .sort((a, b) => (b.createdAt ?? "").localeCompare(a.createdAt ?? ""));
+  return { loaded: true, rows };
 }
 
 function within<T>(work: Promise<T>): Promise<T> {

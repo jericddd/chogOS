@@ -16,6 +16,7 @@
     "world:expand": "tsx scripts/world-expand.ts",
     "world:runner": "tsx scripts/world-runner.ts",
     "ai:runner": "tsx scripts/ai-runner.ts",
+    "wallets:issue": "tsx scripts/issue-wallet-decisions.ts",
     "watcher:run": "tsx scripts/watcher-run.ts",
     "ai:smoke": "tsx scripts/ai-smoke.ts",
     "world:admin": "tsx scripts/world-admin.ts",
