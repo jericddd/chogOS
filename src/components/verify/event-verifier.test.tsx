@@ -96,7 +96,8 @@ describe("event verifier", () => {
     expect(values).toContain(stored);
     fireEvent.click(screen.getByRole("button", { name: "Copy Stored event hash" }));
     expect(writeText).toHaveBeenCalledWith(stored);
-    expect(screen.getByText("Predicted and undeployed. No bytecode was found at this address.")).toBeTruthy();
+    expect(screen.queryByText("Predicted and undeployed. No bytecode was found at this address.")).toBeNull();
+    expect(screen.queryByRole("heading", { name: "Deployment artifacts" })).toBeNull();
     expect(screen.getByText("Build revision unavailable")).toBeTruthy();
   });
 
@@ -323,7 +324,6 @@ describe("provenance panel", () => {
           commitUrl: null,
           sources: [{ path: "contracts/src/EventAnchor.sol", url: null }],
         }}
-        artifacts={[]}
         anchorAddress={null}
         anchorChainId={null}
         anchorExplorerUrl={null}

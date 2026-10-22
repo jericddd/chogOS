@@ -234,6 +234,48 @@ describe("public ownerless treasury", () => {
     expect(view.fundingAddress).toBeNull();
   });
 
+  it("hides rejected reviews and wallet rows that did not choose issue", () => {
+    const view = presentOwnerlessTreasury({
+      inspection: pendingInspection(143),
+      decisionsLoaded: true,
+      decisions: [
+        {
+          id: "rejected-review",
+          status: "rejected",
+          rationale: "No active community initiatives.",
+          createdAt: null,
+          output: { stage: "rejected", reason: "No active community initiatives.", tokenId: "104", asset: "MON", amountRaw: "50" },
+        },
+        {
+          id: "not-json",
+          purpose: "wallet_issuance",
+          status: "rejected",
+          rationale: "The wallet decision was not JSON.",
+          createdAt: null,
+          output: { stage: "rejected", reason: "The wallet decision was not JSON." },
+        },
+        {
+          id: "unnecessary",
+          purpose: "wallet_issuance",
+          status: "proposed",
+          rationale: "All listed citizens already possess active wallets.",
+          createdAt: null,
+          output: { choice: "unnecessary", reason: "All listed citizens already possess active wallets." },
+        },
+        {
+          id: "issue-7",
+          purpose: "wallet_issuance",
+          status: "proposed",
+          rationale: "Every enrolled citizen gets one permanent wallet. Token 7 is next.",
+          createdAt: null,
+          output: { choice: "issue", tokenId: "7", stage: "proposed", reason: "Every enrolled citizen gets one permanent wallet. Token 7 is next." },
+        },
+      ],
+    });
+    expect(view.decisions).toHaveLength(1);
+    expect(view.decisions[0]?.headline).toContain("Citizen token 7");
+  });
+
   it("shows a confirmed wallet issuance with its Monad transaction", () => {
     const view = presentOwnerlessTreasury({
       inspection: pendingInspection(143),

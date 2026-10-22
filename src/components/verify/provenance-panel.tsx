@@ -1,17 +1,14 @@
-import { CopyButton, ExternalAnchor, HashField } from "@/components/verify/hash-field";
+import { CopyButton, ExternalAnchor } from "@/components/verify/hash-field";
 import { OFFCHAIN_ROOT_SENTENCE } from "@/lib/verify/anchor";
-import type { ArtifactView } from "@/lib/verify/artifacts";
 import type { PublicProvenance } from "@/lib/verify/provenance";
 
 export function ProvenancePanel({
   provenance,
-  artifacts,
   anchorAddress,
   anchorChainId,
   anchorExplorerUrl,
 }: {
   provenance: PublicProvenance;
-  artifacts: ArtifactView[];
   anchorAddress: string | null;
   anchorChainId: number | null;
   anchorExplorerUrl: string | null;
@@ -71,27 +68,6 @@ export function ProvenancePanel({
           </>
         )}
       </p>
-      {artifacts.length > 0 ? (
-        <div className="mt-4 space-y-3">
-          <h3 className="text-xs uppercase tracking-[0.14em] text-muted">Predicted deployment artifacts</h3>
-          {artifacts.map((artifact) => (
-            <div key={artifact.id} className="rounded-xl border border-line px-3 py-3">
-              <p className="text-sm">{artifact.label}</p>
-              <dl className="mt-2 grid gap-2">
-                {artifact.hash ? <HashField label={artifact.hashKind} value={artifact.hash} /> : null}
-                <HashField
-                  label="Address"
-                  value={artifact.address}
-                  href={artifact.explorerUrl}
-                  linkLabel="Address on explorer"
-                />
-              </dl>
-              <p className="mt-2 text-xs leading-5 text-muted">{artifact.codeLabel}</p>
-              <p className="text-xs leading-5 text-muted">{artifact.note}</p>
-            </div>
-          ))}
-        </div>
-      ) : null}
     </section>
   );
 }

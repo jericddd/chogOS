@@ -53,14 +53,15 @@ describe("ChogBank panel", () => {
     render(<ChogBankPanel view={view} />);
     expect(screen.getByRole("heading", { name: "ChogBank" })).toBeTruthy();
     expect(screen.getByText("Not ready")).toBeTruthy();
-    expect(screen.getAllByText("Not read").length).toBeGreaterThan(0);
-    expect(screen.getByText("Not recorded")).toBeTruthy();
-    expect(screen.getByText(/No contract explorer link/)).toBeTruthy();
-    expect(screen.getByText(/No funding address is ready/)).toBeTruthy();
+    expect(screen.getByText(/There is no funding address and no live balance/)).toBeTruthy();
+    expect(screen.getByText(/CHOG_BANK_CONTRACT_ADDRESS is unset/)).toBeTruthy();
+    expect(screen.queryByText("Not read")).toBeNull();
+    expect(screen.queryByText("Not recorded")).toBeNull();
+    expect(screen.queryByText(/No contract explorer link/)).toBeNull();
     expect(screen.queryByRole("link")).toBeNull();
     expect(screen.getByTestId("ownerless-chogbank").getAttribute("data-funding-ready")).toBe("no");
     expect(screen.getByTestId("ownerless-chogbank").getAttribute("data-funding-scan")).toBe("skipped");
-    expect(screen.getByText(/not a verified treasury/)).toBeTruthy();
+    expect(screen.queryByRole("heading", { name: "Funding" })).toBeNull();
   });
 
   it("shows a finished empty scan and an unreadable scan as different sentences", () => {

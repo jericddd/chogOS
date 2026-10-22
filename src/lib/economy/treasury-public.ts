@@ -266,6 +266,12 @@ function amountText(asset: string | undefined, amountRaw: string | undefined, de
   return formatTokenAmount(amountRaw, 18, "$CHOG");
 }
 
+function listedDecision(row: StoredTreasuryDecision): boolean {
+  const output = readOutput(row.output);
+  if (row.purpose === "wallet_issuance") return output.choice === "issue";
+  return row.status !== "rejected" && row.status !== "failed" && output.stage !== "rejected" && output.stage !== "failed";
+}
+
 function issuanceDecision(row: StoredTreasuryDecision): PublicTreasuryDecision {
   const output = readOutput(row.output);
   const choice = output.choice === "issue" || output.choice === "defer" || output.choice === "unnecessary" ? output.choice : "recorded";
@@ -457,11 +463,13 @@ export function presentOwnerlessTreasury(input: {
   }
   if (input.decisionsLoaded) {
     for (const row of allocationRows) {
+      if (!listedDecision(row)) continue;
       const decisionId = readOutput(row.output).decisionId;
       if (decisionId && seen.has(decisionId.toLowerCase())) continue;
       decisions.push(offchainDecision(row, decimals));
     }
     for (const row of issuanceRows) {
+      if (!listedDecision(row)) continue;
       decisions.push(issuanceDecision(row));
     }
   }

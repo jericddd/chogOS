@@ -15,23 +15,31 @@ export function ChogBankPanel({ view }: { view: ChogBankPublicView }) {
         <Fact label="Network" value={view.networkLabel} />
         <Fact label="Payout execution" value={view.execution} />
         <Fact label="Funding address" value={view.fundingAddress ?? "Not ready"} mono={Boolean(view.fundingAddress)} />
-        <Fact label="Deployment transaction" value={view.deploymentTxHref ? "Monadscan receipt" : "Not recorded"} href={view.deploymentTxHref} />
-        <Fact label="Source verification" value={view.sourceNote} />
-        <Fact label="Owner and admin" value={view.ownerStatus} />
-        <Fact label="Proxy" value={view.proxyStatus} />
-        <Fact label="Spending authority" value={view.authorizerStatus} />
+        {view.fundingReady ? (
+          <>
+            <Fact label="Deployment transaction" value={view.deploymentTxHref ? "Monadscan receipt" : "Not recorded"} href={view.deploymentTxHref} />
+            <Fact label="Source verification" value={view.sourceNote} />
+            <Fact label="Owner and admin" value={view.ownerStatus} />
+            <Fact label="Proxy" value={view.proxyStatus} />
+            <Fact label="Spending authority" value={view.authorizerStatus} />
+          </>
+        ) : null}
       </dl>
-      {view.explorerContractHref ? (
-        <a className="mt-4 inline-block text-sm text-accent" href={view.explorerContractHref} rel="noopener noreferrer" target="_blank">
-          View contract on Monadscan
-        </a>
-      ) : (
-        <p className="mt-4 text-sm leading-6 text-muted">No contract explorer link is shown until the deployed code passes the checks.</p>
-      )}
-      <div className="mt-5 grid gap-3 sm:grid-cols-2">
-        <Amount label="MON" text={view.monText} />
-        <Amount label="$CHOG" text={view.chogText} />
-      </div>
+      {view.fundingReady ? (
+        <>
+          {view.explorerContractHref ? (
+            <a className="mt-4 inline-block text-sm text-accent" href={view.explorerContractHref} rel="noopener noreferrer" target="_blank">
+              View contract on Monadscan
+            </a>
+          ) : (
+            <p className="mt-4 text-sm leading-6 text-muted">No contract explorer link is shown until the deployed code passes the checks.</p>
+          )}
+          <div className="mt-5 grid gap-3 sm:grid-cols-2">
+            <Amount label="MON" text={view.monText} />
+            <Amount label="$CHOG" text={view.chogText} />
+          </div>
+        </>
+      ) : null}
       {view.warnings.length > 0 ? (
         <ul className="mt-5 list-disc space-y-2 pl-5 text-sm leading-6 text-muted">
           {view.warnings.map((warning) => (
@@ -47,6 +55,7 @@ export function ChogBankPanel({ view }: { view: ChogBankPublicView }) {
           ))}
         </ul>
       </div>
+      {view.fundingReady ? (
       <div className="mt-5">
         <h3 className="font-serif text-xl">Funding</h3>
         <ul className="mt-3 list-disc space-y-2 pl-5 text-sm leading-6 text-muted">
@@ -73,6 +82,7 @@ export function ChogBankPanel({ view }: { view: ChogBankPublicView }) {
           </ul>
         ) : null}
       </div>
+      ) : null}
       <div className="mt-5">
         <h3 className="font-serif text-xl">Allocation decisions</h3>
         <p className="mt-2 text-sm leading-6 text-muted">{view.decisionsNote}</p>

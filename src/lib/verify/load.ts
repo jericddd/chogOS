@@ -6,7 +6,6 @@ import { hashEvent, type CanonicalEventInput } from "@/lib/verify/canonical";
 import { LEAF_ENCODING, TREE_FORMAT } from "@/lib/verify/merkle";
 import { planAnchorRead, readAnchorObservation } from "@/lib/verify/anchor";
 import { readTransferLog, unreadTransferLog } from "@/lib/verify/transfer-log";
-import { artifactsWithCode } from "@/lib/verify/artifacts";
 import type { AnchorRecord } from "@/lib/verify/chain";
 import { REVIEWER_CHECKS, buildPublicProvenance } from "@/lib/verify/provenance";
 import type { VerifyBundle } from "@/lib/verify/types";
@@ -316,7 +315,7 @@ export async function loadVerifyBundle(id: string): Promise<VerifyBundle | { sta
     onchain,
     mind,
     provenance: buildPublicProvenance(),
-    artifacts: await artifactsWithCode(config.rpcUrl, 143),
+    artifacts: [],
     eventPath: `/verify/events/${row.id}`,
     reviewerChecks: [...REVIEWER_CHECKS],
     notes,
