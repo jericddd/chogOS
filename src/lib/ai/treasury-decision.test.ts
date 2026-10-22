@@ -58,6 +58,27 @@ describe("treasury proposals from the mind", () => {
     expect(second.verdict.executed).toBe(false);
   });
 
+  it("stores an oversized MON proposal at the on-chain per-transaction cap", () => {
+    const settled = settleTreasuryText({
+      text: JSON.stringify({
+        tokenId: "104",
+        asset: "MON",
+        amountRaw: "1000000000000000000",
+        reason: "The east road still needs fare.",
+        expectedOutcome: "One work trip can be paid.",
+      }),
+      roster,
+      nowMs: Date.UTC(2026, 9, 21),
+      spent: [],
+      monBalance: 30n * 10n ** 18n,
+      chogBalance: null,
+      chogDecimals: 18,
+    });
+    expect(settled.verdict.status).toBe("accepted_not_executed");
+    expect(settled.verdict.executed).toBe(false);
+    expect(settled.draft?.amountRaw).toBe(10_000_000_000_000_000n);
+  });
+
   it("records a deliberate refusal without turning it into a payment", () => {
     const settled = settleTreasuryText({
       text: JSON.stringify({ allocate: false, reason: "The storehouse can cover this week." }),

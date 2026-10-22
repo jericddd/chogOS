@@ -1,3 +1,4 @@
+import { CHAIN_CHOG_CAP, CHAIN_MON_AGGREGATE, CHAIN_MON_CITIZEN, CHAIN_MON_PER_TX } from "@/lib/chogbank/bank";
 import { APPLICATION_TREASURY_LIMITS, evaluateProductionTreasuryAllocation, type AllocationDraft, type AllocationVerdict, type SpendRecord } from "@/lib/economy/treasury-policy";
 
 export type TreasuryRosterEntry = {
@@ -17,8 +18,9 @@ export function treasuryMessages(roster: readonly TreasuryRosterEntry[]): { syst
     "Fields are tokenId, asset, amountRaw, reason, and expectedOutcome.",
     "asset is MON or CHOG.",
     "amountRaw is an integer string of base units. MON uses wei.",
+    `MON amountRaw must be at most ${CHAIN_MON_PER_TX.toString(10)}. CHOG amountRaw must be ${CHAIN_CHOG_CAP.toString(10)}.`,
     "Do not name an address, a contract, a recipient, or a spending cap.",
-    "A proposal is not a payment. The server can reject it.",
+    "A proposal is not a payment. The server can reject it. An accepted MON allocation can be broadcast later by a signer that is not this model.",
     "If nobody should receive funds, return {\"allocate\":false,\"reason\":\"why\"}.",
   ].join(" ");
   const user = JSON.stringify({
@@ -116,11 +118,22 @@ export function settleTreasuryText(input: {
       },
     };
   }
+  const draft =
+    parsed.draft.asset === "MON" && parsed.draft.amountRaw > CHAIN_MON_PER_TX
+      ? { ...parsed.draft, amountRaw: CHAIN_MON_PER_TX }
+      : parsed.draft.asset === "CHOG" && parsed.draft.amountRaw > CHAIN_CHOG_CAP
+        ? { ...parsed.draft, amountRaw: CHAIN_CHOG_CAP }
+        : parsed.draft;
   return {
-    draft: parsed.draft,
+    draft,
     verdict: evaluateProductionTreasuryAllocation({
-      draft: parsed.draft,
-      limits: { ...APPLICATION_TREASURY_LIMITS },
+      draft,
+      limits: {
+        ...APPLICATION_TREASURY_LIMITS,
+        maxPerTxMon: CHAIN_MON_PER_TX,
+        maxCitizenWindowMon: CHAIN_MON_CITIZEN,
+        maxAggregateWindowMon: CHAIN_MON_AGGREGATE,
+      },
       nowMs: input.nowMs,
       eligibleTokenIds: eligible,
       spent: input.spent,

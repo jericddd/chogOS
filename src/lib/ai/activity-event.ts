@@ -1,7 +1,9 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { getAddress } from "viem";
 import { addresses } from "@/lib/blockchain/addresses";
+import { MAINNET_CHOG_BANK } from "@/lib/chogbank/bank";
 import { MAINNET_WALLET_FACTORY } from "@/lib/wallets/issuer";
+import { formatTokenAmount } from "@/lib/wallets/present";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const HASH = /^0x[0-9a-fA-F]{64}$/;
@@ -70,8 +72,8 @@ function basePayload(tokenId: string | null, extra: Record<string, JsonValue>): 
 
 /**
  * Activity rows for one stored decision.
- * A confirmed transaction is copied only from a wallet row the issuer already verified.
- * Trade, return, and treasury rows stay offchain.
+ * A confirmed transaction is copied only after the issuer or the payout route has verified the receipt.
+ * Trade and return rows stay offchain. A treasury payout row is inserted only for a verified distribution.
  */
 export function activityDrafts(row: ActivityDecision): AiActivityDraft[] {
   if (!UUID.test(row.id)) return [];
@@ -131,13 +133,18 @@ export function activityDrafts(row: ActivityDecision): AiActivityDraft[] {
     const sending = row.status === "proposed" || row.status === "accepted" || row.status === "queued" || row.status === "executed";
     const who = tokenId ? ` to Chog #${tokenId}` : "";
     const assetLabel = asset ? ` ${asset}` : " funds";
-    return [
+    const tx = typeof output.txHash === "string" && HASH.test(output.txHash) ? output.txHash.toLowerCase() : null;
+    const paid = row.status === "executed" && output.verified === true && output.onchain === true && tx != null;
+    const amountRaw = typeof output.amountRaw === "string" && /^[0-9]+$/.test(output.amountRaw) ? output.amountRaw : null;
+    const drafts: AiActivityDraft[] = [
       {
         dedupeKey: `ai:treasury:${row.id}`,
         kind: "treasury.allocation",
-        summary: sending
-          ? `The AI mind decided to send${assetLabel}${who}. No transaction was broadcast.`
-          : `The AI mind decided not to send funds${who}. No transaction was broadcast.`,
+        summary: paid
+          ? `The AI mind decided to send${assetLabel}${who}. The Monad receipt is stored with this decision.`
+          : sending
+            ? `The AI mind decided to send${assetLabel}${who}. No transaction was broadcast.`
+            : `The AI mind decided not to send funds${who}. No transaction was broadcast.`,
         citizenId: actor,
         decisionId: row.id,
         chainId: null,
@@ -147,10 +154,43 @@ export function activityDrafts(row: ActivityDecision): AiActivityDraft[] {
         payload: basePayload(tokenId, {
           action: "send_funds",
           asset,
-          note: "This decision did not broadcast a Monad transaction.",
+          note: paid ? "The Monad receipt is on the payout row." : "This decision did not broadcast a Monad transaction.",
         }),
       },
     ];
+    if (paid && tokenId && asset && amountRaw) {
+      const wallet = checksum(output.address);
+      const block = typeof output.blockNumber === "string" && /^[0-9]+$/.test(output.blockNumber) ? output.blockNumber : null;
+      const requested = typeof output.requestedAmountRaw === "string" && /^[0-9]+$/.test(output.requestedAmountRaw) ? output.requestedAmountRaw : null;
+      const limited = requested != null && requested !== amountRaw;
+      const paidLabel = formatTokenAmount(amountRaw, 18, asset === "CHOG" ? "$CHOG" : "MON");
+      drafts.push({
+        dedupeKey: `ai:treasury-paid:${row.id}`,
+        kind: "treasury.paid",
+        summary: limited
+          ? `The AI mind sent ${paidLabel} to Chog #${tokenId}. The ChogBank cap limited this payment. Monad confirmed the distribution.`
+          : `The AI mind sent ${paidLabel} to Chog #${tokenId}. Monad confirmed the ChogBank distribution.`,
+        citizenId: actor,
+        decisionId: row.id,
+        chainId: 143,
+        txHash: tx,
+        chainStatus: "confirmed",
+        outcome: "prefer",
+        payload: basePayload(tokenId, {
+          action: "send_funds",
+          asset,
+          amountRaw,
+          requestedAmountRaw: requested,
+          bank: MAINNET_CHOG_BANK,
+          wallet,
+          walletVerified: Boolean(wallet),
+          broadcast: true,
+          blockNumber: block,
+          note: typeof output.reason === "string" ? output.reason.slice(0, 320) : "Monad receipt matched Distributed for this decision.",
+        }),
+      });
+    }
+    return drafts;
   }
   if ((row.purpose === "citizen_trade" || row.purpose === "citizen_return") && tokenId) {
     const wallet = output.walletVerified === true ? checksum(output.wallet) : null;
@@ -160,7 +200,7 @@ export function activityDrafts(row: ActivityDecision): AiActivityDraft[] {
         dedupeKey: returning ? `ai:citizen-return:${tokenId}` : `ai:citizen-trade:${tokenId}`,
         kind: returning ? "citizen.return" : "citizen.trade",
         summary: returning
-          ? `The AI mind decided Chog #${tokenId} should return funds to ChogBank. No transaction was broadcast. ChogBank is not deployed.`
+          ? `The AI mind decided Chog #${tokenId} should return funds to ChogBank. No transaction was broadcast.`
           : `The AI mind decided Chog #${tokenId} should trade. No transaction was broadcast.`,
         citizenId: actor,
         decisionId: row.id,
@@ -173,7 +213,7 @@ export function activityDrafts(row: ActivityDecision): AiActivityDraft[] {
           wallet,
           walletVerified: Boolean(wallet),
           note: returning
-            ? "ChogBank is not deployed, so no return transaction exists."
+            ? "This return decision did not broadcast a Monad transaction."
             : "This trade decision did not broadcast a Monad transaction.",
         }),
       },

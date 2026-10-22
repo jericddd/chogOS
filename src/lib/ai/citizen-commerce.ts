@@ -37,7 +37,7 @@ export function tradePolicy(tokenId: string): string {
 }
 
 export function returnPolicy(tokenId: string): string {
-  return `Chog #${tokenId} should return surplus funds to ChogBank. ChogBank is not deployed, so this decision does not broadcast a transaction.`;
+  return `Chog #${tokenId} should return surplus funds to ChogBank. This decision does not broadcast a transaction.`;
 }
 
 export function commerceMessages(citizens: readonly CommerceCitizen[]): { system: string; user: string } {

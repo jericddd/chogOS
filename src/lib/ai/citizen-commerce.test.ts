@@ -34,7 +34,7 @@ describe("citizen commerce", () => {
     });
     expect(settled.get("7")?.trade.fromModel).toBe(false);
     expect(settled.get("7")?.trade.text).toMatch(/does not broadcast/i);
-    expect(settled.get("7")?.returnToBank.text).toMatch(/ChogBank is not deployed/i);
+    expect(settled.get("7")?.returnToBank.text).toMatch(/does not broadcast/i);
   });
 
   it("records a trade and a return with reasons and does not broadcast", async () => {
@@ -104,7 +104,7 @@ describe("citizen commerce", () => {
     });
     expect(result.status).toBe("proposed");
     expect(rows[0]).toMatch(/does not broadcast/i);
-    expect(rows[1]).toMatch(/ChogBank is not deployed/i);
+    expect(rows[1]).toMatch(/does not broadcast/i);
   });
 
   it("leaves the growth prompt unchanged and keeps signing out of the runner", () => {

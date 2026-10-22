@@ -224,7 +224,7 @@ function applicationPolicy(): string[] {
     `Chain ${limits.chainId}. Window ${limits.windowSeconds} seconds. Authorization lifetime at most ${limits.maxAuthorizationTtl} seconds.`,
     `MON per transaction ${formatTokenAmount(limits.maxPerTxMon.toString(10), 18, "MON")}. Per citizen ${formatTokenAmount(limits.maxCitizenWindowMon.toString(10), 18, "MON")}. Aggregate ${formatTokenAmount(limits.maxAggregateWindowMon.toString(10), 18, "MON")}.`,
     chogSpendingCapSentence(limits.maxPerTxChog, limits.maxCitizenWindowChog, limits.maxAggregateWindowChog, "Review"),
-    "A model cannot raise these limits. Production signing stays off, so a passing review is not a signature.",
+    "A model cannot raise these limits. A passing review is not itself a signature. An accepted MON amount above the ChogBank cap is reduced to that cap before it can be broadcast.",
     "A payout reverts unless that citizen's wallet has code and its stored token id matches. An empty prediction is not paid. The NFT holder does not control the wallet. A wallet-issuance proposal is not a deployment until its Monad transaction is confirmed. The website does not sign or broadcast.",
   ];
 }
@@ -399,7 +399,8 @@ export function presentOwnerlessTreasury(input: {
   const inspection = input.inspection;
   const warnings: string[] = [];
   const policy = applicationPolicy();
-  const execution = "Payout execution is disabled. The AI can record a review. This server does not sign or broadcast.";
+  const execution =
+    "Signing on this server is disabled. This server does not sign or broadcast. GitHub Actions broadcasts an accepted MON allocation inside the ChogBank cap, and Verify links the Monad receipt. $CHOG waits until that MON receipt is stored.";
   const sourceNote = "Source-code verification: not checked.";
   let deploymentState: ChogBankPublicView["deploymentState"] = "pending";
   let fundingReady = false;
@@ -464,7 +465,7 @@ export function presentOwnerlessTreasury(input: {
     } else if (inspection.chainCaps) {
       deploymentState = "live";
       fundingReady = true;
-      summary = "Deployed code on Monad mainnet passed the owner, proxy, chain, and asset checks. Payout execution is still disabled.";
+      summary = "Deployed code on Monad mainnet passed the owner, proxy, chain, and asset checks. An accepted MON allocation is broadcast from GitHub Actions, and Verify links the receipt.";
       policy.push(...chainPolicy(inspection.chainCaps));
       if (inspection.deploymentTx && !inspection.deploymentTxVerified) {
         warnings.push("A deployment transaction was configured, and it is not linked. The receipt must be a successful creation of this contract.");
