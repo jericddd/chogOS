@@ -221,7 +221,7 @@ async function attachMind(client: SupabaseClient, events: WorldEventView[]): Pro
         : null;
     const mind = {
       summary: mindText(output?.summary),
-      rationale: mindText(row.rationale) ?? mindText(output?.rationale),
+      rationale: mindText(row.rationale) ?? mindText(output?.rationale) ?? mindText(output?.reason),
     };
     if (mind.summary || mind.rationale) {
       byId.set(row.id, mind);

@@ -1,5 +1,6 @@
 import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { publishDecisionActivity } from "@/lib/ai/activity-event";
 import type { WalletIssuanceInsert, WalletRosterEntry } from "@/lib/ai/wallet-run";
 import type { AppConfig } from "@/lib/config/env";
 import { AI_ISSUED_SCHEME } from "@/lib/wallets/authority";
@@ -140,18 +141,32 @@ export async function loadWalletIssuanceContext(
 }
 
 export async function recordWalletIssuance(client: SupabaseClient, row: WalletIssuanceInsert): Promise<boolean> {
-  const { error } = await client.from("ai_decisions").insert({
+  const inserted = await client
+    .from("ai_decisions")
+    .insert({
+      purpose: row.purpose,
+      status: row.status,
+      citizen_id: row.citizenId,
+      rationale: row.rationale,
+      validation_result: row.validationResult,
+      input_commitment: row.inputCommitment,
+      provider: row.provider,
+      model: row.model,
+      output: row.output,
+    })
+    .select("id")
+    .maybeSingle();
+  if (inserted.error) return false;
+  if (!inserted.data?.id) return true;
+  await publishDecisionActivity(client, {
+    id: inserted.data.id,
+    citizenId: row.citizenId,
     purpose: row.purpose,
     status: row.status,
-    citizen_id: row.citizenId,
     rationale: row.rationale,
-    validation_result: row.validationResult,
-    input_commitment: row.inputCommitment,
-    provider: row.provider,
-    model: row.model,
     output: row.output,
   });
-  return !error;
+  return true;
 }
 
 export type StoredIssuance = {

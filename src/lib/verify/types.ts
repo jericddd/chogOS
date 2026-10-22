@@ -4,6 +4,7 @@ import type { ArtifactView } from "@/lib/verify/artifacts";
 import type { AnchorRecord } from "@/lib/verify/chain";
 import type { PublicProvenance } from "@/lib/verify/provenance";
 import type { TransferLogCheck } from "@/lib/verify/transfer-log";
+import type { OnchainEvidence } from "@/lib/world/onchain-links";
 import type { TransferEvidence } from "@/lib/world/transfer";
 
 export type VerifyBundle = {
@@ -35,6 +36,10 @@ export type VerifyBundle = {
   explorerContractUrl: string | null;
   explorerBlockUrl: string | null;
   transfer: TransferEvidence | null;
+  /** Monadscan links for an AI wallet, payment, trade, or return. Null for other events. */
+  onchain: OnchainEvidence | null;
+  /** Reason stored on the linked AI decision. Null when this event has no decision. */
+  mind: { summary: string | null; rationale: string | null } | null;
   /** Read-only receipt comparison. Null when this row is not an NFT transfer. matched is never true unless the check ran. */
   transferLog: TransferLogCheck | null;
   provenance: PublicProvenance;

@@ -7,8 +7,8 @@ import { CitizenPortrait, MetadataFacts, MetadataName } from "@/components/citiz
 import { formatUtc, shortAddress, verificationLabel } from "@/lib/civilization/labels";
 import { loadCitizenProfile } from "@/lib/civilization/load-profile";
 import { loadCitizenWalletView } from "@/lib/wallets/load";
-import { SourceBadge } from "@/components/world/event-item";
-import { formatWorldTime } from "@/lib/world/clock";
+import { DecisionReasons } from "@/components/world/decision-reasons";
+import { EventItem } from "@/components/world/event-item";
 import { loadCitizenMind } from "@/lib/ai/load-mind";
 import { TRAIT_LABELS } from "@/lib/ai/personality";
 import { loadCitizenWorld, loadEventPage } from "@/lib/world/load";
@@ -272,6 +272,7 @@ async function CitizenMindSection({ tokenId }: { tokenId: string }) {
           : "No personality has been initialized yet."}{" "}
         {data.aiActive ? "At least one AI decision is stored." : "No AI decision is stored for this citizen."}
       </p>
+      <DecisionReasons decisions={data.decisions} />
       {data.personality ? (
         <dl className="mt-4 grid gap-2 sm:grid-cols-2">
           {traits.map(([key, label]) => (
@@ -357,16 +358,7 @@ async function CitizenHistory({
         ) : (
           <ul className="mt-3 divide-y divide-line border-y border-line">
             {page.events.map((event) => (
-              <li key={event.id} className="flex items-start gap-3 py-3">
-                <SourceBadge source={event.source} />
-                <div className="min-w-0">
-                  <p>{event.summary}</p>
-                  <p className="mt-1 text-xs text-muted">
-                    {event.worldS !== null ? `${formatWorldTime(event.worldS)} · ` : ""}
-                    {formatUtc(event.occurredAt)} · {event.kind}
-                  </p>
-                </div>
-              </li>
+              <EventItem key={event.id} event={event} now={0} citizenName={() => null} />
             ))}
           </ul>
         )

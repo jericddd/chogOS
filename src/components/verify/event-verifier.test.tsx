@@ -48,6 +48,8 @@ function bundle(patch: Partial<VerifyBundle> = {}): VerifyBundle {
     explorerBlockUrl: null,
     transfer: null,
     transferLog: null,
+    onchain: null,
+    mind: null,
     provenance: {
       repository: "https://github.com/jericddd/chogOS",
       revision: { sha: null, label: "Build revision unavailable" },
@@ -276,6 +278,38 @@ describe("event verifier", () => {
     );
     expect(screen.getByText("Recorded world event")).toBeTruthy();
     expect(screen.queryByText("A read-only receipt check matched the stored Chog Genesis transfer log.")).toBeNull();
+  });
+
+  it("shows the mind's reason and the Monad links for a created wallet", () => {
+    const tx = `0x${"ab".repeat(32)}`;
+    const wallet = "0x238797c75Ad0423516F84D917B7A9d765831bf02";
+    const factory = "0xE1236D88f64206555c7E9FCfC3c742B2BAa2fc6A";
+    render(
+      <EventVerifier
+        bundle={bundle({
+          event: { ...event, kind: "wallet.created", summary: "The AI mind created the permanent wallet for Chog #104 on Monad." },
+          mind: { summary: null, rationale: "Every enrolled citizen gets one permanent wallet." },
+          onchain: {
+            title: "Monad wallet creation",
+            note: "Open the transaction, block, citizen wallet, factory, and Genesis token on Monadscan.",
+            links: [
+              { label: "Transaction", href: `https://monadscan.com/tx/${tx}`, value: tx },
+              { label: "Block", href: "https://monadscan.com/block/115600416", value: "115600416" },
+              { label: "Citizen wallet", href: `https://monadscan.com/address/${wallet.toLowerCase()}`, value: wallet },
+              { label: "Wallet factory", href: `https://monadscan.com/address/${factory.toLowerCase()}`, value: factory },
+              { label: "Genesis token", href: "https://monadscan.com/nft/0xc96d31f8626c6d03fae5dcd3d61e3fb9f4a73763/104", value: "104" },
+            ],
+          },
+        })}
+      />,
+    );
+    expect(screen.getByText("Monad wallet creation")).toBeTruthy();
+    expect(screen.getByText("Every enrolled citizen gets one permanent wallet.")).toBeTruthy();
+    expect(screen.getByRole("link", { name: "Transaction" }).getAttribute("href")).toBe(`https://monadscan.com/tx/${tx}`);
+    expect(screen.getByRole("link", { name: "Block" }).getAttribute("href")).toBe("https://monadscan.com/block/115600416");
+    expect(screen.getByRole("link", { name: "Citizen wallet" }).getAttribute("href")).toContain("/address/");
+    expect(screen.getByRole("link", { name: "Wallet factory" }).getAttribute("href")).toContain(factory.toLowerCase());
+    expect(screen.getByRole("link", { name: "Genesis token" }).getAttribute("href")).toContain("/nft/");
   });
 });
 

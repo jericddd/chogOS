@@ -1,4 +1,5 @@
 import { explorerTxUrl } from "@/lib/blockchain/explorer";
+import { onchainEvidenceFromRow } from "@/lib/world/onchain-links";
 import { transferEvidenceFromRow } from "@/lib/world/transfer";
 import { CONSTRUCT_KINDS, type BuildingKind, type ConstructKind, type WorkRole } from "@/lib/world/layout";
 import { roadStubById } from "@/lib/world/roads";
@@ -273,6 +274,7 @@ export function toEvent(row: EventRow): WorldEventView {
     chainStatus: confirmed ? "confirmed" : reorg || inconsistent ? "offchain" : row.chain_status,
     txHash: confirmed ? row.tx_hash : reorg || inconsistent ? null : row.tx_hash,
     txUrl: confirmed ? (transfer ? transfer.links.transaction : explorerTxUrl(row.chain_id, row.tx_hash)) : null,
+    onchain: onchainEvidenceFromRow(row),
     transfer,
     intentId: row.intent_id ?? payloadText(row.payload, "intentId"),
     decisionId: row.decision_id ?? payloadText(row.payload, "decisionId"),

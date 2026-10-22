@@ -59,6 +59,7 @@ export function EventItem({
           </p>
           {event.source === "ai" && (event.mind?.rationale || event.mind?.summary) ? (
             <p className={`mt-1 text-sm leading-6 text-foreground/90 ${compact ? "line-clamp-3" : ""}`}>
+              <span className="text-muted">Reason. </span>
               {event.mind.rationale ?? event.mind.summary}
             </p>
           ) : null}
@@ -81,9 +82,24 @@ export function EventItem({
             </Link>
           </p>
           <TransferLinks event={event} />
+          <OnchainLinks event={event} />
         </div>
       </div>
     </li>
+  );
+}
+
+function OnchainLinks({ event }: { event: WorldEventView }) {
+  const links = event.onchain?.links ?? [];
+  if (links.length === 0) return null;
+  return (
+    <p className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted">
+      {links.map((link) => (
+        <a key={link.label} href={link.href} target="_blank" rel="noopener noreferrer" className="text-accent hover:underline" title={link.href}>
+          {link.label}
+        </a>
+      ))}
+    </p>
   );
 }
 
