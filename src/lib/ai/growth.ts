@@ -1,7 +1,8 @@
 import type { DecisionContext } from "@/lib/ai/context";
 import type { ParsedDecision } from "@/lib/ai/schema";
+import { civicMenu, isLawCode, menuOpen } from "@/lib/world/civic";
 import { CONSTRUCTION_SHIFT_STONE, CONSTRUCTION_SHIFT_WOOD } from "@/lib/world/needs";
-import type { ConstructKind } from "@/lib/world/layout";
+import { OPEN_CONSTRUCT_KINDS, type ConstructKind } from "@/lib/world/layout";
 
 /**
  * Structured shape for a growth judgment. The enum is the set of structures
@@ -10,11 +11,17 @@ import type { ConstructKind } from "@/lib/world/layout";
 export const GROWTH_RESPONSE_SCHEMA: Record<string, unknown> = {
   type: "object",
   properties: {
-    action: { type: "string", enum: ["build"] },
-    buildKind: { type: "string", enum: ["house", "farm", "workshop", "road"] },
+    action: { type: "string", enum: ["build", "visit", "proclaim", "levy", "detain", "watch", "amend", "pardon"] },
+    buildKind: { type: "string", enum: [...OPEN_CONSTRUCT_KINDS, "jail", "road", "none"] },
     roadStubId: { type: "string" },
     projectId: { type: "string" },
     placeName: { type: "string" },
+    buildingId: { type: "string" },
+    lawCode: {
+      type: "string",
+      enum: ["storehouse_night", "merchant_only", "ration_cap", "house_door", "ration_fine", "none"],
+    },
+    subjectTokenId: { type: "string" },
     summary: { type: "string" },
     rationale: { type: "string" },
   },
@@ -24,7 +31,11 @@ export const GROWTH_RESPONSE_SCHEMA: Record<string, unknown> = {
 type Spur = DecisionContext["construction"]["roads"]["eligibleStubs"][number];
 
 export function landCanGrow(context: DecisionContext): boolean {
-  return context.construction.canBuildKinds.length > 0 || context.construction.roads.eligibleStubs.length > 0;
+  return (
+    context.construction.canBuildKinds.length > 0 ||
+    context.construction.roads.eligibleStubs.length > 0 ||
+    menuOpen(civicMenu(context.civic))
+  );
 }
 
 export function growthBlocker(context: DecisionContext): string {
@@ -95,6 +106,61 @@ export function placeTitle(raw: string | null | undefined): string | null {
   return title;
 }
 
+const NAMED_KINDS = [...OPEN_CONSTRUCT_KINDS, "jail"] as const;
+
+function acceptCivic(
+  decision: ParsedDecision,
+  context: DecisionContext,
+): { ok: true; decision: ParsedDecision } | { ok: false; reason: string } {
+  const menu = civicMenu(context.civic);
+  const code = decision.lawCode;
+  if (decision.action === "visit") {
+    if (!menu.visit || !context.civic.bankId) {
+      return { ok: false, reason: "the bank is not open for a visit" };
+    }
+    return {
+      ok: true,
+      decision: { ...decision, buildingId: context.civic.bankId, buildKind: "none", placeName: null, lawCode: null },
+    };
+  }
+  if (decision.action === "proclaim" || decision.action === "amend" || decision.action === "pardon") {
+    const open = decision.action === "proclaim" ? menu.proclaim : menu.amend;
+    if (!open) {
+      return { ok: false, reason: "that record is not stored yet" };
+    }
+    if (!code || !isLawCode(code) || (decision.action === "proclaim" && context.civic.laws.some((law) => law.code === code))) {
+      return { ok: false, reason: "that is not an open law in the catalog" };
+    }
+    if (decision.action !== "proclaim" && !context.civic.laws.some((law) => law.code === code && law.status === "proclaimed")) {
+      return { ok: false, reason: "that law is not proclaimed" };
+    }
+    return { ok: true, decision: { ...decision, lawCode: code, buildKind: "none", placeName: null } };
+  }
+  if (decision.action === "levy") {
+    if (!menu.levy) {
+      return { ok: false, reason: "no proclaimed law names a fine" };
+    }
+    return { ok: true, decision: { ...decision, buildKind: "none", placeName: null, lawCode: "ration_fine" } };
+  }
+  if (decision.action === "detain") {
+    if (!menu.detain || !context.civic.jailId) {
+      return { ok: false, reason: "a sentence needs a room that is not open yet" };
+    }
+    return {
+      ok: true,
+      decision: { ...decision, buildingId: context.civic.jailId, buildKind: "none", placeName: null },
+    };
+  }
+  if (decision.action === "watch") {
+    if (!menu.watch) {
+      return { ok: false, reason: "no repeated offense is stored" };
+    }
+    const door = decision.buildingId === "commons-square" ? "commons-square" : "storehouse";
+    return { ok: true, decision: { ...decision, buildingId: door, buildKind: "none", placeName: null } };
+  }
+  return { ok: false, reason: "that is not a decision this record can hold" };
+}
+
 /**
  * Keep a model judgment only when it is growth the current land can hold.
  * Daily life is refused here. Nothing is substituted on the model's behalf.
@@ -104,6 +170,17 @@ export function acceptGrowth(
   context: DecisionContext,
 ): { ok: true; decision: ParsedDecision } | { ok: false; reason: string } {
   if (decision.action !== "build") {
+    if (
+      decision.action === "visit" ||
+      decision.action === "proclaim" ||
+      decision.action === "levy" ||
+      decision.action === "detain" ||
+      decision.action === "watch" ||
+      decision.action === "amend" ||
+      decision.action === "pardon"
+    ) {
+      return acceptCivic(decision, context);
+    }
     return { ok: false, reason: "daily life is already simulated; this decision has to grow the town" };
   }
   if (decision.buildKind === "road") {
@@ -113,8 +190,8 @@ export function acceptGrowth(
     }
     return { ok: true, decision: { ...decision, buildKind: "road", roadStubId: matched.id, placeName: null } };
   }
-  if (decision.buildKind === "house" || decision.buildKind === "farm" || decision.buildKind === "workshop") {
-    const kind: ConstructKind = decision.buildKind;
+  if ((NAMED_KINDS as readonly string[]).includes(decision.buildKind)) {
+    const kind = decision.buildKind as ConstructKind;
     if (!context.construction.canBuildKinds.includes(kind)) {
       return { ok: false, reason: `a ${kind} cannot be started on the open land right now` };
     }

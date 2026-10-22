@@ -1,10 +1,20 @@
 import { ACTIVATION_MOTIVES, type ActivationMotive } from "@/lib/chogbank/types";
 import type { EconomyDraft } from "@/lib/economy/proposal";
 import { parseEconomyDraft } from "@/lib/economy/proposal";
+import { isLawCode, type LawCode } from "@/lib/world/civic";
 import { CONSTRUCT_KINDS, type ConstructKind } from "@/lib/world/layout";
 import { WORLD_ACTIONS, type WorldAction } from "@/lib/world/actions";
 
-export const DECISION_ACTIONS = [...WORLD_ACTIONS, "build", "request_wallet_activation", "propose_economy"] as const;
+export const CIVIC_ACTIONS = ["visit", "proclaim", "levy", "detain", "watch", "amend", "pardon"] as const;
+export type CivicAction = (typeof CIVIC_ACTIONS)[number];
+
+export const DECISION_ACTIONS = [
+  ...WORLD_ACTIONS,
+  "build",
+  ...CIVIC_ACTIONS,
+  "request_wallet_activation",
+  "propose_economy",
+] as const;
 export type DecisionAction = (typeof DECISION_ACTIONS)[number];
 export type DecisionBuildKind = ConstructKind | "road" | "none";
 
@@ -13,8 +23,10 @@ export type ParsedDecision = {
   buildingId: string;
   buildKind: DecisionBuildKind;
   roadStubId: string | "none";
-  /** Name the mind gave a house, farm, or workshop. Roads keep their survey name. */
+  /** Name the mind gave a place. Roads keep their survey name. */
   placeName: string | null;
+  lawCode: LawCode | null;
+  subjectTokenId: string | null;
   goalId: string | null;
   projectId: string | null;
   summary: string;
@@ -100,6 +112,10 @@ export function parseDecisionOutput(text: string): { ok: true; decision: ParsedD
     if (buildingId && buildingId !== "none" && !BUILDING_RE.test(buildingId)) {
       return { ok: false, reason: "invalid building id" };
     }
+  } else if ((CIVIC_ACTIONS as readonly string[]).includes(action)) {
+    if (buildingId && buildingId !== "none" && !BUILDING_RE.test(buildingId)) {
+      return { ok: false, reason: "invalid building id" };
+    }
   } else if (action !== "build") {
     if (!BUILDING_RE.test(buildingId)) {
       return { ok: false, reason: "invalid building id" };
@@ -120,6 +136,12 @@ export function parseDecisionOutput(text: string): { ok: true; decision: ParsedD
   let buildKind: DecisionBuildKind = "none";
   let roadStubId: string | "none" = "none";
   let placeName: string | null = null;
+  let lawCode: LawCode | null = null;
+  const subjectRaw = typeof body.subjectTokenId === "string" ? body.subjectTokenId.trim() : "";
+  const subjectTokenId = /^[0-9]{1,78}$/.test(subjectRaw) ? subjectRaw : null;
+  if (typeof body.lawCode === "string" && isLawCode(body.lawCode.trim())) {
+    lawCode = body.lawCode.trim() as LawCode;
+  }
   if (typeof body.placeName === "string") {
     const named = body.placeName.trim();
     if (named && named.toLowerCase() !== "none") {
@@ -196,6 +218,8 @@ export function parseDecisionOutput(text: string): { ok: true; decision: ParsedD
       buildKind,
       roadStubId,
       placeName,
+      lawCode,
+      subjectTokenId,
       goalId,
       projectId,
       summary,
@@ -233,6 +257,10 @@ export function isActivationAction(action: DecisionAction): boolean {
 
 export function isEconomyAction(action: DecisionAction): boolean {
   return action === "propose_economy";
+}
+
+export function isCivicAction(action: DecisionAction): action is CivicAction {
+  return (CIVIC_ACTIONS as readonly string[]).includes(action);
 }
 
 export function jsonSafeDecision(decision: ParsedDecision): Record<string, unknown> {

@@ -56,7 +56,7 @@ export function GrowthDecisions({ dock = false, inactive = false }: { dock?: boo
     detail ||
     (dock
       ? "No AI town decision is recorded yet."
-      : "No AI town decision is recorded yet. A row appears here after the mind places a road or building, or records a citizen wallet decision.");
+      : "No AI town decision is recorded yet. A row appears here after the mind places a road, a building, a park, or an amusement, records a civic act the land can hold, or records a citizen wallet decision.");
 
   return (
     <section
@@ -69,9 +69,9 @@ export function GrowthDecisions({ dock = false, inactive = false }: { dock?: boo
         </h2>
         {dock ? null : (
           <p className="mt-1 text-sm leading-6 text-muted">
-            These are AI decisions about roads, buildings, and citizen wallets. The sentence under a row is the mind&apos;s
-            own reason, when that decision was stored. Verify opens the stored decision and any Monad receipt. Sleep, work,
-            and visits stay on the simulation below.
+            These are AI decisions about roads, buildings, parks, the bank, laws, and citizen wallets. The sentence under a
+            row is the mind&apos;s own reason, when that decision was stored. Verify opens the stored decision and any Monad
+            receipt. Sleep, work, and the square stay on the simulation below.
           </p>
         )}
       </div>

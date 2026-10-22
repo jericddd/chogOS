@@ -458,9 +458,11 @@ describe("live merge", () => {
     const road = event(4, { kind: "road.placed", category: "construction", source: "ai", tokenId: null });
     const allocation = event(9, { kind: "treasury.allocation", category: "ai", source: "ai" });
     const social = event(3, { category: "social", source: "simulation" });
-    expect(townGrowthEvents([decidedSame, created, decidedOther, allocation, road, social]).map((row) => row.seq)).toEqual([
-      12, 10, 4,
-    ]);
+    const law = event(13, { kind: "civic.law_proclaimed", category: "world", source: "ai", tokenId: "91" });
+    const simulatedVisit = event(2, { kind: "citizen.bank_visit", category: "citizen", source: "simulation" });
+    expect(
+      townGrowthEvents([decidedSame, created, decidedOther, allocation, road, social, law, simulatedVisit]).map((row) => row.seq),
+    ).toEqual([13, 12, 10, 4]);
     expect(townGrowthEvents([road], 1)).toEqual([road]);
     expect(townGrowthEvents([social, allocation])).toEqual([]);
   });

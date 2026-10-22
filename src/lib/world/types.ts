@@ -12,9 +12,11 @@ export type WorldActivity =
   | "resting"
   | "sleeping"
   | "idle"
-  | "unavailable";
+  | "unavailable"
+  | "visiting"
+  | "detained";
 
-export type WorldPurpose = "work" | "shop" | "socialize" | "rest" | "sleep" | "idle";
+export type WorldPurpose = "work" | "shop" | "socialize" | "rest" | "sleep" | "idle" | "visit" | "watch" | "detain";
 
 export type EventSource = "simulation" | "ai" | "onchain" | "system";
 

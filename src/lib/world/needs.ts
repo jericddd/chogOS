@@ -8,7 +8,7 @@
  */
 import type { PersonalityTraits, RankedAction } from "@/lib/ai/personality";
 import { preferredFeasibleAction, rankActions } from "@/lib/ai/personality";
-import { CONSTRUCT_KINDS, type ConstructKind } from "@/lib/world/layout";
+import { OPEN_CONSTRUCT_KINDS, type ConstructKind } from "@/lib/world/layout";
 import { planConstruction } from "@/lib/world/placement";
 import type {
   BuildingView,
@@ -338,7 +338,11 @@ export function feasibleConstructKinds(
   const under = new Set(
     buildings.filter((building) => building.status === "under_construction").map((building) => building.kind),
   );
-  return CONSTRUCT_KINDS.filter((kind) => {
+  const hasBank = buildings.some((building) => building.kind === "bank");
+  return OPEN_CONSTRUCT_KINDS.filter((kind) => {
+    if (kind === "bank" && hasBank) {
+      return false;
+    }
     if (under.has(kind)) {
       return false;
     }
@@ -349,7 +353,7 @@ export function feasibleConstructKinds(
 export function preferredBuildKind(
   stock: { food: number; tools: number; wood?: number; stone?: number },
   needs: readonly TownNeedView[] = [],
-  canBuildKinds: readonly ConstructKind[] = CONSTRUCT_KINDS,
+  canBuildKinds: readonly ConstructKind[] = OPEN_CONSTRUCT_KINDS,
 ): ConstructKind | "none" {
   const open = activeTownNeeds(needs);
   for (const need of open) {

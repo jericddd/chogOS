@@ -19,6 +19,8 @@ export const ACTIVITY_LABEL: Record<WorldActivity, string> = {
   sleeping: "Sleeping",
   idle: "Idle",
   unavailable: "Away",
+  visiting: "Visiting",
+  detained: "Detained",
 };
 
 export const ROLE_LABEL: Record<WorkRole, string> = {
@@ -40,6 +42,10 @@ export const KIND_LABEL: Record<BuildingKind, string> = {
   workshop: "Workshop",
   storehouse: "Storehouse",
   market: "Market",
+  park: "Park",
+  amusement: "Amusement",
+  bank: "ChogBank",
+  jail: "Jail",
 };
 
 export const SOURCE_LABEL: Record<EventSource, string> = {
@@ -76,6 +82,9 @@ const PURPOSE_TEXT: Record<string, string> = {
   rest: "to rest",
   sleep: "to sleep",
   idle: "to wait",
+  visit: "to read the public books",
+  watch: "to keep watch",
+  detain: "to serve a sentence",
 };
 
 export const RESOURCE_LABEL: Record<string, string> = {

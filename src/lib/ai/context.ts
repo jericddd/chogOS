@@ -5,7 +5,8 @@ import { considerWalletActivation } from "@/lib/chogbank/authorization";
 import type { ActivationState } from "@/lib/chogbank/types";
 import { precheckAction, WORLD_ACTIONS, type ResourceStock, type WorldAction } from "@/lib/world/actions";
 import { worldHour } from "@/lib/world/clock";
-import { CONSTRUCT_KINDS, type ConstructKind } from "@/lib/world/layout";
+import { closedCivic, type CivicFacts } from "@/lib/world/civic";
+import { CONSTRUCT_KINDS, OPEN_CONSTRUCT_KINDS, type ConstructKind } from "@/lib/world/layout";
 import { ROAD_STUB_STONE, ROAD_STUB_WOOD } from "@/lib/world/roads";
 import {
   FOOD_SHORTAGE_ACTIVATE,
@@ -103,6 +104,7 @@ export type DecisionContext = {
   townNeeds: TownNeedView[];
   townProjects: TownProjectView[];
   walletActivation: WalletActivationContext;
+  civic: CivicFacts;
 };
 
 export function preferredBuildKind(
@@ -155,11 +157,11 @@ function constructionFromBuildings(
   eligibleStubs: ConstructionContext["roads"]["eligibleStubs"],
   completedStubIds: string[],
 ): ConstructionContext {
-  const counts: Record<ConstructKind, number> = { house: 0, farm: 0, workshop: 0 };
+  const counts = Object.fromEntries(CONSTRUCT_KINDS.map((kind) => [kind, 0])) as Record<ConstructKind, number>;
   const underConstruction: ConstructionContext["underConstruction"] = [];
   for (const building of buildings) {
-    if (building.kind === "house" || building.kind === "farm" || building.kind === "workshop") {
-      counts[building.kind] += 1;
+    if ((CONSTRUCT_KINDS as readonly string[]).includes(building.kind)) {
+      counts[building.kind as ConstructKind] += 1;
     }
     if (building.status === "under_construction") {
       underConstruction.push({
@@ -220,10 +222,11 @@ export function buildDecisionContext(input: {
   eligibleRoadStubs?: ConstructionContext["roads"]["eligibleStubs"];
   completedRoadIds?: string[];
   walletActivation?: WalletActivationContext;
+  civic?: CivicFacts;
 }): DecisionContext {
   const feasible = listFeasibleActions(input.citizen, input.buildings, input.worldS, input.stock);
   const canBuildKinds =
-    input.canBuildKinds ?? (input.canBuild ? [...CONSTRUCT_KINDS] : []);
+    input.canBuildKinds ?? (input.canBuild ? [...OPEN_CONSTRUCT_KINDS] : []);
   const eligibleStubs = input.eligibleRoadStubs ?? [];
   const canBuild = canBuildKinds.length > 0 || eligibleStubs.length > 0;
   const vacantServedLots = input.vacantServedLots ?? (canBuildKinds.length > 0 ? 1 : 0);
@@ -270,6 +273,14 @@ export function buildDecisionContext(input: {
     eligibleStubs,
     input.completedRoadIds ?? [],
   );
+  const bank = input.buildings.find((building) => building.kind === "bank" && building.status === "active");
+  const civic =
+    input.civic ??
+    {
+      ...closedCivic(input.stock.food),
+      shortageActive: townNeeds.some((need) => need.needType === "food_shortage" && need.status === "active"),
+      bankId: bank?.id ?? null,
+    };
   const walletActivation = input.walletActivation ?? {
     state: "unassigned",
     hasActiveWallet: false,
@@ -310,6 +321,7 @@ export function buildDecisionContext(input: {
     townNeeds: activeTownNeeds(townNeeds),
     townProjects: openTownProjects(townProjects).slice(0, 4),
     walletActivation,
+    civic,
   };
 }
 
@@ -363,6 +375,7 @@ export function contextCommitment(context: DecisionContext): string {
       blocker: project.blocker,
     })),
     walletActivation: context.walletActivation,
+    civic: context.civic,
   };
   return `0x${createHash("sha256").update(JSON.stringify(body)).digest("hex")}`;
 }
@@ -371,14 +384,15 @@ export function decisionMessages(context: DecisionContext, maxChars: number): { 
   const system = [
     "You decide how this town grows.",
     "Read the description of the land: what already stands, what each place is for, the named country, the water, and what the storehouse holds. Judge the growth from that place.",
-    "Daily life is already simulated: sleep, work, shopping, rest, and visiting. Do not spend this decision on those.",
+    "Daily life is already simulated: sleep, work, shopping, rest, and visiting the square. Do not spend this decision on those.",
     "Return JSON only. Do not write SQL, code, URLs, or contract calls.",
-    "This ground can stand a new shelter, recorded as house; a new field for food, recorded as farm; a new place for tools, recorded as workshop; or a surveyed road the description says is not built yet. It cannot stand any other kind of building. You do not choose the lot, the door, or any coordinate.",
-    "action is build. buildKind is the structure this place needs.",
-    "When you raise a house, farm, or workshop, placeName is the name you give it from the land you read. That name is what gets built and what people will see. A road already has a survey name: set roadStubId to that label from the description, and set placeName to none.",
-    "summary is the growth in one sentence, in your own words. rationale is why this place needs it.",
-    "You cannot finish a building, invent a shortage, or complete a project by saying so.",
-    "Do not return propose_economy or request_wallet_activation. This decision cannot move money, approve funding, or deploy a wallet.",
+    "This ground can stand a house, a farm, a workshop, a park, an amusement, a bank, or a surveyed road the description says is not built yet. A park and an amusement are leisure, not jobs. People gather there after 07:00. The bank is a door onto the public books. A jail can be named only when the description says a sentence needs a room. You do not choose the lot, the door, or any coordinate.",
+    "action is build, visit, proclaim, levy, detain, watch, amend, or pardon. buildKind is the structure when action is build, and none otherwise.",
+    "When you raise a house, farm, workshop, park, amusement, bank, or jail, placeName is the name you give it from the land you read. That name is what gets built and what people will see. A road already has a survey name: set roadStubId to that label from the description, and set placeName to none.",
+    "A visit uses buildingId of the bank named in the description. Proclaim, levy, amend, and pardon use lawCode from the catalog the description says is open. Levy and detain use subjectTokenId when the description names the citizen. A freeform rule does not change the town.",
+    "When food is under 40, a farm comes before a park. summary is the decision in one sentence, in your own words. rationale is why this place needs it, and it is the reason stored with the record.",
+    "You cannot finish a building, invent a shortage, invent a breach, or complete a project by saying so. Each of visit, proclaim, levy, detain, watch, amend, and pardon stays closed until the description says the record supports it.",
+    "Do not return propose_economy or request_wallet_activation. This decision cannot move money, approve funding, or deploy a wallet. A visit to the bank does not move MON or $CHOG.",
     "The free Gemini tier may use this prompt to improve Google products. Do not include secrets. None are provided.",
   ].join(" ");
 

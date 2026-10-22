@@ -3,6 +3,8 @@
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { CitizenPortrait } from "@/components/citizens/portrait";
+import { ChogBankPanel } from "@/components/economy/chog-bank-panel";
+import type { ChogBankPublicView } from "@/lib/economy/treasury-public";
 import { DecisionReasons } from "@/components/world/decision-reasons";
 import { EventItem } from "@/components/world/event-item";
 import type { LinkState, RealtimeState } from "@/components/world/live-store";
@@ -472,6 +474,45 @@ function CitizenMindFacts({ tokenId }: { tokenId: string }) {
   );
 }
 
+function BankBooks() {
+  const [view, setView] = useState<ChogBankPublicView | null>(null);
+  const [detail, setDetail] = useState("");
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/api/economy/bank", { cache: "no-store" })
+      .then(async (response) => {
+        const body = (await response.json()) as { ok?: boolean; view?: ChogBankPublicView; reason?: string };
+        if (cancelled) {
+          return;
+        }
+        if (!response.ok || !body.ok || !body.view) {
+          setDetail(body.reason ?? "The public books could not be read from here.");
+          return;
+        }
+        setView(body.view);
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setDetail("The public books could not be read from here.");
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+  if (detail) {
+    return <p className="mt-3 text-sm leading-6 text-muted">{detail}</p>;
+  }
+  if (!view) {
+    return <p className="mt-3 text-sm text-muted">Reading the public books…</p>;
+  }
+  return (
+    <div className="mt-3">
+      <ChogBankPanel view={view} />
+    </div>
+  );
+}
+
 function BuildingInspector({
   building,
   snapshot,
@@ -516,6 +557,37 @@ function BuildingInspector({
         </div>
       ) : building.completedAt ? (
         <p className="mt-2 text-xs text-muted">Completed after simulated builder shifts reached 100%.</p>
+      ) : null}
+      {building.kind === "park" || building.kind === "amusement" ? (
+        <p className="mt-3 text-sm leading-6">Open leisure. People gather here after 07:00. It is not a job.</p>
+      ) : null}
+      {building.kind === "jail" ? (
+        <div className="mt-3 text-sm leading-6">
+          <p>
+            A room for a sentence. Capacity {building.capacity ?? 4}. No job. Detained citizens miss their shift, the market, and the square until release.
+          </p>
+          {here.filter((c) => c.activity === "detained").length > 0 ? (
+            <ul className="mt-2 flex flex-wrap gap-x-3 gap-y-1">
+              {here
+                .filter((c) => c.activity === "detained")
+                .map((c) => (
+                  <li key={c.tokenId}>
+                    <CitizenLink citizen={c} />
+                  </li>
+                ))}
+            </ul>
+          ) : (
+            <p className="mt-1 text-xs text-muted">Nobody is detained here.</p>
+          )}
+        </div>
+      ) : null}
+      {building.kind === "bank" && building.status === "active" ? (
+        <div className="mt-3">
+          <p className="text-sm leading-6">
+            A citizen standing here can file the same allocation review the Economy page already keeps. This building does not move MON or $CHOG. The signer stays off the model.
+          </p>
+          <BankBooks />
+        </div>
       ) : null}
       <dl className="mt-4 grid grid-cols-2 gap-3">
         {building.capacity !== null ? (
@@ -601,8 +673,10 @@ const ACTIVITY_ORDER: WorldActivity[] = [
   "walking",
   "shopping",
   "socializing",
+  "visiting",
   "resting",
   "sleeping",
+  "detained",
   "idle",
 ];
 

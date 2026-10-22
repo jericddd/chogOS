@@ -423,6 +423,67 @@ function drawWorkshop(ctx: Ctx, b: BuildingView) {
   rect(ctx, x + 13, y + 12, 4, 4, "#3f4a5c");
 }
 
+function drawPark(ctx: Ctx, b: BuildingView) {
+  const x = b.x * TILE;
+  const y = b.y * TILE;
+  const w = b.w * TILE;
+  const h = b.h * TILE;
+  rect(ctx, x, y, w, h, "#2f6b45");
+  rect(ctx, x + 2, y + 2, w - 4, h - 4, "#3d8a58");
+  rect(ctx, x + 6, y + h - 16, w - 12, 6, "#8d6a43");
+  rect(ctx, x + 8, y + h - 18, w - 16, 2, "#c4a574");
+  rect(ctx, x + 10, y + 18, 3, 10, "#6d4b2b");
+  rect(ctx, x + 6, y + 8, 11, 8, "#1f6b3a");
+  rect(ctx, x + w - 18, y + 16, 3, 12, "#6d4b2b");
+  rect(ctx, x + w - 22, y + 6, 11, 9, "#2f8f4e");
+  rect(ctx, b.doorX * TILE + 4, y, 8, 3, "#d7e7cf");
+}
+
+function drawAmusement(ctx: Ctx, b: BuildingView) {
+  const x = b.x * TILE;
+  const y = b.y * TILE;
+  const w = b.w * TILE;
+  const h = b.h * TILE;
+  rect(ctx, x, y, w, h, "#3f6b4a");
+  rect(ctx, x + 4, y + 4, w - 8, h - 8, "#4e7d58");
+  const cx = x + Math.floor(w / 2);
+  const cy = y + Math.floor(h / 2) - 2;
+  rect(ctx, cx - 1, cy - 10, 2, 20, "#f0d48a");
+  rect(ctx, cx - 10, cy - 1, 20, 2, "#f0d48a");
+  rect(ctx, cx - 7, cy - 7, 2, 2, "#e24b4b");
+  rect(ctx, cx + 5, cy - 7, 2, 2, "#3dffb0");
+  rect(ctx, cx - 7, cy + 5, 2, 2, "#7c5cff");
+  rect(ctx, cx + 5, cy + 5, 2, 2, "#f0a35e");
+  rect(ctx, x + 4, y + h - 14, 14, 8, "#c4556a");
+  rect(ctx, x + 4, y + h - 16, 14, 2, "#f2d2d8");
+  rect(ctx, b.doorX * TILE + 4, y, 8, 3, "#f7e7a1");
+}
+
+function drawBank(ctx: Ctx, b: BuildingView) {
+  drawHouseBody(ctx, b, ["#1f4d3a", "#16382b"], "#efe6c9");
+  const x = b.x * TILE;
+  const y = b.y * TILE;
+  rect(ctx, x + 8, y + 18, 3, 16, "#efe6c9");
+  rect(ctx, x + b.w * TILE - 11, y + 18, 3, 16, "#efe6c9");
+  rect(ctx, x + 8, y + 16, b.w * TILE - 16, 3, "#efe6c9");
+  rect(ctx, x + b.w * TILE / 2 - 4, y + 22, 8, 8, "#f0d48a");
+  rect(ctx, x + b.w * TILE / 2 - 2, y + 24, 4, 4, "#1f4d3a");
+}
+
+function drawJail(ctx: Ctx, b: BuildingView) {
+  drawHouseBody(ctx, b, ["#4a4e57", "#2e323a"], "#8d93a0");
+  const x = b.x * TILE;
+  const y = b.y * TILE;
+  rect(ctx, x + 7, y + 20, 8, 8, "#1b1e24");
+  rect(ctx, x + 9, y + 20, 1, 8, "#d5d8e0");
+  rect(ctx, x + 12, y + 20, 1, 8, "#d5d8e0");
+  rect(ctx, x + 7, y + 22, 8, 1, "#d5d8e0");
+  rect(ctx, x + 7, y + 25, 8, 1, "#d5d8e0");
+  rect(ctx, x + b.w * TILE - 16, y + 20, 8, 8, "#1b1e24");
+  rect(ctx, x + b.w * TILE - 14, y + 20, 1, 8, "#d5d8e0");
+  rect(ctx, x + b.w * TILE - 11, y + 20, 1, 8, "#d5d8e0");
+}
+
 function drawStorehouse(ctx: Ctx, b: BuildingView) {
   drawHouseBody(ctx, b, ["#8b3a2b", "#6c2c20"], "#c9b48c");
   const x = b.x * TILE;
@@ -522,6 +583,26 @@ export function drawStaticLayer(ctx: Ctx, buildings: readonly BuildingView[], ov
       case "storehouse":
         drawStorehouse(ctx, b);
         break;
+      case "park":
+        if (b.status === "under_construction") drawConstruction(ctx, b);
+        else drawPark(ctx, b);
+        break;
+      case "amusement":
+        if (b.status === "under_construction") drawConstruction(ctx, b);
+        else drawAmusement(ctx, b);
+        break;
+      case "bank":
+        if (b.status === "under_construction") drawConstruction(ctx, b);
+        else drawBank(ctx, b);
+        break;
+      case "jail":
+        if (b.status === "under_construction") drawConstruction(ctx, b);
+        else drawJail(ctx, b);
+        break;
+      case "commons":
+      case "market":
+      case "quarry":
+        break;
     }
   }
 }
@@ -595,6 +676,8 @@ const ICONS: Partial<Record<WorldActivity, { rows: string[]; color: string }>> =
   socializing: { rows: ["x.x", "xxx", "xxx", ".x.", "..."], color: "#f0a3c8" },
   resting: { rows: ["...", ".x.", "xxx", "x.x", "x.x"], color: "#e8f7f0" },
   idle: { rows: ["...", "...", "x.x", "...", "..."], color: "#93a89f" },
+  visiting: { rows: ["xxx", "x.x", "xxx", ".x.", ".x."], color: "#f0d48a" },
+  detained: { rows: ["xxx", "x.x", "xxx", "x.x", "xxx"], color: "#d5d8e0" },
 };
 
 function drawIcon(ctx: Ctx, activity: WorldActivity, cx: number, top: number, t: number) {
