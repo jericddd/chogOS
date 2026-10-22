@@ -16,8 +16,10 @@ import {
   MAX_SCALE,
   WORLD_PX_H,
   WORLD_PX_W,
+  cameraPaddingForOverlays,
   clampCamera,
   fitCamera,
+  MAP_OVERLAY_CLEAR_PX,
   hitTest,
   openingCamera,
   minScale,
@@ -558,6 +560,31 @@ describe("scene placement", () => {
     const far = clampCamera({ scale: 2, x: 5000, y: -9000 }, view);
     expect(far.x).toBe(0);
     expect(far.y).toBe(600 - WORLD_PX_H * 2);
+    const covered = { ...view, padRight: 360, padBottom: 280 };
+    const cleared = clampCamera({ scale: 2, x: -99999, y: -99999 }, covered);
+    expect(cleared.x).toBe(900 - WORLD_PX_W * 2 - 360);
+    expect(cleared.y).toBe(600 - WORLD_PX_H * 2 - 280);
+    expect(clampCamera({ scale: 2, x: 5000, y: 4000 }, covered)).toMatchObject({ x: 0, y: 0 });
+    const map = { left: 0, top: 0, right: 1440, bottom: 900, width: 1440, height: 900 };
+    const pads = cameraPaddingForOverlays(map, [
+      { left: 1076, top: 12, right: 1428, bottom: 888, width: 352, height: 876 },
+      { left: 12, top: 608, right: 1052, bottom: 888, width: 1040, height: 280 },
+    ]);
+    expect(pads.padRight).toBe(1440 - 1076 + MAP_OVERLAY_CLEAR_PX);
+    expect(pads.padBottom).toBe(900 - 608 + MAP_OVERLAY_CLEAR_PX);
+    expect(pads.padLeft).toBe(0);
+    expect(pads.padTop).toBe(0);
+    expect(cameraPaddingForOverlays(map, [{ left: 0, top: 940, right: 400, bottom: 1200, width: 400, height: 260 }])).toEqual({
+      padLeft: 0,
+      padTop: 0,
+      padRight: 0,
+      padBottom: 0,
+    });
+    const bottomLeft = cameraPaddingForOverlays(map, [
+      { left: 12, top: 608, right: 532, bottom: 888, width: 520, height: 280 },
+    ]);
+    expect(bottomLeft.padLeft).toBe(0);
+    expect(bottomLeft.padBottom).toBe(900 - 608 + MAP_OVERLAY_CLEAR_PX);
     expect(WORLD_PX_W).toBe(120 * TILE);
     expect(WORLD_PX_H).toBe(80 * TILE);
   });

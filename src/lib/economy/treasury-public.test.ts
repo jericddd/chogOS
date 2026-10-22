@@ -115,6 +115,8 @@ describe("public ownerless treasury", () => {
     expect(view.authorizerStatus).toContain("privileged spending authority");
     expect(view.execution).toContain("does not sign");
     expect(view.policy.join(" ")).toContain("application review limits");
+    expect(view.policy.join(" ")).toContain("Review $CHOG cap is 1 wei of $CHOG");
+    expect(view.policy.join(" ")).toContain("Contract $CHOG cap is");
     expect(view.fundingScan).toBe("empty");
     expect(view.fundingNote).toContain("finished");
     expect(view.fundingNote).toContain("No successful Funded or Distributed event");

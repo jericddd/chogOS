@@ -197,7 +197,54 @@ export function placeCitizens(
 }
 
 export type Camera = { scale: number; x: number; y: number };
-export type Viewport = { width: number; height: number };
+export type Viewport = {
+  width: number;
+  height: number;
+  /** Extra pan room, in screen pixels, past each edge. Used to clear panels that cover the map. */
+  padLeft?: number;
+  padTop?: number;
+  padRight?: number;
+  padBottom?: number;
+};
+
+/** Black margin past a covering panel so the map edge can clear it. */
+export const MAP_OVERLAY_CLEAR_PX = 48;
+
+export type ScreenBox = { left: number; top: number; right: number; bottom: number; width: number; height: number };
+
+/**
+ * Pan slack for panels that sit on top of the map. A panel on the right
+ * adds room to drag the map left. A panel along the bottom adds room to
+ * drag the map up. Panels that do not overlap the map add nothing.
+ */
+export function cameraPaddingForOverlays(
+  map: ScreenBox,
+  overlays: readonly ScreenBox[],
+): Pick<Viewport, "padLeft" | "padTop" | "padRight" | "padBottom"> {
+  const pads = { padLeft: 0, padTop: 0, padRight: 0, padBottom: 0 };
+  if (map.width < 8 || map.height < 8) return pads;
+  for (const box of overlays) {
+    if (box.width < 8 || box.height < 8) continue;
+    const overlapW = Math.min(map.right, box.right) - Math.max(map.left, box.left);
+    const overlapH = Math.min(map.bottom, box.bottom) - Math.max(map.top, box.top);
+    if (overlapW < 8 || overlapH < 8) continue;
+    const tall = overlapH > map.height * 0.5;
+    const wide = overlapW > map.width * 0.5;
+    if (tall && box.left >= map.left + map.width * 0.45) {
+      pads.padRight = Math.max(pads.padRight, Math.min(map.width * 0.8, map.right - box.left + MAP_OVERLAY_CLEAR_PX));
+    }
+    if (box.top >= map.top + map.height * 0.45) {
+      pads.padBottom = Math.max(pads.padBottom, Math.min(map.height * 0.8, map.bottom - box.top + MAP_OVERLAY_CLEAR_PX));
+    }
+    if (tall && box.right <= map.left + map.width * 0.55 && box.left <= map.left + 24) {
+      pads.padLeft = Math.max(pads.padLeft, Math.min(map.width * 0.8, box.right - map.left + MAP_OVERLAY_CLEAR_PX));
+    }
+    if (wide && box.bottom <= map.top + map.height * 0.55 && box.top <= map.top + 24) {
+      pads.padTop = Math.max(pads.padTop, Math.min(map.height * 0.8, box.bottom - map.top + MAP_OVERLAY_CLEAR_PX));
+    }
+  }
+  return pads;
+}
 
 export const MAX_SCALE = 6;
 
@@ -236,20 +283,20 @@ export function minScale(view: Viewport): number {
   return Math.min(view.width / WORLD_PX_W, view.height / WORLD_PX_H);
 }
 
-function clampAxis(offset: number, size: number, worldSize: number): number {
-  if (worldSize <= size) {
-    return (size - worldSize) / 2;
-  }
-  return Math.min(0, Math.max(size - worldSize, offset));
+function clampAxis(offset: number, size: number, worldSize: number, slackStart = 0, slackEnd = 0): number {
+  const fitted = worldSize <= size;
+  const min = (fitted ? (size - worldSize) / 2 : size - worldSize) - slackEnd;
+  const max = (fitted ? (size - worldSize) / 2 : 0) + slackStart;
+  return Math.min(max, Math.max(min, offset));
 }
 
-/** Keeps the map on screen. A map smaller than the viewport is centered. */
+/** Keeps the map on screen, with extra room where a panel covers the edge. */
 export function clampCamera(camera: Camera, view: Viewport): Camera {
   const scale = Math.min(MAX_SCALE, Math.max(minScale(view), camera.scale));
   return {
     scale,
-    x: clampAxis(camera.x, view.width, WORLD_PX_W * scale),
-    y: clampAxis(camera.y, view.height, WORLD_PX_H * scale),
+    x: clampAxis(camera.x, view.width, WORLD_PX_W * scale, view.padLeft ?? 0, view.padRight ?? 0),
+    y: clampAxis(camera.y, view.height, WORLD_PX_H * scale, view.padTop ?? 0, view.padBottom ?? 0),
   };
 }
 

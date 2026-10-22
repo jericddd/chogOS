@@ -1,13 +1,16 @@
 import { keccak256, toBytes, type Hex } from "viem";
 
 /**
- * Application review limits. These are not the immutable caps of a deployed
- * contract. The contract is not deployed. $CHOG stays closed until a person
- * chooses a raw base-unit cap. 18 decimals was returned by decimals() on the
- * official token at 0x350035555E10d9AfAF1566AaebfCeD5BA6C27777 on Monad
- * mainnet, chain 143. A missing or different live read rejects token amounts.
+ * Application review limits. These sit beside the immutable caps of the
+ * deployed ChogBank. $CHOG is 1 wei per transaction, per citizen, and for
+ * the whole bank in each window, the same ceiling the contract was deployed
+ * with, so a funded balance cannot be approved away in one decision.
+ * 18 decimals was returned by decimals() on the official token at
+ * 0x350035555E10d9AfAF1566AaebfCeD5BA6C27777 on Monad mainnet, chain 143.
+ * A missing or different live read rejects token amounts.
  */
 export const OBSERVED_CHOG_DECIMALS = 18;
+export const MINIMAL_CHOG_CAP = 1n;
 
 export const APPLICATION_TREASURY_LIMITS = {
   chainId: 143,
@@ -16,9 +19,9 @@ export const APPLICATION_TREASURY_LIMITS = {
   maxPerTxMon: 100_000_000_000_000_000n,
   maxCitizenWindowMon: 1_000_000_000_000_000_000n,
   maxAggregateWindowMon: 2_000_000_000_000_000_000n,
-  maxPerTxChog: 0n,
-  maxCitizenWindowChog: 0n,
-  maxAggregateWindowChog: 0n,
+  maxPerTxChog: MINIMAL_CHOG_CAP,
+  maxCitizenWindowChog: MINIMAL_CHOG_CAP,
+  maxAggregateWindowChog: MINIMAL_CHOG_CAP,
 } as const;
 
 export type TreasuryAsset = "MON" | "CHOG";

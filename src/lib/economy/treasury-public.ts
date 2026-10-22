@@ -201,13 +201,29 @@ function decisionCopy(loaded: boolean, fundingReady: boolean, scan: FundingScan 
   return base;
 }
 
+function chogCapPhrase(raw: bigint): string {
+  if (raw === 1n) return "1 wei of $CHOG";
+  return `${formatTokenAmount(raw.toString(10), 18, "$CHOG")} (${raw.toString(10)} wei)`;
+}
+
+/** Plain-language $CHOG ceiling. A zero cap approves nothing. */
+export function chogSpendingCapSentence(perTx: bigint, perCitizen: bigint, aggregate: bigint, subject: string): string {
+  if (perTx <= 0n || perCitizen <= 0n || aggregate <= 0n) {
+    return `${subject} $CHOG cap is 0 wei. No token amount is approved.`;
+  }
+  if (perTx === perCitizen && perCitizen === aggregate) {
+    return `${subject} $CHOG cap is ${chogCapPhrase(perTx)} per transaction, per citizen, and for the whole bank in each window. A larger amount is rejected.`;
+  }
+  return `${subject} $CHOG cap is ${chogCapPhrase(perTx)} per transaction, ${chogCapPhrase(perCitizen)} per citizen, and ${chogCapPhrase(aggregate)} for the whole bank in each window. A larger amount is rejected.`;
+}
+
 function applicationPolicy(): string[] {
   const limits = APPLICATION_TREASURY_LIMITS;
   return [
     "These are application review limits. They are not caps of a deployed contract.",
     `Chain ${limits.chainId}. Window ${limits.windowSeconds} seconds. Authorization lifetime at most ${limits.maxAuthorizationTtl} seconds.`,
     `MON per transaction ${formatTokenAmount(limits.maxPerTxMon.toString(10), 18, "MON")}. Per citizen ${formatTokenAmount(limits.maxCitizenWindowMon.toString(10), 18, "MON")}. Aggregate ${formatTokenAmount(limits.maxAggregateWindowMon.toString(10), 18, "MON")}.`,
-    "$CHOG application caps are 0. No token price was assumed, so token allocations stay closed.",
+    chogSpendingCapSentence(limits.maxPerTxChog, limits.maxCitizenWindowChog, limits.maxAggregateWindowChog, "Review"),
     "A model cannot raise these limits. Production signing stays off, so a passing review is not a signature.",
     "A payout reverts unless that citizen's wallet has code and its stored token id matches. An empty prediction is not paid. The NFT holder does not control the wallet. A wallet-issuance proposal is not a deployment until its Monad transaction is confirmed. The website does not sign or broadcast.",
   ];
@@ -218,7 +234,7 @@ function chainPolicy(caps: ChainCaps): string[] {
     "These values were read from the deployed contract. No function in the contract changes them.",
     `Window ${caps.windowSeconds} seconds. Signed authorization lifetime at most ${caps.maxAuthorizationTtl} seconds.`,
     `MON per transaction ${formatTokenAmount(caps.maxPerTxMon.toString(10), 18, "MON")}. Per citizen ${formatTokenAmount(caps.maxCitizenWindowMon.toString(10), 18, "MON")}. Aggregate ${formatTokenAmount(caps.maxAggregateWindowMon.toString(10), 18, "MON")}.`,
-    `$CHOG per transaction ${caps.maxPerTxChog.toString(10)} base units. Per citizen ${caps.maxCitizenWindowChog.toString(10)}. Aggregate ${caps.maxAggregateWindowChog.toString(10)}.`,
+    chogSpendingCapSentence(caps.maxPerTxChog, caps.maxCitizenWindowChog, caps.maxAggregateWindowChog, "Contract"),
   ];
 }
 
