@@ -59,7 +59,7 @@ export const SOURCE_DESCRIPTION: Record<EventSource, string> = {
   simulation: "A rule-based world transition. Not an AI decision.",
   ai: "A decision made by the integrated AI mind.",
   onchain: "A Chog Genesis transfer recorded by the watcher. Explorer links appear only for a complete Monad mainnet log. Not an AI decision.",
-  system: "Setup, synchronization, or operator action.",
+  system: "Setup, synchronization, or a Chog that joined the civilization.",
 };
 
 export const CATEGORY_LABEL: Record<EventCategory, string> = {

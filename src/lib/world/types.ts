@@ -131,7 +131,7 @@ export type WorldEventView = {
   txHash: string | null;
   /** Monadscan URL for a confirmed receipt, or for a presentable Genesis transfer. */
   txUrl?: string | null;
-  /** Direct explorer links for an AI wallet, payment, trade, or return row. */
+  /** Direct explorer links for an AI wallet, payment, trade, return, or civilization join. */
   onchain?: OnchainEvidence | null;
   /** Watcher fields for an NFT transfer. Absent on simulation and AI events. */
   transfer?: TransferEvidence | null;

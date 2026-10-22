@@ -37,6 +37,7 @@ import {
   receiveLive,
   resolveEventFilter,
   revealPending,
+  civilizationJoinEvents,
   townGrowthEvents,
 } from "@/lib/world/sync";
 import type { BuildingView, CitizenView, ClockView, WorldEventView } from "@/lib/world/types";
@@ -486,6 +487,34 @@ describe("live merge", () => {
       tokenId: "7",
     });
     expect(townGrowthEvents([allocation, paidAllocation]).map((row) => row.seq)).toEqual([14]);
+  });
+
+  it("keeps one system row per Chog that joined and drops town-need noise", () => {
+    const older = event(2, {
+      kind: "genesis_joined",
+      category: "membership",
+      source: "system",
+      tokenId: "7",
+      summary: "Chog Genesis #7 verified in the ChogTreasury founding roster.",
+    });
+    const newer = event(9, {
+      kind: "citizen_enrolled",
+      category: "membership",
+      source: "system",
+      tokenId: "7",
+      summary: "Chog Genesis #7 enrolled by its verified owner.",
+    });
+    const other = event(4, {
+      kind: "genesis_joined",
+      category: "membership",
+      source: "system",
+      tokenId: "52",
+      summary: "Chog Genesis #52 verified in the ChogTreasury founding roster.",
+    });
+    const need = event(12, { kind: "town.need_detected", category: "world", source: "system", tokenId: null });
+    const arrived = event(11, { kind: "citizen.joined_world", category: "citizen", source: "system", tokenId: "7" });
+    expect(civilizationJoinEvents([need, arrived, older, newer, other]).map((row) => row.seq)).toEqual([9, 4]);
+    expect(civilizationJoinEvents([other, newer], 1).map((row) => row.seq)).toEqual([9]);
   });
 
   it("picks only a real AI construction event for Verify discovery", () => {

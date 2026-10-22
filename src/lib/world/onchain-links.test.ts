@@ -118,6 +118,43 @@ describe("onchain evidence", () => {
     expect(evidence?.links[2]?.href).toBe(`https://monadscan.com/address/${MAINNET_CHOG_BANK.toLowerCase()}`);
   });
 
+  it("links a civilization join to the Genesis token, observed owner, and block", () => {
+    const owner = "0x8AAE8BA4d5D2AAe89235DE50433B35535a0BeF7B";
+    const evidence = onchainEvidenceFromRow({
+      kind: "citizen_enrolled",
+      chain_status: "offchain",
+      chain_id: 143,
+      tx_hash: null,
+      payload: { tokenId: "1547", owner, blockNumber: "115732365" },
+    });
+    expect(evidence?.title).toBe("Chog joined the civilization");
+    expect(evidence?.note).toMatch(/ownerOf/);
+    expect(evidence?.note).toMatch(/no enrollment transaction/i);
+    expect(evidence?.links.map((link) => link.label)).toEqual(["Genesis token", "Observed owner", "Block"]);
+    expect(evidence?.links[0]?.href).toBe(`https://monadscan.com/nft/${addresses.chogGenesis.toLowerCase()}/1547`);
+    expect(evidence?.links[1]?.href).toBe(`https://monadscan.com/address/${owner.toLowerCase()}`);
+    expect(evidence?.links[2]?.href).toBe("https://monadscan.com/block/115732365");
+    expect(evidence?.links.some((link) => link.label === "Transaction")).toBe(false);
+  });
+
+  it("links a founding roster row and a world arrival without inventing an owner", () => {
+    const founding = onchainEvidenceFromRow({
+      kind: "genesis_joined",
+      chain_id: 143,
+      payload: { tokenId: 636, owner: addresses.chogTreasury, blockNumber: "112864028" },
+    });
+    expect(founding?.title).toBe("Chog joined the founding roster");
+    expect(founding?.links.map((link) => link.label)).toEqual(["Genesis token", "Observed owner", "Block"]);
+    const arrived = onchainEvidenceFromRow({
+      kind: "citizen.joined_world",
+      chain_id: null,
+      payload: { tokenId: "1547", home: "house-15" },
+    });
+    expect(arrived?.title).toBe("Chog entered the world");
+    expect(arrived?.links.map((link) => link.label)).toEqual(["Genesis token"]);
+    expect(arrived?.note).toMatch(/no chain transaction/i);
+  });
+
   it("puts those links on the activity row", () => {
     const event = toEvent({
       id: "evt",
