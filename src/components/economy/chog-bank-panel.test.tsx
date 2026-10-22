@@ -62,6 +62,36 @@ describe("ChogBank panel", () => {
     expect(screen.getByTestId("ownerless-chogbank").getAttribute("data-funding-ready")).toBe("no");
     expect(screen.getByTestId("ownerless-chogbank").getAttribute("data-funding-scan")).toBe("skipped");
     expect(screen.queryByRole("heading", { name: "Funding" })).toBeNull();
+    expect(screen.queryByTestId("other-holdings")).toBeNull();
+    expect(screen.queryByTestId("highlighted-holding")).toBeNull();
+    expect(screen.getByTestId("ownerless-chogbank").getAttribute("data-other-tokens")).toBe("skipped");
+  });
+
+  it("highlights MON and $CHOG and lists another token without that treatment", () => {
+    const widget = getAddress("0x4444444444444444444444444444444444444444");
+    const view = presentOwnerlessTreasury({
+      inspection: live(),
+      decisions: [],
+      decisionsLoaded: true,
+      fundingScan: "empty",
+      heldTokens: {
+        status: "complete",
+        rows: [{ address: widget, symbol: "WIDGET", decimals: 18, raw: "2500000000000000000" }],
+      },
+    });
+    render(<ChogBankPanel view={view} />);
+    const highlighted = screen.getAllByTestId("highlighted-holding");
+    expect(highlighted).toHaveLength(2);
+    expect(highlighted.map((node) => node.textContent).join(" ")).toContain("MON");
+    expect(highlighted.map((node) => node.textContent).join(" ")).toContain("$CHOG");
+    expect(highlighted.some((node) => node.textContent?.includes("WIDGET"))).toBe(false);
+    const other = screen.getByTestId("other-holdings");
+    expect(other.textContent).toContain("WIDGET");
+    expect(other.textContent).toContain("2.5");
+    expect(other.textContent).toContain(widget);
+    expect(other.getAttribute("data-highlighted")).toBe("no");
+    expect(other.className).not.toMatch(/font-serif|text-2xl|rounded-xl/);
+    expect(other.querySelector("[data-testid='highlighted-holding']")).toBeNull();
   });
 
   it("shows a finished empty scan and an unreadable scan as different sentences", () => {

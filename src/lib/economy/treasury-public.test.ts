@@ -55,6 +55,8 @@ describe("public ownerless treasury", () => {
     expect(view.sourceVerified).toBe(false);
     expect(view.monText).toBe("Not read");
     expect(view.chogText).toBe("Not read");
+    expect(view.otherTokenStatus).toBe("skipped");
+    expect(view.otherTokens).toEqual([]);
     expect(view.summary).toContain("not deployed");
     expect(view.execution).toContain("disabled");
     expect(view.policy.join(" ")).toContain("empty prediction");
@@ -107,6 +109,9 @@ describe("public ownerless treasury", () => {
     expect(view.sourceNote).toContain("not checked");
     expect(view.monText).toContain("2");
     expect(view.chogText).toContain("5");
+    expect(view.otherTokenStatus).toBe("unread");
+    expect(view.otherTokenNote).toContain("not read");
+    expect(view.otherTokens).toEqual([]);
     expect(view.authorizerStatus).toContain("privileged spending authority");
     expect(view.execution).toContain("does not sign");
     expect(view.policy.join(" ")).toContain("application review limits");
@@ -377,6 +382,36 @@ describe("public ownerless treasury", () => {
     expect(partial.fundingRows[0]?.amountText).toContain("0.02");
     expect(partial.fundingNote).toContain("not a claim");
     expect(partial.fundingNote).toContain("blocks that were read");
+  });
+
+  it("shows other token balances only after the contract passes the checks", () => {
+    const widget = getAddress("0x4444444444444444444444444444444444444444");
+    const heldTokens = {
+      status: "complete" as const,
+      rows: [{ address: widget, symbol: "WIDGET", decimals: 18, raw: "1500000000000000000" }],
+    };
+    const ready = presentOwnerlessTreasury({ inspection: live(), decisions: [], decisionsLoaded: true, heldTokens });
+    expect(ready.otherTokenStatus).toBe("complete");
+    expect(ready.otherTokens).toEqual([
+      {
+        address: widget,
+        href: `https://monadscan.com/address/${widget.toLowerCase()}`,
+        label: "WIDGET",
+        amountText: "1.5",
+      },
+    ]);
+    expect(ready.monText).toContain("MON");
+    expect(ready.chogText).toContain("$CHOG");
+
+    const rejected = presentOwnerlessTreasury({
+      inspection: live({ codeBytes: 0, chainCaps: null }),
+      decisions: [],
+      decisionsLoaded: true,
+      heldTokens,
+    });
+    expect(rejected.fundingReady).toBe(false);
+    expect(rejected.otherTokenStatus).toBe("skipped");
+    expect(rejected.otherTokens).toEqual([]);
   });
 
   it("does not treat an unloaded decision query as an empty history", () => {

@@ -1,5 +1,6 @@
 import { addresses } from "@/lib/blockchain/addresses";
 import { explorerAddressUrl, explorerTxUrl } from "@/lib/blockchain/explorer";
+import { presentOtherTokens, type HeldTokenScan, type PublicOtherToken } from "@/lib/economy/held-tokens";
 import { APPLICATION_TREASURY_LIMITS } from "@/lib/economy/treasury-policy";
 import { formatTokenAmount } from "@/lib/wallets/present";
 
@@ -107,6 +108,9 @@ export type ChogBankPublicView = {
   authorizerStatus: string;
   monText: string;
   chogText: string;
+  otherTokenStatus: "skipped" | HeldTokenScan["status"];
+  otherTokenNote: string;
+  otherTokens: PublicOtherToken[];
   execution: string;
   policy: string[];
   funding: string[];
@@ -373,6 +377,8 @@ export function presentOwnerlessTreasury(input: {
   /** A missing scan is unreadable. It is not an empty history. */
   fundingScan?: FundingScan;
   fundingScanCause?: "no-start";
+  /** Missing means other tokens were not read. It does not mean the contract holds none. */
+  heldTokens?: HeldTokenScan;
 }): ChogBankPublicView {
   const inspection = input.inspection;
   const warnings: string[] = [];
@@ -490,6 +496,10 @@ export function presentOwnerlessTreasury(input: {
       })
     : [];
 
+  const other = fundingReady
+    ? presentOtherTokens(input.heldTokens)
+    : { status: "skipped" as const, note: "", rows: [] as PublicOtherToken[] };
+
   return {
     deploymentState,
     fundingReady,
@@ -513,6 +523,9 @@ export function presentOwnerlessTreasury(input: {
       fundingReady && inspection.chogRaw != null && decimals === 18
         ? formatTokenAmount(inspection.chogRaw.toString(10), 18, "$CHOG")
         : "Not read",
+    otherTokenStatus: other.status,
+    otherTokenNote: other.note,
+    otherTokens: other.rows,
     execution,
     policy,
     funding: fundingReady

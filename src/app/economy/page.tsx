@@ -16,7 +16,7 @@ export default function EconomyPage() {
     <div>
       <PageHeader
         title="Economy"
-        lede="ChogBank is the ownerless contract for MON and $CHOG. The world economy is the simulated storehouse. The ChogBank address appears only after deployed Monad mainnet code passes the owner, proxy, chain, and asset checks. Until then there is no funding address. A wallet-issuance row is a proposal, and an allocation row is not a payment. Payout execution stays disabled."
+        lede="ChogBank is the ownerless contract for MON and $CHOG. The world economy is the simulated storehouse. The ChogBank address appears only after deployed Monad mainnet code passes the owner, proxy, chain, and asset checks. Until then there is no funding address. Once that address is shown, MON and $CHOG are the highlighted balances, and any other token the contract holds is listed under them without the highlight. A wallet-issuance row is a proposal, and an allocation row is not a payment. Payout execution stays disabled."
       />
       <div className="space-y-6">
         <Suspense fallback={<p className="text-sm text-muted">Reading ChogBank…</p>}>

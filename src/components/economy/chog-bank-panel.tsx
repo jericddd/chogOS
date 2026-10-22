@@ -7,6 +7,7 @@ export function ChogBankPanel({ view }: { view: ChogBankPublicView }) {
       data-testid="ownerless-chogbank"
       data-funding-ready={view.fundingReady ? "yes" : "no"}
       data-funding-scan={view.fundingScan}
+      data-other-tokens={view.otherTokenStatus}
     >
       <p className="text-xs tracking-[0.16em] text-accent uppercase">Ownerless contract</p>
       <h2 className="mt-2 font-serif text-3xl tracking-tight">ChogBank</h2>
@@ -38,6 +39,7 @@ export function ChogBankPanel({ view }: { view: ChogBankPublicView }) {
             <Amount label="MON" text={view.monText} />
             <Amount label="$CHOG" text={view.chogText} />
           </div>
+          <OtherHoldings view={view} />
         </>
       ) : null}
       {view.warnings.length > 0 ? (
@@ -130,9 +132,36 @@ function Fact({ label, value, mono = false, href = null }: { label: string; valu
 
 function Amount({ label, text }: { label: string; text: string }) {
   return (
-    <div className="rounded-xl border border-line px-4 py-3">
+    <div className="rounded-xl border border-line px-4 py-3" data-testid="highlighted-holding">
       <p className="text-xs tracking-[0.14em] text-muted uppercase">{label}</p>
       <p className="mt-2 font-serif text-2xl tracking-tight">{text}</p>
+    </div>
+  );
+}
+
+function OtherHoldings({ view }: { view: ChogBankPublicView }) {
+  if (view.otherTokenStatus === "skipped") return null;
+  return (
+    <div className="mt-3 text-sm leading-6 text-muted" data-testid="other-holdings" data-highlighted="no">
+      <p>Other tokens</p>
+      <p className="mt-1">{view.otherTokenNote}</p>
+      {view.otherTokens.length > 0 ? (
+        <ul className="mt-2 space-y-2">
+          {view.otherTokens.map((token) => (
+            <li key={token.address}>
+              <span>{token.label}</span>
+              <span className="ml-2 font-mono text-xs">{token.amountText}</span>
+              {token.href ? (
+                <a className="mt-0.5 block font-mono text-xs break-all text-muted underline" href={token.href} rel="noopener noreferrer" target="_blank">
+                  {token.address}
+                </a>
+              ) : (
+                <span className="mt-0.5 block font-mono text-xs break-all">{token.address}</span>
+              )}
+            </li>
+          ))}
+        </ul>
+      ) : null}
     </div>
   );
 }
