@@ -22,6 +22,8 @@ import { productionBankRuntime } from "@/lib/chogbank/runtime";
 import { readEconomyLedger, saveEconomyDecision } from "@/lib/economy/db";
 import { evaluateProductionEconomy } from "@/lib/economy/production";
 import { proposalFromDraft } from "@/lib/economy/proposal";
+import { publishStoredAiActivity } from "@/lib/ai/activity-event";
+import { storeCitizenCommerce } from "@/lib/ai/citizen-commerce-db";
 import { considerTreasuryAllocation } from "@/lib/ai/treasury-run";
 import { loadTreasuryPrior, loadTreasuryRoster, recordTreasuryDecision } from "@/lib/ai/treasury-db";
 import { considerWalletIssuance } from "@/lib/ai/wallet-run";
@@ -90,6 +92,7 @@ export type MindRunReport = {
   decisions: Array<{ tokenId: string; status: string; detail: string }>;
   treasury?: { status: string; detail: string };
   walletIssuance?: { status: string; detail: string };
+  commerce?: { status: string; detail: string };
 };
 
 type Client = ReturnType<typeof createServiceRoleClient>;
@@ -385,6 +388,7 @@ export async function runAiMind(
 
   try {
     await client.rpc("world_ensure_minds");
+    await publishStoredAiActivity(client);
     let usage = await readUsage(client);
     if (isRetriableHaltReason(usage.haltReason)) {
       await client
@@ -408,6 +412,7 @@ export async function runAiMind(
     let endRun = false;
     let treasuryConsidered = false;
     let walletIssuanceConsidered = false;
+    let commerceConsidered = false;
 
     async function attachWalletIssuance(): Promise<void> {
       if (walletIssuanceConsidered) return;
@@ -567,6 +572,50 @@ export async function runAiMind(
       }
     }
 
+    async function attachCitizenCommerce(): Promise<void> {
+      if (commerceConsidered) return;
+      commerceConsidered = true;
+      if (report.status === "halted" || report.status === "budget") {
+        report.commerce = { status: "skipped", detail: "The mind run is halted or out of budget, so no trade or return was requested." };
+        return;
+      }
+      const slot = await takeModelSlot();
+      if (!slot) {
+        report.commerce = { status: "skipped", detail: "No model time remained for a trade or return decision. No transaction was broadcast." };
+        return;
+      }
+      try {
+        const result = await storeCitizenCommerce(client, {
+          provider: config.aiProvider,
+          model: config.aiModel ?? "",
+          timeoutMs: slot.timeoutMs,
+          maxOutputTokens: config.aiMaxOutputTokens,
+          complete: async (request) =>
+            provider.complete({
+              purpose: "citizen_trade",
+              messages: [
+                { role: "system", content: request.system },
+                { role: "user", content: request.user },
+              ],
+              timeoutMs: request.timeoutMs,
+              maxOutputTokens: request.maxOutputTokens,
+            }),
+        });
+        if (result.promptChars > 0) await bumpUsage(client, result.promptChars, result.outputTokens);
+        report.commerce = { status: result.status, detail: result.detail };
+        if (result.halt) {
+          await haltScheduler(client, result.halt.until, result.halt.reason);
+          report.status = "halted";
+          report.reason = result.halt.reason;
+        }
+      } catch {
+        report.commerce = {
+          status: "failed",
+          detail: "Citizen trade and return decisions were not stored. No transaction was broadcast.",
+        };
+      }
+    }
+
     async function takeModelSlot(): Promise<{ timeoutMs: number } | null> {
       const slot = await awaitFreeTierSlot(
         lastModelStartedAt,
@@ -611,6 +660,7 @@ export async function runAiMind(
       });
       if (claimError) {
         if (report.claimed === 0) {
+          await attachCitizenCommerce();
           return emptyReport("error", config, "The decision claim failed.");
         }
         report.reason = report.reason ?? "The decision claim failed.";
@@ -621,6 +671,7 @@ export async function runAiMind(
         if (report.claimed === 0) {
           await attachTreasury();
           await attachWalletIssuance();
+          await attachCitizenCommerce();
           await client
             .from("ai_scheduler_state")
             .update({ last_run_at: new Date().toISOString(), last_error: report.reason ?? null })
@@ -1263,6 +1314,7 @@ export async function runAiMind(
 
     await attachTreasury();
     await attachWalletIssuance();
+    await attachCitizenCommerce();
     const schedulerPatch: Record<string, unknown> = {
       last_run_at: new Date().toISOString(),
       last_error: report.reason ?? null,

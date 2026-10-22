@@ -10,6 +10,7 @@ import { artifactsWithCode } from "@/lib/verify/artifacts";
 import type { AnchorRecord } from "@/lib/verify/chain";
 import { REVIEWER_CHECKS, buildPublicProvenance } from "@/lib/verify/provenance";
 import type { VerifyBundle } from "@/lib/verify/types";
+import { onchainEvidenceFromRow } from "@/lib/world/onchain-links";
 import { presentedAsMainnetGenesis, transferEvidenceFromRow } from "@/lib/world/transfer";
 
 export type { VerifyBundle };
@@ -72,6 +73,12 @@ function toCanonical(row: VerifyEventRow): CanonicalEventInput {
     stateTransition: row.state_transition ?? {},
     prevEventHash: row.prev_event_hash,
   };
+}
+
+function textMind(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const text = value.trim();
+  return text ? text.slice(0, 400) : null;
 }
 
 function neighbor(row: {
@@ -243,6 +250,29 @@ export async function loadVerifyBundle(id: string): Promise<VerifyBundle | { sta
     }
   }
 
+  const onchain = onchainEvidenceFromRow({
+    kind: row.kind,
+    chain_status: row.chain_status,
+    chain_id: row.chain_id,
+    tx_hash: row.tx_hash,
+    payload: row.payload,
+  });
+  let mind: VerifyBundle["mind"] = null;
+  if (row.decision_id && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(row.decision_id)) {
+    const decision = await client.from("ai_decisions").select("rationale, output").eq("id", row.decision_id).maybeSingle();
+    const stored = decision.data as { rationale?: unknown; output?: unknown } | null;
+    if (stored) {
+      const output =
+        stored.output && typeof stored.output === "object" && !Array.isArray(stored.output)
+          ? (stored.output as Record<string, unknown>)
+          : null;
+      const rationale =
+        textMind(stored.rationale) ?? textMind(output?.rationale) ?? textMind(output?.reason);
+      const summary = textMind(output?.summary);
+      if (rationale || summary) mind = { rationale, summary };
+    }
+  }
+
   const transfer = transferEvidenceFromRow({
     kind: row.kind,
     chain_status: row.chain_status,
@@ -283,6 +313,8 @@ export async function loadVerifyBundle(id: string): Promise<VerifyBundle | { sta
     explorerBlockUrl: explorerBlock,
     transfer,
     transferLog,
+    onchain,
+    mind,
     provenance: buildPublicProvenance(),
     artifacts: await artifactsWithCode(config.rpcUrl, 143),
     eventPath: `/verify/events/${row.id}`,

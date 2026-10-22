@@ -6,6 +6,7 @@ import { addresses } from "@/lib/blockchain/addresses";
 import { getChain } from "@/lib/blockchain/chains";
 import { readAppConfig } from "@/lib/config/env";
 import { createServiceRoleClient } from "@/lib/db/client";
+import { publishDecisionActivity } from "@/lib/ai/activity-event";
 import { decisionMatchesToken, factoryAbi, MAINNET_WALLET_FACTORY, matchAccountCreated, walletTokenAbi } from "@/lib/wallets/issuer";
 
 export const maxDuration = 60;
@@ -105,7 +106,7 @@ export async function POST(request: Request): Promise<NextResponse> {
   const client = createServiceRoleClient();
   const selected = await client
     .from("ai_decisions")
-    .select("id, status, output, input_commitment")
+    .select("id, status, output, input_commitment, citizen_id, rationale")
     .eq("purpose", "wallet_issuance")
     .eq("input_commitment", decisionId)
     .in("status", ["proposed", "accepted", "queued", "executed"])
@@ -116,7 +117,7 @@ export async function POST(request: Request): Promise<NextResponse> {
   if (!error && (data ?? []).length === 0) {
     const recent = await client
       .from("ai_decisions")
-      .select("id, status, output, input_commitment")
+      .select("id, status, output, input_commitment, citizen_id, rationale")
       .eq("purpose", "wallet_issuance")
       .in("status", ["proposed", "accepted", "queued", "executed"])
       .order("created_at", { ascending: false })
@@ -125,7 +126,7 @@ export async function POST(request: Request): Promise<NextResponse> {
     error = recent.error;
   }
   if (error) return NextResponse.json({ ok: false, error: "Wallet decisions could not be read." }, { status: 502 });
-  const rows = ((data ?? []) as Array<{ id: string; status: string; output: unknown }>).filter((row) => {
+  const rows = ((data ?? []) as Array<{ id: string; status: string; output: unknown; citizen_id: string | null; rationale: string | null }>).filter((row) => {
     const output = outputOf(row.output);
     return typeof output.decisionId === "string" && output.decisionId.toLowerCase() === decisionId && output.choice === "issue";
   });
@@ -140,6 +141,14 @@ export async function POST(request: Request): Promise<NextResponse> {
     return NextResponse.json({ ok: false, error: "The decision id does not belong to that token." }, { status: 409 });
   }
   if (output.onchain === true && output.verified === true) {
+    await publishDecisionActivity(client, {
+      id: match.id,
+      citizenId: match.citizen_id,
+      purpose: "wallet_issuance",
+      status: "executed",
+      rationale: match.rationale,
+      output,
+    });
     return NextResponse.json({ ok: true, already: true, id: match.id });
   }
   const config = readAppConfig();
@@ -206,5 +215,13 @@ export async function POST(request: Request): Promise<NextResponse> {
   if (!updated.data || updated.data.length === 0) {
     return NextResponse.json({ ok: false, error: "The decision changed before it could be saved." }, { status: 409 });
   }
+  await publishDecisionActivity(client, {
+    id: match.id,
+    citizenId: match.citizen_id,
+    purpose: "wallet_issuance",
+    status: "executed",
+    rationale: match.rationale,
+    output: next,
+  });
   return NextResponse.json({ ok: true, id: match.id, address: account, txHash: storedTx });
 }

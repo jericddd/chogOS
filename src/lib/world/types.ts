@@ -1,4 +1,5 @@
 import type { BuildingKind, ConstructKind, WorkRole } from "@/lib/world/layout";
+import type { OnchainEvidence } from "@/lib/world/onchain-links";
 import type { TransferEvidence } from "@/lib/world/transfer";
 
 export type WorldActivity =
@@ -126,8 +127,10 @@ export type WorldEventView = {
   buildingName: string | null;
   chainStatus: "offchain" | "submitted" | "confirmed";
   txHash: string | null;
-  /** Explorer URL for a complete Chog Genesis mainnet transfer. Null for every other row. */
+  /** Monadscan URL for a confirmed receipt, or for a presentable Genesis transfer. */
   txUrl?: string | null;
+  /** Direct explorer links for an AI wallet, payment, trade, or return row. */
+  onchain?: OnchainEvidence | null;
   /** Watcher fields for an NFT transfer. Absent on simulation and AI events. */
   transfer?: TransferEvidence | null;
   intentId?: string | null;

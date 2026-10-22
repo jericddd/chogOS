@@ -101,7 +101,9 @@ export function EventVerifier({ bundle }: { bundle: VerifyBundle }) {
       return { text: null, error: error instanceof Error ? error.message : "The canonical document could not be encoded." };
     }
   }, [bundle.event]);
-  const evidence = evidenceClass(bundle);
+  const evidence = bundle.onchain
+    ? { title: bundle.onchain.title, body: bundle.onchain.note }
+    : evidenceClass(bundle);
   const offchain = result.reasons.includes(OFFCHAIN_ROOT_SENTENCE);
   const transfer = bundle.transfer;
   const mainnet = transfer ? presentedAsMainnetGenesis(transfer) : false;
@@ -139,6 +141,12 @@ export function EventVerifier({ bundle }: { bundle: VerifyBundle }) {
         <p className="mt-2">
           <SourceBadge source={bundle.event.source as EventSource} /> <span>{bundle.event.summary}</span>
         </p>
+        {bundle.mind?.rationale || bundle.mind?.summary ? (
+          <p className="mt-3 text-sm leading-6">
+            <span className="text-muted">Reason. </span>
+            {bundle.mind.rationale ?? bundle.mind.summary}
+          </p>
+        ) : null}
         <dl className="mt-4 grid gap-3 text-sm sm:grid-cols-2">
           <HashField label="Id" value={bundle.event.id} />
           <Fact label="Sequence" value={String(bundle.event.seq)} />
@@ -171,6 +179,20 @@ export function EventVerifier({ bundle }: { bundle: VerifyBundle }) {
           )}
         </div>
       </section>
+
+      {bundle.onchain && bundle.onchain.links.length > 0 ? (
+        <section className="rounded-2xl border border-line bg-card px-4 py-4">
+          <h2 className="font-serif text-2xl">Onchain links</h2>
+          <p className="mt-2 text-sm leading-6 text-muted">
+            These open the same objects on Monadscan. Opening a link is not a verification by this application.
+          </p>
+          <dl className="mt-4 grid gap-3 text-sm sm:grid-cols-2">
+            {bundle.onchain.links.map((link) => (
+              <HashField key={link.label} label={link.label} value={link.value} href={link.href} linkLabel={link.label} />
+            ))}
+          </dl>
+        </section>
+      ) : null}
 
       {transfer ? (
         <section className="rounded-2xl border border-line bg-card px-4 py-4">

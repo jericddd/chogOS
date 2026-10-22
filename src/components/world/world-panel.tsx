@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { CitizenPortrait } from "@/components/citizens/portrait";
+import { DecisionReasons } from "@/components/world/decision-reasons";
 import { EventItem } from "@/components/world/event-item";
 import type { LinkState, RealtimeState } from "@/components/world/live-store";
 import type { Selection } from "@/components/world/world-canvas";
@@ -466,15 +467,7 @@ function CitizenMindFacts({ tokenId }: { tokenId: string }) {
           {mind.memories[0].outcome ? ` (${mind.memories[0].outcome})` : ""}
         </p>
       ) : null}
-      {mind.decisions[0] ? (
-        <p className="mt-2 text-xs text-muted">
-          Last decision: {mind.decisions[0].status}
-          {mind.decisions[0].summary ? ` · ${mind.decisions[0].summary}` : ""}
-          {mind.decisions[0].model ? ` · ${mind.decisions[0].model}` : ""}
-        </p>
-      ) : (
-        <p className="mt-2 text-xs text-muted">No AI decision has been stored for this citizen.</p>
-      )}
+      <DecisionReasons decisions={mind.decisions} />
     </section>
   );
 }
