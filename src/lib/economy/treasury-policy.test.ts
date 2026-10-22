@@ -104,7 +104,31 @@ describe("ownerless treasury policy", () => {
         chogBalance: 10n,
         chogDecimals: 18,
       }).status,
-    ).toBe("budget_exhausted");
+    ).toBe("accepted_not_executed");
+    expect(
+      evaluateProductionTreasuryAllocation({
+        draft: draft({ asset: "CHOG", amountRaw: 2n }),
+        limits: limits(),
+        nowMs: NOW,
+        eligibleTokenIds: ELIGIBLE,
+        spent: [],
+        monBalance: null,
+        chogBalance: 10n,
+        chogDecimals: 18,
+      }).reason,
+    ).toContain("per-transaction");
+    expect(
+      evaluateProductionTreasuryAllocation({
+        draft: draft({ asset: "CHOG", amountRaw: 1n }),
+        limits: limits({ maxPerTxChog: 0n, maxCitizenWindowChog: 0n, maxAggregateWindowChog: 0n }),
+        nowMs: NOW,
+        eligibleTokenIds: ELIGIBLE,
+        spent: [],
+        monBalance: null,
+        chogBalance: 10n,
+        chogDecimals: 18,
+      }).reason,
+    ).toContain("closed");
 
     expect(
       evaluateProductionTreasuryAllocation({

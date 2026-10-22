@@ -90,7 +90,7 @@ export type AppConfig = {
    */
   chogBankDeploymentTx?: `0x${string}`;
   chogBankObservationMaxAgeMs: number;
-  /** Economic budgets. $CHOG limits are token base units and default to zero. */
+  /** Economic budgets. $CHOG limits are token base units and default to 1 wei. */
   economyLimits: {
     maxCitizenCapitalWei: bigint;
     maxBusinessAllocationWei: bigint;
@@ -403,9 +403,9 @@ export function readAppConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
         "CHOG_BANK_MAX_BUSINESS_CAPITAL_WEI",
         2_000_000_000_000_000_000n,
       ),
-      maxChogPerTxRaw: readRaw(env.CHOG_BANK_MAX_CHOG_PER_TX_RAW, "CHOG_BANK_MAX_CHOG_PER_TX_RAW", 0n),
-      maxCitizenChogRaw: readRaw(env.CHOG_BANK_MAX_CITIZEN_CHOG_RAW, "CHOG_BANK_MAX_CITIZEN_CHOG_RAW", 0n),
-      maxBusinessChogRaw: readRaw(env.CHOG_BANK_MAX_BUSINESS_CHOG_RAW, "CHOG_BANK_MAX_BUSINESS_CHOG_RAW", 0n),
+      maxChogPerTxRaw: readRaw(env.CHOG_BANK_MAX_CHOG_PER_TX_RAW, "CHOG_BANK_MAX_CHOG_PER_TX_RAW", 1n),
+      maxCitizenChogRaw: readRaw(env.CHOG_BANK_MAX_CITIZEN_CHOG_RAW, "CHOG_BANK_MAX_CITIZEN_CHOG_RAW", 1n),
+      maxBusinessChogRaw: readRaw(env.CHOG_BANK_MAX_BUSINESS_CHOG_RAW, "CHOG_BANK_MAX_BUSINESS_CHOG_RAW", 1n),
     },
     economyAllowlist: blankToUndefined(env.ECONOMY_PROTOCOL_ALLOWLIST)?.slice(0, 20_000),
   };

@@ -7,6 +7,7 @@ import { ACTIVITY_LABEL, KIND_LABEL, ROLE_LABEL, citizenLabel, describeCitizenNo
 import {
   WORLD_PX_H,
   WORLD_PX_W,
+  cameraPaddingForOverlays,
   clampCamera,
   focusOn,
   hitTest,
@@ -19,6 +20,7 @@ import {
   type Camera,
   type Hit,
   type Placement,
+  type ScreenBox,
   type Viewport,
 } from "@/lib/world/scene";
 import type { BuildingView, CitizenView, WorldSnapshot } from "@/lib/world/types";
@@ -67,6 +69,29 @@ function lerpCamera(a: Camera, b: Camera, t: number): Camera {
 
 function buildingMap(snapshot: WorldSnapshot): Map<string, BuildingView> {
   return new Map(snapshot.buildings.map((b) => [b.id, b]));
+}
+
+function overlayPadding(container: HTMLElement): Pick<Viewport, "padLeft" | "padTop" | "padRight" | "padBottom"> {
+  const map = container.getBoundingClientRect();
+  const stage = container.closest(".world-stage");
+  if (!stage) return { padLeft: 0, padTop: 0, padRight: 0, padBottom: 0 };
+  const overlays: ScreenBox[] = [];
+  for (const node of stage.querySelectorAll<HTMLElement>(".world-town, .world-growth, .world-activity")) {
+    if (getComputedStyle(node).display === "none") continue;
+    const box = node.getBoundingClientRect();
+    overlays.push({
+      left: box.left,
+      top: box.top,
+      right: box.right,
+      bottom: box.bottom,
+      width: box.width,
+      height: box.height,
+    });
+  }
+  return cameraPaddingForOverlays(
+    { left: map.left, top: map.top, right: map.right, bottom: map.bottom, width: map.width, height: map.height },
+    overlays,
+  );
 }
 
 export function WorldCanvas({ snapshot, skewMs, selection, follow, onSelect, onUserMove, ref }: Props) {
@@ -181,7 +206,7 @@ export function WorldCanvas({ snapshot, skewMs, selection, follow, onSelect, onU
       canvas.height = Math.max(1, Math.round(box.height * dpr));
       canvas.style.width = `${box.width}px`;
       canvas.style.height = `${box.height}px`;
-      view.current = { width: box.width, height: box.height };
+      view.current = { width: box.width, height: box.height, ...overlayPadding(container) };
       camera.current =
         !camera.current || !userMoved.current
           ? openingCamera(view.current)
@@ -192,6 +217,8 @@ export function WorldCanvas({ snapshot, skewMs, selection, follow, onSelect, onU
     resize();
     const resizer = new ResizeObserver(resize);
     resizer.observe(container);
+    const stage = container.closest(".world-stage");
+    if (stage) resizer.observe(stage);
     const watcher = new IntersectionObserver((entries) => {
       visible = entries.some((entry) => entry.isIntersecting);
     });
