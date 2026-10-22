@@ -7,6 +7,7 @@ const HASH = /^0x[0-9a-fA-F]{64}$/;
 const ADDRESS = /^0x[0-9a-fA-F]{40}$/;
 const DECIMAL = /^[0-9]+$/;
 const KINDS = new Set(["wallet.decided", "wallet.created", "treasury.allocation", "treasury.paid", "citizen.trade", "citizen.return"]);
+const JOIN_KINDS = new Set(["genesis_joined", "citizen_enrolled", "citizen.joined_world"]);
 
 export type OnchainLink = { label: string; href: string; value: string };
 
@@ -56,6 +57,56 @@ function defaultNote(kind: string, broadcast: boolean): string {
   return "The mind decided whether to send funds. This row has no Monad transaction.";
 }
 
+function joinTitle(kind: string): string {
+  if (kind === "genesis_joined") return "Chog joined the founding roster";
+  if (kind === "citizen_enrolled") return "Chog joined the civilization";
+  return "Chog entered the world";
+}
+
+function joinNote(kind: string): string {
+  if (kind === "citizen.joined_world") {
+    return "This citizen was placed in the world after joining. Open the Genesis token on Monadscan. This row has no chain transaction.";
+  }
+  if (kind === "citizen_enrolled") {
+    return "This row records the ownerOf read for the wallet that enrolled this Chog. Open the Genesis token, the observed owner, and the block. This row has no enrollment transaction.";
+  }
+  return "This row records the ownerOf read that admitted this Chog to the founding roster. Open the Genesis token, the observed owner, and the block. This row has no enrollment transaction.";
+}
+
+function evidenceChain(chainId: number | null | undefined): 143 | 10143 | null {
+  if (chainId == null || chainId === 143) return 143;
+  if (chainId === 10143) return 10143;
+  return null;
+}
+
+/** Monadscan objects for a stored join. Enrollment is an ownerOf observation, so there is no transaction link. */
+function joinEvidence(row: {
+  kind: string;
+  chain_id?: number | null;
+  payload?: unknown;
+}): OnchainEvidence | null {
+  if (!JOIN_KINDS.has(row.kind)) return null;
+  const payload = payloadRecord(row.payload);
+  const chainId = evidenceChain(row.chain_id);
+  const links: OnchainLink[] = [];
+  const tokenId = typeof payload.tokenId === "string" || typeof payload.tokenId === "number" ? String(payload.tokenId).split(".")[0] : "";
+  if (chainId != null && DECIMAL.test(tokenId)) {
+    const href = explorerNftUrl(chainId, addresses.chogGenesis, tokenId);
+    if (href) links.push({ label: "Genesis token", href, value: `${addresses.chogGenesis}/${tokenId}` });
+  }
+  const owner = typeof payload.owner === "string" ? payload.owner : "";
+  if (chainId != null && ADDRESS.test(owner) && owner.toLowerCase() !== "0x0000000000000000000000000000000000000000") {
+    const href = explorerAddressUrl(chainId, owner);
+    if (href) links.push({ label: "Observed owner", href, value: owner });
+  }
+  const block = typeof payload.blockNumber === "string" || typeof payload.blockNumber === "number" ? String(payload.blockNumber) : "";
+  if (chainId != null && DECIMAL.test(block)) {
+    const href = explorerBlockUrl(chainId, block);
+    if (href) links.push({ label: "Block", href, value: block });
+  }
+  return { title: joinTitle(row.kind), note: joinNote(row.kind), links };
+}
+
 /**
  * Builds explorer links from a stored AI activity row.
  * A transaction link exists only when this row was inserted as a confirmed chain-143 receipt.
@@ -67,6 +118,8 @@ export function onchainEvidenceFromRow(row: {
   tx_hash?: string | null;
   payload?: unknown;
 }): OnchainEvidence | null {
+  const joined = joinEvidence(row);
+  if (joined) return joined;
   if (!KINDS.has(row.kind)) return null;
   const payload = payloadRecord(row.payload);
   const broadcast = payload.broadcast === true && (row.kind === "wallet.created" || row.kind === "treasury.paid");

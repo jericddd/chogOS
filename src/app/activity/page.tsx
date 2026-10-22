@@ -20,7 +20,7 @@ export default function ActivityPage({ searchParams }: { searchParams: Search })
     <div>
       <PageHeader
         title="Civilization History"
-        lede="This feed lists actual recorded world events, newest first. Simulation rows are rule-based world transitions. System rows are setup and synchronization. AI rows are decisions recorded by the mind, and each one shows the stored reason. A wallet, fund, trade, or return row links to Monadscan when a receipt, citizen wallet, factory, or Genesis token was stored. Genesis transfer links stay on watcher rows. A database status alone is not a chain receipt."
+        lede="This feed lists actual recorded world events, newest first. Simulation rows are rule-based world transitions. System rows are setup and synchronization, including each Chog Genesis NFT that joined this civilization. AI rows are decisions recorded by the mind, and each one shows the stored reason. A wallet, fund, trade, or return row links to Monadscan when a receipt, citizen wallet, factory, or Genesis token was stored. A join row links the Genesis token, the observed owner, and the block from that ownerOf read. Genesis transfer links stay on watcher rows. A database status alone is not a chain receipt."
       />
       <p className="-mt-2 mb-6">
         <AiDecisionsLink />

@@ -395,7 +395,7 @@ describe("activity feed", () => {
     expect(screen.getByRole("link", { name: "AI decisions" }).getAttribute("href")).toBe("/activity?source=ai");
     fireEvent.change(screen.getAllByRole("combobox")[1]!, { target: { value: "ai" } });
     await screen.findByText(/Only genuine model-backed decisions are labeled AI/);
-    expect(String(fetcher.mock.calls[0]![0])).toContain("source=ai");
+    expect(fetcher.mock.calls.map((call) => String(call[0])).some((url) => url.includes("source=ai"))).toBe(true);
   });
 
   it("asks for the Onchain category, where confirmed AI wallet creations are included", async () => {
@@ -405,8 +405,9 @@ describe("activity feed", () => {
     render(<ActivityFeed store={store} />);
     fireEvent.change(screen.getAllByRole("combobox")[0]!, { target: { value: "onchain" } });
     await screen.findByText(/confirmed AI wallet creations appear here/);
-    expect(String(fetcher.mock.calls[0]![0])).toContain("category=onchain");
-    expect(String(fetcher.mock.calls[0]![0])).not.toContain("source=");
+    const onchain = fetcher.mock.calls.map((call) => String(call[0])).find((url) => url.includes("category=onchain"));
+    expect(onchain).toBeTruthy();
+    expect(onchain).not.toContain("source=");
   });
 
   it("maps the Category AI filter to genuine source=ai events", async () => {
@@ -416,11 +417,17 @@ describe("activity feed", () => {
     render(<ActivityFeed store={store} />);
     fireEvent.change(screen.getAllByRole("combobox")[0]!, { target: { value: "ai" } });
     await screen.findByText(/Only genuine model-backed decisions are labeled AI/);
-    expect(String(fetcher.mock.calls[0]![0])).toContain("source=ai");
-    expect(String(fetcher.mock.calls[0]![0])).not.toContain("category=ai");
+    const ai = fetcher.mock.calls.map((call) => String(call[0])).find((url) => url.includes("source=ai") && !url.includes("category="));
+    expect(ai).toBeTruthy();
+    expect(ai).not.toContain("category=ai");
     fireEvent.change(screen.getAllByRole("combobox")[0]!, { target: { value: "construction" } });
-    await waitFor(() => expect(String(fetcher.mock.calls[1]![0])).toContain("category=construction"));
-    expect(String(fetcher.mock.calls[1]![0])).not.toContain("source=ai");
+    await waitFor(() =>
+      expect(
+        fetcher.mock.calls
+          .map((call) => String(call[0]))
+          .some((url) => url.includes("category=construction") && !url.includes("source=ai")),
+      ).toBe(true),
+    );
   });
 
   it("opens History from source=ai and writes later filter changes to the URL", async () => {
@@ -440,10 +447,59 @@ describe("activity feed", () => {
     render(<ActivityFeed store={store} initialFilter={{ source: "ai" }} mode="page" />);
     expect((screen.getAllByRole("combobox")[1] as HTMLSelectElement).value).toBe("ai");
     await screen.findByText("An AI road was placed.");
-    expect(String(fetcher.mock.calls[0]![0])).toContain("source=ai");
+    expect(fetcher.mock.calls.map((call) => String(call[0])).some((url) => url.includes("source=ai"))).toBe(true);
     fireEvent.change(screen.getAllByRole("combobox")[0]!, { target: { value: "construction" } });
     await waitFor(() => expect(nav.replace).toHaveBeenCalled());
     expect(String(nav.replace.mock.calls.at(-1)?.[0])).toBe("/activity?category=construction&source=ai");
+  });
+
+  it("lists Chogs that joined in system activity, with Verify and the Genesis token", async () => {
+    const genesis = "https://monadscan.com/nft/0xc96d31f8626c6d03fae5dcd3d61e3fb9f4a73763/1547";
+    const fetcher = vi.fn(async (url: string) => {
+      if (!String(url).includes("category=membership")) {
+        return new Response(JSON.stringify({ status: "ok", events: [], nextBefore: null }));
+      }
+      return new Response(
+        JSON.stringify({
+          status: "ok",
+          nextBefore: null,
+          events: [
+            event(2, {
+              kind: "genesis_joined",
+              category: "membership",
+              source: "system",
+              tokenId: "7",
+              summary: "Chog Genesis #7 verified in the ChogTreasury founding roster.",
+            }),
+            event(9, {
+              id: "enrolled-1547",
+              kind: "citizen_enrolled",
+              category: "membership",
+              source: "system",
+              tokenId: "1547",
+              summary: "Chog Genesis #1547 enrolled by its verified owner.",
+              onchain: {
+                title: "Chog joined the civilization",
+                note: "ownerOf",
+                links: [{ label: "Genesis token", href: genesis, value: "1547" }],
+              },
+            }),
+            event(12, { kind: "town.need_detected", category: "world", source: "system", tokenId: null, summary: "Food is scarce." }),
+          ],
+        }),
+      );
+    });
+    vi.stubGlobal("fetch", fetcher);
+    const store = createLiveStore(snapshot([event(3)]), { fetcher: vi.fn() as unknown as typeof fetch });
+    render(<ActivityFeed store={store} initialFilter={{ source: "system" }} mode="page" />);
+    expect(await screen.findByRole("heading", { name: "Joined the civilization" })).toBeTruthy();
+    expect(screen.getByText("Chog Genesis #1547 enrolled by its verified owner.")).toBeTruthy();
+    expect(screen.getByText("Chog Genesis #7 verified in the ChogTreasury founding roster.")).toBeTruthy();
+    expect(screen.queryByText("Food is scarce.")).toBeNull();
+    const enrolled = screen.getByText("Chog Genesis #1547 enrolled by its verified owner.").closest("li");
+    expect(enrolled?.querySelector('a[href="/verify/events/enrolled-1547"]')?.textContent).toBe("Verify");
+    expect(enrolled?.querySelector(`a[href="${genesis}"]`)?.textContent).toBe("Genesis token");
+    expect(screen.queryByRole("link", { name: "All joined" })).toBeNull();
   });
 });
 

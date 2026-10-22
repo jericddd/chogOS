@@ -64,6 +64,22 @@ export const ONCHAIN_CATEGORY_FILTER =
 
 const TOWN_GROWTH_KINDS = new Set(["wallet.created", "wallet.decided", "treasury.paid", "treasury.allocation"]);
 
+const CIVILIZATION_JOIN_KINDS = new Set(["genesis_joined", "citizen_enrolled"]);
+
+/**
+ * One system row per Chog that joined. A later enrollment for the same token
+ * replaces the earlier roster row. Town-need rows are not joins.
+ */
+export function civilizationJoinEvents(events: readonly WorldEventView[], limit = 12): WorldEventView[] {
+  const byToken = new Map<string, WorldEventView>();
+  for (const event of events) {
+    if (event.source !== "system" || !CIVILIZATION_JOIN_KINDS.has(event.kind) || !event.tokenId) continue;
+    const current = byToken.get(event.tokenId);
+    if (!current || event.seq > current.seq) byToken.set(event.tokenId, event);
+  }
+  return [...byToken.values()].sort((left, right) => right.seq - left.seq).slice(0, limit);
+}
+
 /** Civic acts the mind recorded. Simulation breaches stay on the activity feed. */
 const CIVIC_GROWTH_KINDS = new Set([
   "civic.law_proclaimed",

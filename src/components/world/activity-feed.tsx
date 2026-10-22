@@ -9,6 +9,7 @@ import { useLive, type LiveStore } from "@/components/world/live-store";
 import { useNow } from "@/components/world/use-now";
 import { CATEGORY_LABEL, SOURCE_LABEL } from "@/lib/world/present";
 import {
+  civilizationJoinEvents,
   eventFilterSearchParams,
   filterKey,
   matchesFilter,
@@ -25,7 +26,32 @@ import {
   type EventFilter,
   type EventPage,
   type EventSource,
+  type WorldEventView,
 } from "@/lib/world/types";
+
+const JOIN_URL = "/api/world/events?source=system&category=membership&limit=80";
+
+function showJoins(filter: EventFilter): boolean {
+  return !filter.category && !filter.tokenId && !filter.buildingId && (!filter.source || filter.source === "system");
+}
+
+function useCivilizationJoins(enabled: boolean, limit: number): WorldEventView[] {
+  const [events, setEvents] = useState<WorldEventView[]>([]);
+  useEffect(() => {
+    if (!enabled) return;
+    const controller = new AbortController();
+    fetch(JOIN_URL, { cache: "no-store", signal: controller.signal })
+      .then((response) => response.json() as Promise<EventPage>)
+      .then((page) => {
+        if (page.status !== "ok") return;
+        const joins = civilizationJoinEvents(page.events, limit);
+        if (joins.length > 0) setEvents(joins);
+      })
+      .catch(() => undefined);
+    return () => controller.abort();
+  }, [enabled, limit]);
+  return enabled ? events : [];
+}
 
 const PAGE_SIZE = 25;
 
@@ -255,6 +281,12 @@ export function ActivityFeed({
     topRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
   };
 
+  const joins = useCivilizationJoins(showJoins(filter), dock ? 5 : 80);
+  useEffect(() => {
+    if (dock || joins.length === 0 || window.location.hash !== "#joined-civilization") return;
+    document.getElementById("joined-civilization")?.scrollIntoView({ block: "start" });
+  }, [dock, joins]);
+  const shown = joins.length > 0 ? feed.shown.filter((event) => event.kind !== "genesis_joined" && event.kind !== "citizen_enrolled") : feed.shown;
   const scoped = filter.tokenId
     ? `Citizen #${filter.tokenId}`
     : filter.buildingId
@@ -341,7 +373,33 @@ export function ActivityFeed({
           {feed.pending.length > 0 ? `${feed.pending.length} new events` : ""}
         </p>
 
-        {status === "loading" && feed.shown.length === 0 ? <p className="py-3 text-sm text-muted">Reading history…</p> : null}
+        {joins.length > 0 ? (
+          <div id={dock ? undefined : "joined-civilization"} className={dock ? "border-b-4 border-line pb-1" : "mb-4 border-b border-line pb-3"}>
+            <h3 className={dock ? "pt-2 font-display text-[0.62rem] leading-4 text-accent" : "font-serif text-xl tracking-tight"}>
+              {dock ? "Joined" : "Joined the civilization"}
+            </h3>
+            {dock ? null : (
+              <p className="mt-1 text-sm leading-6 text-muted">
+                Each row is a Chog Genesis NFT that entered this civilization. Verify opens the stored record. Genesis
+                token, observed owner, and block open Monadscan.
+              </p>
+            )}
+            <ul className={dock ? "divide-y divide-line" : "mt-2 divide-y divide-line"}>
+              {joins.map((event) => (
+                <EventItem key={event.id} event={event} now={now} citizenName={citizenName} compact={dock} />
+              ))}
+            </ul>
+            {dock ? (
+              <p className="py-1">
+                <Link href="/activity#joined-civilization" className="text-xs text-accent">
+                  All joined
+                </Link>
+              </p>
+            ) : null}
+          </div>
+        ) : null}
+
+        {status === "loading" && shown.length === 0 ? <p className="py-3 text-sm text-muted">Reading history…</p> : null}
         {status === "error" ? (
           <p className="py-3 text-sm text-warning">
             History could not be read.{" "}
@@ -351,10 +409,12 @@ export function ActivityFeed({
           </p>
         ) : null}
         {status === "unavailable" ? <p className="py-3 text-sm leading-6 text-muted">{detail} Recorded history appears here once it can be read.</p> : null}
-        {status === "ready" && feed.shown.length === 0 ? <p className="py-3 text-sm leading-6 text-muted">{emptyText(filter)}</p> : null}
+        {status === "ready" && shown.length === 0 && joins.length === 0 ? (
+          <p className="py-3 text-sm leading-6 text-muted">{emptyText(filter)}</p>
+        ) : null}
 
-        <ul className={`divide-y divide-line ${dock ? "" : "mt-3 border-y border-line"} ${feed.shown.length === 0 ? "hidden" : ""}`}>
-          {feed.shown.map((event) => (
+        <ul className={`divide-y divide-line ${dock ? "" : "mt-3 border-y border-line"} ${shown.length === 0 ? "hidden" : ""}`}>
+          {shown.map((event) => (
             <EventItem key={event.id} event={event} now={now} citizenName={citizenName} compact={dock} />
           ))}
         </ul>
