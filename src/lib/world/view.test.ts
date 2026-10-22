@@ -28,6 +28,7 @@ import {
 } from "@/lib/world/scene";
 import {
   eventFilterFromSearch,
+  isConfirmedAiPayout,
   isConfirmedAiWallet,
   matchesFilter,
   mergeEvents,
@@ -412,14 +413,25 @@ describe("live merge", () => {
       txHash: null,
       tokenId: "104",
     });
+    const paid = event(12, {
+      kind: "treasury.paid",
+      category: "ai",
+      source: "ai",
+      chainStatus: "confirmed",
+      txHash: hash,
+      tokenId: "91",
+    });
     expect(isConfirmedAiWallet(created)).toBe(true);
     expect(isConfirmedAiWallet(observed)).toBe(false);
+    expect(isConfirmedAiPayout(paid)).toBe(true);
+    expect(isConfirmedAiPayout(allocation)).toBe(false);
     expect(ONCHAIN_CATEGORY_FILTER).toBe(
-      'category.eq.onchain,and(source.eq.ai,kind.eq."wallet.created",chain_status.eq.confirmed)',
+      'category.eq.onchain,and(source.eq.ai,kind.eq."wallet.created",chain_status.eq.confirmed),and(source.eq.ai,kind.eq."treasury.paid",chain_status.eq.confirmed)',
     );
     expect(matchesFilter(created, { category: "onchain" })).toBe(true);
     expect(matchesFilter(transfer, { category: "onchain" })).toBe(true);
     expect(matchesFilter(decided, { category: "onchain" })).toBe(false);
+    expect(matchesFilter(paid, { category: "onchain" })).toBe(true);
     expect(matchesFilter(allocation, { category: "onchain" })).toBe(false);
     expect(matchesFilter(observed, { category: "onchain" })).toBe(false);
     expect(matchesFilter(created, { source: "onchain" })).toBe(false);
@@ -427,10 +439,10 @@ describe("live merge", () => {
     expect(matchesFilter(created, { category: "ai" })).toBe(true);
     expect(matchesFilter(created, { category: "construction" })).toBe(false);
     expect(
-      receiveLive({ shown: [], pending: [] }, [created, decided, transfer, allocation], { category: "onchain" }, true).shown.map(
+      receiveLive({ shown: [], pending: [] }, [paid, created, decided, transfer, allocation], { category: "onchain" }, true).shown.map(
         (row) => row.id,
       ),
-    ).toEqual(["e11", "e9"]);
+    ).toEqual(["e12", "e11", "e9"]);
   });
 
   it("shows AI wallet decisions in town growth and keeps the confirmed creation over the earlier decision", () => {
@@ -462,9 +474,18 @@ describe("live merge", () => {
     const simulatedVisit = event(2, { kind: "citizen.bank_visit", category: "citizen", source: "simulation" });
     expect(
       townGrowthEvents([decidedSame, created, decidedOther, allocation, road, social, law, simulatedVisit]).map((row) => row.seq),
-    ).toEqual([13, 12, 10, 4]);
+    ).toEqual([13, 12, 10, 9, 4]);
     expect(townGrowthEvents([road], 1)).toEqual([road]);
-    expect(townGrowthEvents([social, allocation])).toEqual([]);
+    expect(townGrowthEvents([social, allocation])).toEqual([allocation]);
+    const paidAllocation = event(14, {
+      kind: "treasury.paid",
+      category: "ai",
+      source: "ai",
+      chainStatus: "confirmed",
+      txHash: hash,
+      tokenId: "7",
+    });
+    expect(townGrowthEvents([allocation, paidAllocation]).map((row) => row.seq)).toEqual([14]);
   });
 
   it("picks only a real AI construction event for Verify discovery", () => {

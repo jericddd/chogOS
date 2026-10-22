@@ -68,8 +68,40 @@ describe("activity drafts", () => {
     expect(funds[0]?.summary).toMatch(/send MON/);
     expect(funds[0]?.summary).toMatch(/No transaction was broadcast/);
     expect(trade[0]?.summary).toMatch(/should trade/);
-    expect(returning[0]?.summary).toMatch(/ChogBank is not deployed/);
+    expect(returning[0]?.summary).toMatch(/return funds to ChogBank/);
+    expect(returning[0]?.summary).toMatch(/No transaction was broadcast/);
     expect([funds[0], trade[0], returning[0]].every((draft) => draft?.chainStatus === "offchain" && draft.txHash === null)).toBe(true);
+  });
+
+  it("adds a confirmed payout row only after a verified ChogBank receipt", () => {
+    const drafts = activityDrafts(decision({
+      purpose: "treasury_allocation",
+      status: "executed",
+      output: {
+        tokenId: "91",
+        asset: "MON",
+        amountRaw: "10000000000000000",
+        requestedAmountRaw: "100000000000000000",
+        verified: true,
+        onchain: true,
+        address: WALLET,
+        txHash: TX,
+        blockNumber: "115680000",
+        reason: "The east road still needs fare.",
+      },
+    }));
+    expect(drafts.map((draft) => draft.kind)).toEqual(["treasury.allocation", "treasury.paid"]);
+    expect(drafts[0]).toMatchObject({ chainStatus: "offchain", txHash: null });
+    expect(drafts[1]).toMatchObject({
+      chainStatus: "confirmed",
+      chainId: 143,
+      txHash: TX,
+      outcome: "prefer",
+    });
+    expect(drafts[1]?.summary).toMatch(/0\.01 MON/);
+    expect(drafts[1]?.summary).toMatch(/cap limited/);
+    expect(drafts[1]?.payload.broadcast).toBe(true);
+    expect(drafts[1]?.payload.bank).toBe("0xB2494538433B2FA3167A723d32329cc22c3A59C1");
   });
 
   it("inserts one AI activity row and does not duplicate it", async () => {

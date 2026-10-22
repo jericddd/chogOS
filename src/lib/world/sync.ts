@@ -37,9 +37,18 @@ const TX_HASH = /^0x[0-9a-fA-F]{64}$/;
  * Onchain category includes it by this check instead of rewriting the row.
  */
 export function isConfirmedAiWallet(event: WorldEventView): boolean {
+  return confirmedAiKind(event, "wallet.created");
+}
+
+/** A payout row stored after Monad confirmed ChogBank Distributed. History stays append-only. */
+export function isConfirmedAiPayout(event: WorldEventView): boolean {
+  return confirmedAiKind(event, "treasury.paid");
+}
+
+function confirmedAiKind(event: WorldEventView, kind: string): boolean {
   return (
     event.source === "ai" &&
-    event.kind === "wallet.created" &&
+    event.kind === kind &&
     event.chainStatus === "confirmed" &&
     typeof event.txHash === "string" &&
     TX_HASH.test(event.txHash)
@@ -51,9 +60,9 @@ export function isConfirmedAiWallet(event: WorldEventView): boolean {
  * `wallet.created` is quoted because the kind contains a dot.
  */
 export const ONCHAIN_CATEGORY_FILTER =
-  'category.eq.onchain,and(source.eq.ai,kind.eq."wallet.created",chain_status.eq.confirmed)';
+  'category.eq.onchain,and(source.eq.ai,kind.eq."wallet.created",chain_status.eq.confirmed),and(source.eq.ai,kind.eq."treasury.paid",chain_status.eq.confirmed)';
 
-const TOWN_GROWTH_KINDS = new Set(["wallet.created", "wallet.decided"]);
+const TOWN_GROWTH_KINDS = new Set(["wallet.created", "wallet.decided", "treasury.paid", "treasury.allocation"]);
 
 /** Civic acts the mind recorded. Simulation breaches stay on the activity feed. */
 const CIVIC_GROWTH_KINDS = new Set([
@@ -76,6 +85,11 @@ export function townGrowthEvents(events: readonly WorldEventView[], limit = 8): 
       .filter((event) => event.source === "ai" && event.kind === "wallet.created" && event.tokenId)
       .map((event) => event.tokenId as string),
   );
+  const paidTokens = new Set(
+    events
+      .filter((event) => event.source === "ai" && event.kind === "treasury.paid" && event.tokenId)
+      .map((event) => event.tokenId as string),
+  );
   const kept = events.filter((event) => {
     if (event.source !== "ai") {
       return false;
@@ -87,6 +101,9 @@ export function townGrowthEvents(events: readonly WorldEventView[], limit = 8): 
       return false;
     }
     if (event.kind === "wallet.decided" && event.tokenId && createdTokens.has(event.tokenId)) {
+      return false;
+    }
+    if (event.kind === "treasury.allocation" && event.tokenId && paidTokens.has(event.tokenId)) {
       return false;
     }
     return true;
@@ -159,7 +176,7 @@ export function oldestSeq(events: readonly WorldEventView[]): number | null {
 export function matchesFilter(event: WorldEventView, filter: EventFilter): boolean {
   const resolved = resolveEventFilter(filter);
   if (resolved.category) {
-    const onchainWallet = resolved.category === "onchain" && isConfirmedAiWallet(event);
+    const onchainWallet = resolved.category === "onchain" && (isConfirmedAiWallet(event) || isConfirmedAiPayout(event));
     if (event.category !== resolved.category && !onchainWallet) {
       return false;
     }

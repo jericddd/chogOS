@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { addresses } from "@/lib/blockchain/addresses";
+import { MAINNET_CHOG_BANK } from "@/lib/chogbank/bank";
 import { MAINNET_WALLET_FACTORY } from "@/lib/wallets/issuer";
 import { onchainEvidenceFromRow } from "@/lib/world/onchain-links";
 import { toEvent } from "@/lib/world/rows";
@@ -84,6 +85,37 @@ describe("onchain evidence", () => {
     });
     expect(evidence?.links.map((link) => link.label)).toEqual(["Wallet factory", "Genesis token", "$CHOG token"]);
     expect(evidence?.links.some((link) => link.label === "Transaction")).toBe(false);
+  });
+
+  it("links a confirmed ChogBank payout to the transaction, bank, and citizen wallet", () => {
+    const evidence = onchainEvidenceFromRow({
+      kind: "treasury.paid",
+      chain_status: "confirmed",
+      chain_id: 143,
+      tx_hash: TX,
+      payload: {
+        tokenId: "91",
+        asset: "MON",
+        factory: MAINNET_WALLET_FACTORY,
+        genesis: addresses.chogGenesis,
+        bank: MAINNET_CHOG_BANK,
+        wallet: WALLET,
+        walletVerified: true,
+        broadcast: true,
+        blockNumber: "115680000",
+      },
+    });
+    expect(evidence?.title).toBe("Monad ChogBank payout");
+    expect(evidence?.links.map((link) => link.label)).toEqual([
+      "Transaction",
+      "Block",
+      "ChogBank",
+      "Citizen wallet",
+      "Wallet factory",
+      "Genesis token",
+    ]);
+    expect(evidence?.links[0]?.href).toBe(`https://monadscan.com/tx/${TX}`);
+    expect(evidence?.links[2]?.href).toBe(`https://monadscan.com/address/${MAINNET_CHOG_BANK.toLowerCase()}`);
   });
 
   it("puts those links on the activity row", () => {
