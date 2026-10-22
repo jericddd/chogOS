@@ -29,6 +29,7 @@ export type CitizenProfile =
       events: CivilizationEvent[];
       heldByTreasury: boolean;
       treasury: string;
+      enrolledAt: string | null;
     };
 
 export async function loadCitizenProfile(rawTokenId: string): Promise<CitizenProfile> {
@@ -62,6 +63,7 @@ export async function loadCitizenProfile(rawTokenId: string): Promise<CitizenPro
     };
   }
 
+  const record = world.citizens.find((citizen) => citizen.tokenId === parsed.tokenId) ?? null;
   return {
     status: "found",
     citizen: known as DisplayCitizen,
@@ -70,6 +72,7 @@ export async function loadCitizenProfile(rawTokenId: string): Promise<CitizenPro
     events,
     heldByTreasury: ownerRead.owner ? sameAddress(ownerRead.owner, world.treasury) : false,
     treasury: world.treasury,
+    enrolledAt: record?.enrollmentStatus === "active" ? record.enrolledAt : null,
   };
 }
 
