@@ -87,10 +87,10 @@ export function ChogBankPanel({ view }: { view: ChogBankPublicView }) {
                 {decision.recipient ? <p className="mt-1 font-mono text-xs break-all text-muted">{decision.recipient}</p> : null}
                 {decision.txHref ? (
                   <a className="mt-1 inline-block text-sm text-accent" href={decision.txHref} rel="noopener noreferrer" target="_blank">
-                    View payout receipt
+                    {decision.txLabel ?? "View Monad transaction"}
                   </a>
                 ) : (
-                  <p className="mt-1 text-sm text-muted">No payout transaction.</p>
+                  <p className="mt-1 text-sm text-muted">No Monad transaction is linked to this row.</p>
                 )}
               </li>
             ))}

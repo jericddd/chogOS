@@ -167,7 +167,7 @@ export function evaluateIssuanceDecision(input: {
   }
   const path = input.deploymentPathReady
     ? "The deployment path is marked ready. This decision still does not sign or create the wallet."
-    : "The factory is not deployed from this server, so no address was assigned.";
+    : "No address was assigned by this decision. The issuer broadcasts it.";
   return {
     status: "proposed",
     choice: "issue",

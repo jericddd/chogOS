@@ -2,6 +2,7 @@ import { haltFromError } from "@/lib/ai/budget";
 import { AiProviderError, type AiCompletion } from "@/lib/ai/types";
 import {
   evaluateIssuanceDecision,
+  issuanceDecisionId,
   type IssuanceChoice,
   type IssuanceVerdict,
   type WalletLifecycle,
@@ -51,6 +52,9 @@ export type WalletIssuanceConsideration = {
   halt: { until: string; reason: string } | null;
 };
 
+/** How many missing wallets one mind run may queue. The issuer broadcasts them. */
+export const PERMANENT_WALLET_BATCH = 5;
+
 const FORBIDDEN_KEYS = new Set([
   "address",
   "wallet",
@@ -63,18 +67,33 @@ const FORBIDDEN_KEYS = new Set([
   "private_key",
 ]);
 
+/** Enrolled citizens with no wallet and no open issuance, lowest token id first. */
+export function citizensNeedingWallets(
+  roster: readonly WalletRosterEntry[],
+  admittedDecisionIds: ReadonlySet<string>,
+): WalletRosterEntry[] {
+  return roster
+    .filter((entry) => {
+      if (entry.lifecycle !== "citizen_active") return false;
+      if (!/^[0-9]+$/.test(entry.tokenId)) return false;
+      return !admittedDecisionIds.has(issuanceDecisionId(entry.tokenId).toLowerCase());
+    })
+    .slice()
+    .sort((a, b) => (BigInt(a.tokenId) < BigInt(b.tokenId) ? -1 : BigInt(a.tokenId) > BigInt(b.tokenId) ? 1 : 0));
+}
+
 export function walletIssuanceMessages(roster: readonly WalletRosterEntry[], deploymentPathReady: boolean): { system: string; user: string } {
   const system = [
-    "You decide whether one enrolled citizen should be issued a permanent wallet.",
+    "You name the next enrolled citizen who should receive a permanent wallet.",
     "Return JSON only.",
     "Fields are choice, tokenId, and rationale.",
     "choice is issue, defer, or unnecessary.",
-    "A citizen can live, keep goals, and keep memories with no wallet.",
-    "Do not issue a wallet only because the citizen exists.",
+    "Every citizen whose wallet is citizen_active receives one permanent wallet, including a citizen who enrolls later.",
+    "Return choice issue for the lowest citizen_active tokenId.",
     "Do not name an address, a contract, a key, or a signature.",
-    "This choice is not a deployment. The server can reject it, and it does not sign or broadcast.",
+    "This choice is a decision. It does not sign or broadcast. A separate issuer sends the transaction for that decision.",
     "If wallet is already wallet_issuance_proposed, do not return unnecessary for that citizen. An open proposal stays until a wallet is assigned.",
-    "If no citizen needs a wallet now, return {\"choice\":\"unnecessary\",\"tokenId\":null,\"rationale\":\"why\"}.",
+    "If every citizen already has a wallet or an open proposal, return {\"choice\":\"unnecessary\",\"tokenId\":null,\"rationale\":\"why\"}.",
   ].join(" ");
   const user = JSON.stringify({
     deploymentPathReady,
@@ -134,8 +153,14 @@ export async function considerWalletIssuance(input: {
   if (input.roster.length === 0) {
     return skipped("skipped", "No enrolled citizen is eligible, so no wallet was requested.", 0, 0);
   }
-  const messages = walletIssuanceMessages(input.roster, input.deploymentPathReady);
-  let completion: AiCompletion;
+  const needing = citizensNeedingWallets(input.roster, input.admittedDecisionIds);
+  const batch = needing.slice(0, PERMANENT_WALLET_BATCH);
+  const messages = walletIssuanceMessages(
+    batch.length > 0 ? batch : input.roster.slice(0, PERMANENT_WALLET_BATCH),
+    input.deploymentPathReady,
+  );
+  let completion: AiCompletion | null = null;
+  let halt: WalletIssuanceConsideration["halt"] = null;
   try {
     completion = await input.complete({
       system: messages.system,
@@ -149,13 +174,62 @@ export async function considerWalletIssuance(input: {
         ? error
         : new AiProviderError(error instanceof Error ? error.message : "The wallet model call failed.", "unavailable", false);
     const detail = providerError.message.replace(/https?:\/\/\S+/gi, "[redacted-url]").slice(0, 240);
-    const recorded = await input.record(failureRow(input.provider, input.model, detail));
-    if (providerError.halt) {
-      return { status: "halt", detail, promptChars: 0, outputTokens: 0, halt: haltFromError(providerError) };
+    if (needing.length === 0) {
+      const recorded = await input.record(failureRow(input.provider, input.model, detail));
+      if (providerError.halt) {
+        return { status: "halt", detail, promptChars: 0, outputTokens: 0, halt: haltFromError(providerError) };
+      }
+      return skipped("failed", recorded ? detail : "The wallet model call failed and the failure was not recorded.", 0, 0);
     }
-    return skipped("failed", recorded ? detail : "The wallet model call failed and the failure was not recorded.", 0, 0);
+    if (providerError.halt) halt = haltFromError(providerError);
   }
 
+  if (needing.length > 0) {
+    const promptChars = completion?.promptChars ?? 0;
+    const outputTokens = completion?.outputTokens ?? 0;
+    let modelToken: string | null = null;
+    let modelRationale = "";
+    if (completion) {
+      const parsed = parseWalletIssuance(completion.text);
+      if (parsed.ok && parsed.choice === "issue" && parsed.tokenId) {
+        modelToken = parsed.tokenId;
+        modelRationale = parsed.rationale;
+      }
+    }
+    const issued: string[] = [];
+    for (const citizen of batch) {
+      const modelText =
+        citizen.tokenId === modelToken && modelRationale && !/https?:\/\//i.test(modelRationale) ? modelRationale : "";
+      const rationale = modelText || `Every enrolled citizen gets one permanent wallet. Token ${citizen.tokenId} is next.`;
+      const verdict = evaluateIssuanceDecision({
+        choice: "issue",
+        tokenId: citizen.tokenId,
+        rationale,
+        eligibleTokenIds: new Set(input.roster.map((entry) => entry.tokenId)),
+        lifecycleByToken: new Map(input.roster.map((entry) => [entry.tokenId, entry.lifecycle])),
+        admittedDecisionIds: input.admittedDecisionIds,
+        deploymentPathReady: input.deploymentPathReady,
+      });
+      if (verdict.status !== "proposed" || verdict.decisionId == null) continue;
+      const recorded = await input.record(
+        verdictRow(input.provider, input.model, verdict, citizen.citizenId ?? null, input.deploymentPathReady),
+      );
+      if (!recorded) {
+        return skipped("failed", "The wallet review finished, and the database did not store it. No wallet was created.", promptChars, outputTokens);
+      }
+      issued.push(citizen.tokenId);
+    }
+    if (issued.length === 0) {
+      return skipped("failed", "No permanent-wallet decision was stored.", promptChars, outputTokens);
+    }
+    const detail = `Permanent wallet decisions for tokens ${issued.join(", ")}. The issuer broadcasts these decisions. This run did not sign.`;
+    if (halt) return { status: "halt", detail, promptChars, outputTokens, halt };
+    return { status: "proposed", detail, promptChars, outputTokens, halt: null };
+  }
+
+  if (!completion) {
+    return skipped("failed", "The wallet model call failed and no citizen needed a wallet.", 0, 0);
+  }
   const promptChars = completion.promptChars ?? messages.system.length + messages.user.length;
   const outputTokens = completion.outputTokens ?? 0;
   const parsed = parseWalletIssuance(completion.text);

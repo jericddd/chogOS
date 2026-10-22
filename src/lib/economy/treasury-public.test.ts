@@ -234,6 +234,68 @@ describe("public ownerless treasury", () => {
     expect(view.fundingAddress).toBeNull();
   });
 
+  it("shows a confirmed wallet issuance with its Monad transaction", () => {
+    const view = presentOwnerlessTreasury({
+      inspection: pendingInspection(143),
+      decisionsLoaded: true,
+      decisions: [
+        {
+          id: "issue-confirmed",
+          purpose: "wallet_issuance",
+          status: "executed",
+          rationale: "Every enrolled citizen gets one permanent wallet.",
+          createdAt: null,
+          output: {
+            choice: "issue",
+            tokenId: "7",
+            stage: "executed",
+            decisionId: DECISION,
+            txHash: HASH,
+            chainId: 143,
+            onchain: true,
+            verified: true,
+            address: "0x238797c75Ad0423516F84D917B7A9d765831bf02",
+          },
+        },
+      ],
+    });
+    expect(view.decisions[0]?.statusLabel).toBe("Confirmed");
+    expect(view.decisions[0]?.txHref).toBe(`https://monadscan.com/tx/${HASH}`);
+    expect(view.decisions[0]?.txLabel).toBe("View wallet transaction");
+    expect(view.decisions[0]?.detail).toContain("created this wallet");
+  });
+
+  it("shows wallet code that was already on Monad without inventing a transaction", () => {
+    const view = presentOwnerlessTreasury({
+      inspection: pendingInspection(143),
+      decisionsLoaded: true,
+      decisions: [
+        {
+          id: "issue-observed",
+          purpose: "wallet_issuance",
+          status: "executed",
+          rationale: "Every enrolled citizen gets one permanent wallet.",
+          createdAt: null,
+          output: {
+            choice: "issue",
+            tokenId: "104",
+            stage: "executed",
+            decisionId: DECISION,
+            txHash: null,
+            chainId: 143,
+            onchain: true,
+            verified: true,
+            address: "0x238797c75Ad0423516F84D917B7A9d765831bf02",
+          },
+        },
+      ],
+    });
+    expect(view.decisions[0]?.statusLabel).toBe("Confirmed");
+    expect(view.decisions[0]?.txHash).toBeNull();
+    expect(view.decisions[0]?.txHref).toBeNull();
+    expect(view.decisions[0]?.detail).toContain("did not broadcast");
+  });
+
   it("distinguishes a finished empty scan from an unreadable scan", () => {
     const empty = presentOwnerlessTreasury({ inspection: live(), decisions: [], decisionsLoaded: true, fundingScan: "empty" });
     const unread = presentOwnerlessTreasury({ inspection: live(), decisions: [], decisionsLoaded: true, fundingScan: "unreadable" });
