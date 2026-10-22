@@ -29,6 +29,56 @@ export function pickAiConstructionEvent(events: readonly WorldEventView[]): Worl
   return events.find((event) => event.source === "ai" && event.category === "construction") ?? null;
 }
 
+const TX_HASH = /^0x[0-9a-fA-F]{64}$/;
+
+/**
+ * A wallet row the issuer stored after Monad confirmed AccountCreated.
+ * The row stays source=ai and category=ai. History is append-only, so the
+ * Onchain category includes it by this check instead of rewriting the row.
+ */
+export function isConfirmedAiWallet(event: WorldEventView): boolean {
+  return (
+    event.source === "ai" &&
+    event.kind === "wallet.created" &&
+    event.chainStatus === "confirmed" &&
+    typeof event.txHash === "string" &&
+    TX_HASH.test(event.txHash)
+  );
+}
+
+/**
+ * PostgREST `or` filter for the Onchain category.
+ * `wallet.created` is quoted because the kind contains a dot.
+ */
+export const ONCHAIN_CATEGORY_FILTER =
+  'category.eq.onchain,and(source.eq.ai,kind.eq."wallet.created",chain_status.eq.confirmed)';
+
+const TOWN_GROWTH_KINDS = new Set(["wallet.created", "wallet.decided"]);
+
+/** Roads and buildings, plus AI wallet decisions. A created wallet replaces that token's earlier decision. */
+export function townGrowthEvents(events: readonly WorldEventView[], limit = 8): WorldEventView[] {
+  const createdTokens = new Set(
+    events
+      .filter((event) => event.source === "ai" && event.kind === "wallet.created" && event.tokenId)
+      .map((event) => event.tokenId as string),
+  );
+  const kept = events.filter((event) => {
+    if (event.source !== "ai") {
+      return false;
+    }
+    const construction = event.category === "construction";
+    const wallet = TOWN_GROWTH_KINDS.has(event.kind);
+    if (!construction && !wallet) {
+      return false;
+    }
+    if (event.kind === "wallet.decided" && event.tokenId && createdTokens.has(event.tokenId)) {
+      return false;
+    }
+    return true;
+  });
+  return mergeEvents(kept, [], limit);
+}
+
 /** History/search query → filter. Unknown values are ignored. */
 export function eventFilterFromSearch(
   params: Record<string, string | string[] | undefined>,
@@ -93,8 +143,11 @@ export function oldestSeq(events: readonly WorldEventView[]): number | null {
 
 export function matchesFilter(event: WorldEventView, filter: EventFilter): boolean {
   const resolved = resolveEventFilter(filter);
-  if (resolved.category && event.category !== resolved.category) {
-    return false;
+  if (resolved.category) {
+    const onchainWallet = resolved.category === "onchain" && isConfirmedAiWallet(event);
+    if (event.category !== resolved.category && !onchainWallet) {
+      return false;
+    }
   }
   if (resolved.source && event.source !== resolved.source) {
     return false;

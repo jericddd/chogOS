@@ -54,8 +54,11 @@ function emptyText(filter: EventFilter): string {
   if (filter.source === "ai" || filter.category === "ai") {
     return "No AI events. Only genuine model-backed decisions are labeled AI. Rule-based activity stays simulation.";
   }
-  if (filter.source === "onchain" || filter.category === "onchain") {
+  if (filter.source === "onchain") {
     return "No onchain events. Confirmed Chog Genesis transfers observed by the watcher appear here. The simulation itself does not send transactions.";
+  }
+  if (filter.category === "onchain") {
+    return "No onchain events. Confirmed Chog Genesis transfers and confirmed AI wallet creations appear here. A wallet row keeps the mind's reason and a Verify link.";
   }
   if (!isEmptyFilter(filter)) {
     return "Nothing matches this filter yet.";

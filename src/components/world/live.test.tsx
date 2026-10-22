@@ -2,6 +2,7 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ActivityFeed } from "@/components/world/activity-feed";
+import { GrowthDecisions } from "@/components/world/growth-decisions";
 import { WorldPanel, WorldStatus } from "@/components/world/world-panel";
 import { createLiveStore, type RealtimeConnector, type RealtimeHandlers } from "@/components/world/live-store";
 import type { ClockView, TownNeedView, TownProjectView, WorldEventView, WorldLive, WorldSnapshot } from "@/lib/world/types";
@@ -397,6 +398,17 @@ describe("activity feed", () => {
     expect(String(fetcher.mock.calls[0]![0])).toContain("source=ai");
   });
 
+  it("asks for the Onchain category, where confirmed AI wallet creations are included", async () => {
+    const fetcher = vi.fn(async (url: string) => url && new Response(JSON.stringify({ status: "ok", events: [], nextBefore: null })));
+    vi.stubGlobal("fetch", fetcher);
+    const store = createLiveStore(snapshot([event(3)]), { fetcher: vi.fn() as unknown as typeof fetch });
+    render(<ActivityFeed store={store} />);
+    fireEvent.change(screen.getAllByRole("combobox")[0]!, { target: { value: "onchain" } });
+    await screen.findByText(/confirmed AI wallet creations appear here/);
+    expect(String(fetcher.mock.calls[0]![0])).toContain("category=onchain");
+    expect(String(fetcher.mock.calls[0]![0])).not.toContain("source=");
+  });
+
   it("maps the Category AI filter to genuine source=ai events", async () => {
     const fetcher = vi.fn(async (url: string) => url && new Response(JSON.stringify({ status: "ok", events: [], nextBefore: null })));
     vi.stubGlobal("fetch", fetcher);
@@ -432,6 +444,67 @@ describe("activity feed", () => {
     fireEvent.change(screen.getAllByRole("combobox")[0]!, { target: { value: "construction" } });
     await waitFor(() => expect(nav.replace).toHaveBeenCalled());
     expect(String(nav.replace.mock.calls.at(-1)?.[0])).toBe("/activity?category=construction&source=ai");
+  });
+});
+
+describe("town growth", () => {
+  it("shows a confirmed AI wallet decision with its reason and Verify link", async () => {
+    const hash = `0x${"cd".repeat(32)}`;
+    const created = event(12, {
+      id: "wallet-91",
+      kind: "wallet.created",
+      category: "ai",
+      source: "ai",
+      summary: "The AI mind created the permanent wallet for Chog #91 on Monad.",
+      tokenId: "91",
+      buildingId: null,
+      buildingName: null,
+      chainStatus: "confirmed",
+      txHash: hash,
+      txUrl: `https://monadscan.com/tx/${hash}`,
+      mind: { summary: null, rationale: "Chog #91 needs a permanent wallet before any payout." },
+    });
+    const decided = event(11, {
+      kind: "wallet.decided",
+      category: "ai",
+      source: "ai",
+      summary: "The AI mind decided to create a permanent wallet for Chog #91.",
+      tokenId: "91",
+      mind: { summary: null, rationale: "Earlier decision for the same citizen." },
+    });
+    const pending = event(10, {
+      kind: "wallet.decided",
+      category: "ai",
+      source: "ai",
+      summary: "The AI mind decided to create a permanent wallet for Chog #115.",
+      tokenId: "115",
+      mind: { summary: null, rationale: "Chog #115 is enrolled and has no wallet." },
+    });
+    const road = event(4, {
+      kind: "road.placed",
+      category: "construction",
+      source: "ai",
+      summary: "An AI road was placed.",
+      tokenId: null,
+      mind: { summary: null, rationale: "The north path was missing." },
+    });
+    const fetcher = vi.fn(async (url: string) => {
+      const events = String(url).includes("category=construction") ? [road] : [created, decided, pending];
+      return new Response(JSON.stringify({ status: "ok", events, nextBefore: null }));
+    });
+    vi.stubGlobal("fetch", fetcher);
+    render(<GrowthDecisions />);
+    expect(await screen.findByText("Chog #91 needs a permanent wallet before any payout.")).toBeTruthy();
+    expect(document.body.textContent).toContain("The AI mind created the permanent wallet for Chog #91 on Monad.");
+    const verify = screen.getAllByRole("link", { name: "Verify" }).find((link) => link.getAttribute("href") === "/verify/events/wallet-91");
+    expect(verify).toBeTruthy();
+    expect(screen.getByRole("link", { name: /0xcdcdcdcd/ }).getAttribute("href")).toBe(`https://monadscan.com/tx/${hash}`);
+    expect(screen.queryByText("Earlier decision for the same citizen.")).toBeNull();
+    expect(screen.getByText("Chog #115 is enrolled and has no wallet.")).toBeTruthy();
+    expect(screen.getByText("An AI road was placed.")).toBeTruthy();
+    expect(screen.getAllByText("AI", { selector: "span" }).length).toBeGreaterThan(0);
+    expect(String(fetcher.mock.calls[0]?.[0])).toContain("category=construction");
+    expect(fetcher.mock.calls.some((call) => String(call[0]).includes("source=ai") && !String(call[0]).includes("category="))).toBe(true);
   });
 });
 
