@@ -14,12 +14,16 @@ import type { BuildingView, CitizenView } from "@/lib/world/types";
 export const WORLD_ACTIONS = ["work", "shop", "socialize", "rest", "sleep"] as const;
 export type WorldAction = (typeof WORLD_ACTIONS)[number];
 
+/** Walks the tick can apply. Daily life stays on WORLD_ACTIONS so the parity check does not grow. */
+export const INTENT_ACTIONS = [...WORLD_ACTIONS, "visit", "watch", "detain"] as const;
+export type IntentAction = (typeof INTENT_ACTIONS)[number];
+
 /** Who made the decision. `ai` is reserved for the integrated AI mind. */
 export type DecisionSource = "ai" | "system";
 
 export type ActionProposal = {
   tokenId: string;
-  action: WorldAction;
+  action: IntentAction;
   buildingId: string;
   source: DecisionSource;
   /** ai_decisions.id that explains this proposal. Required when source is ai. */
@@ -89,23 +93,53 @@ export function precheckAction(
       }
       return hour < 7 || hour >= 20 ? no("the market is closed") : { ok: true };
     case "socialize":
-      if (building.kind !== "commons") {
-        return no("not a public space");
+      if (building.kind === "commons") {
+        return hour < 7 ? no("too early to gather") : { ok: true };
       }
-      return hour < 7 ? no("too early to gather") : { ok: true };
+      if (building.kind === "park" || building.kind === "amusement") {
+        if (building.status !== "active") {
+          return no("building is not complete");
+        }
+        return hour < 7 ? no("too early to gather") : { ok: true };
+      }
+      return no("not a public space");
     case "rest":
     case "sleep":
       if (citizen.homeId) {
         return citizen.homeId === building.id ? { ok: true } : no("not this citizen's home");
       }
       return building.kind === "hall" ? { ok: true } : no("a citizen without a home rests at Commons Hall");
+    case "visit":
+      if (building.kind !== "bank") {
+        return no("not a bank");
+      }
+      if (building.status !== "active") {
+        return no("building is not complete");
+      }
+      return hour < 7 || hour >= 20 ? no("the bank is closed") : { ok: true };
+    case "watch":
+      if (building.kind !== "storehouse" && building.kind !== "commons") {
+        return no("watch stands at the storehouse or the square");
+      }
+      if (building.status !== "active") {
+        return no("building is not complete");
+      }
+      if (hour < 5 || hour >= 18) {
+        return no("outside working hours");
+      }
+      if (citizen.dayIndex === worldDay(worldS) && citizen.shiftsToday >= 2) {
+        return no("two shifts already worked today");
+      }
+      return { ok: true };
+    case "detain":
+      return no("no sentence is stored");
     default:
       return no("unknown action");
   }
 }
 
 export function validateProposal(proposal: ActionProposal): ActionCheck {
-  if (!WORLD_ACTIONS.includes(proposal.action)) {
+  if (!(INTENT_ACTIONS as readonly string[]).includes(proposal.action)) {
     return { ok: false, reason: "unknown action" };
   }
   if (!/^[0-9]{1,78}$/.test(proposal.tokenId)) {

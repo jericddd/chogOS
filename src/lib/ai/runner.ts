@@ -7,6 +7,7 @@ import { buildDecisionContext, contextCommitment, decisionMessages } from "@/lib
 import { acceptGrowth, GROWTH_RESPONSE_SCHEMA, growthBlocker, landCanGrow } from "@/lib/ai/growth";
 import {
   isActivationAction,
+  isCivicAction,
   isEconomyAction,
   isWorldAction,
   jsonSafeDecision,
@@ -33,6 +34,7 @@ import type { PersonalityTraits } from "@/lib/ai/personality";
 import { readAppConfig, type AppConfig } from "@/lib/config/env";
 import { createServiceRoleClient } from "@/lib/db/client";
 import { precheckAction, validateProposal, type ActionProposal } from "@/lib/world/actions";
+import { civicMenu, readCivicFacts, type CivicFacts } from "@/lib/world/civic";
 import { submitIntent } from "@/lib/world/intents";
 import {
   activeTownNeeds,
@@ -363,6 +365,131 @@ async function linkTownNeed(
     return;
   }
   await client.rpc("world_link_town_need", { p_need: match.needType, p_decision: decisionId });
+}
+
+async function loadCivicFacts(client: Client): Promise<CivicFacts | null> {
+  const { data, error } = await client.rpc("world_civic_snapshot");
+  if (error || data == null) {
+    return null;
+  }
+  return readCivicFacts(data);
+}
+
+async function citizenByToken(client: Client, tokenId: string | null): Promise<string | null> {
+  if (!tokenId) {
+    return null;
+  }
+  const { data } = await client.from("citizens").select("id").eq("token_id", tokenId).limit(1).maybeSingle();
+  const id = data && typeof data === "object" && "id" in data ? data.id : null;
+  return typeof id === "string" ? id : null;
+}
+
+async function latestBreachCitizen(client: Client): Promise<string | null> {
+  const { data } = await client
+    .from("civilization_events")
+    .select("actor_citizen_id")
+    .eq("kind", "civic.breach")
+    .not("actor_citizen_id", "is", null)
+    .order("seq", { ascending: false })
+    .limit(1);
+  const row = Array.isArray(data) ? data[0] : null;
+  const id = row && typeof row === "object" && "actor_citizen_id" in row ? row.actor_citizen_id : null;
+  return typeof id === "string" ? id : null;
+}
+
+type CivicApply =
+  | { ok: true; detail: string; queued: boolean; intentId: string | null }
+  | { ok: false; detail: string };
+
+async function applyCivicDecision(
+  client: Client,
+  decisionId: string,
+  tokenId: string,
+  citizenId: string,
+  decision: ParsedDecision,
+  bundle: {
+    citizen: CitizenView;
+    buildings: BuildingView[];
+    worldS: number;
+    stock: { wood: number; stone: number };
+  },
+): Promise<CivicApply> {
+  if (decision.action === "visit" || decision.action === "watch") {
+    const building = bundle.buildings.find((item) => item.id === decision.buildingId);
+    const proposal: ActionProposal = {
+      tokenId,
+      action: decision.action,
+      buildingId: decision.buildingId,
+      source: "ai",
+      decisionId,
+      expiresAt: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
+    };
+    const shape = validateProposal(proposal);
+    if (!shape.ok) {
+      return { ok: false, detail: shape.reason };
+    }
+    const precheck = precheckAction(proposal, bundle.citizen, building, bundle.worldS, bundle.stock);
+    if (!precheck.ok) {
+      return { ok: false, detail: precheck.reason };
+    }
+    const submitted = await submitIntent(proposal);
+    if (!submitted.ok) {
+      return { ok: false, detail: submitted.detail };
+    }
+    return { ok: true, detail: `${decision.action} at ${decision.buildingId}`, queued: true, intentId: submitted.intentId };
+  }
+
+  if (decision.action === "proclaim" || decision.action === "amend" || decision.action === "pardon") {
+    if (!decision.lawCode) {
+      return { ok: false, detail: "that is not an open law in the catalog" };
+    }
+    const reason = decision.rationale.trim();
+    const { data, error } =
+      decision.action === "proclaim"
+        ? await client.rpc("world_proclaim_law", {
+            p_code: decision.lawCode,
+            p_reason: reason,
+            p_citizen: citizenId,
+            p_decision: decisionId,
+          })
+        : await client.rpc("world_amend_law", {
+            p_code: decision.lawCode,
+            p_reason: reason,
+            p_citizen: citizenId,
+            p_decision: decisionId,
+            p_pardon: decision.action === "pardon",
+          });
+    return civicRpcResult(data, error, decision.action === "proclaim" ? `Proclaimed ${decision.lawCode}` : `${decision.action} ${decision.lawCode}`);
+  }
+
+  if (decision.action === "levy" || decision.action === "detain") {
+    const subject = (await citizenByToken(client, decision.subjectTokenId)) ?? (await latestBreachCitizen(client));
+    if (!subject) {
+      return { ok: false, detail: "no breach is stored" };
+    }
+    const { data, error } =
+      decision.action === "levy"
+        ? await client.rpc("world_levy_fine", { p_citizen: subject, p_decision: decisionId })
+        : await client.rpc("world_detain_citizen", { p_citizen: subject, p_decision: decisionId });
+    return civicRpcResult(data, error, decision.action === "levy" ? "Levied the ration fine" : "Sentenced a citizen to the jail");
+  }
+
+  return { ok: false, detail: "unsupported action" };
+}
+
+function civicRpcResult(
+  data: unknown,
+  error: { message?: string } | null,
+  detail: string,
+): CivicApply {
+  if (error) {
+    return { ok: false, detail: "the civic record could not be written" };
+  }
+  const body = data && typeof data === "object" ? (data as { ok?: boolean; reason?: string }) : null;
+  if (!body?.ok) {
+    return { ok: false, detail: body?.reason ?? "the civic record could not be written" };
+  }
+  return { ok: true, detail, queued: false, intentId: null };
 }
 
 export async function runAiMind(
@@ -720,7 +847,19 @@ export async function runAiMind(
         const plots = surveyedPlots(overlay);
         const townNeeds = await loadTownNeeds(client, bundle.buildings, bundle.stock, bundle.occupiedPlots, overlay);
         const townProjects = await loadTownProjects(client);
-        const canBuildKinds = feasibleConstructKinds(bundle.buildings, bundle.occupiedPlots, bundle.stock, overlay);
+        const civic = await loadCivicFacts(client);
+        let canBuildKinds = feasibleConstructKinds(bundle.buildings, bundle.occupiedPlots, bundle.stock, overlay);
+        if (
+          civic &&
+          civicMenu(civic).raiseJail &&
+          materialsAllowBuilderShift(bundle.stock) &&
+          !bundle.buildings.some((building) => building.kind === "jail")
+        ) {
+          const jailPlan = planConstruction(bundle.buildings, bundle.occupiedPlots, "jail", overlay);
+          if (jailPlan.ok) {
+            canBuildKinds = [...canBuildKinds, "jail"];
+          }
+        }
         const eligibleStubs = bundle.roadsReady
           ? eligibleRoadStubs({
               placedStubIds: bundle.placedStubIds,
@@ -751,6 +890,7 @@ export async function runAiMind(
           })),
           completedRoadIds: [...bundle.placedStubIds],
           townProjects,
+          civic: civic ?? undefined,
         });
         const commitment = contextCommitment(context);
         const messages = decisionMessages(context, config.aiMaxPromptChars);
@@ -918,6 +1058,41 @@ export async function runAiMind(
             provider: completion.provider,
           })
           .eq("id", decisionId);
+
+        if (isCivicAction(parsed.decision.action)) {
+          const applied = await applyCivicDecision(
+            client,
+            decisionId,
+            String(row.token_id),
+            row.claimed_citizen_id,
+            parsed.decision,
+            bundle,
+          );
+          if (!applied.ok) {
+            await client
+              .from("ai_decisions")
+              .update({ status: "rejected", validation_result: applied.detail })
+              .eq("id", decisionId);
+            report.rejected += 1;
+            report.decisions.push({ tokenId: row.token_id, status: "rejected", detail: applied.detail });
+            continue;
+          }
+          await client
+            .from("ai_decisions")
+            .update({
+              status: applied.queued ? "queued" : "executed",
+              intent_id: applied.intentId,
+              validation_result: applied.queued ? null : applied.detail,
+            })
+            .eq("id", decisionId);
+          report.submitted += 1;
+          report.decisions.push({
+            tokenId: row.token_id,
+            status: applied.queued ? "queued" : "executed",
+            detail: applied.detail,
+          });
+          continue;
+        }
 
         if (isActivationAction(parsed.decision.action)) {
           const draft = activationDraftFromDecision({

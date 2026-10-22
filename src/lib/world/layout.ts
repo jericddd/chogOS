@@ -24,13 +24,24 @@ export type BuildingKind =
   | "quarry"
   | "workshop"
   | "storehouse"
-  | "market";
+  | "market"
+  | "park"
+  | "amusement"
+  | "bank"
+  | "jail";
 
 export type WorkRole = "farmer" | "woodcutter" | "stonecutter" | "crafter" | "merchant" | "builder";
 
-/** Kinds the Phase 5a engine may place on a surveyed lot. The model may pick one of these; it may not pick coordinates. */
-export const CONSTRUCT_KINDS = ["house", "farm", "workshop"] as const;
+/**
+ * Kinds a surveyed lot can hold. The model names one. It does not pick the lot.
+ * Jail is in this list so the ground can hold it, and the tick refuses it
+ * until a law and an unpaid fine are stored.
+ */
+export const CONSTRUCT_KINDS = ["house", "farm", "workshop", "park", "amusement", "bank", "jail"] as const;
 export type ConstructKind = (typeof CONSTRUCT_KINDS)[number];
+
+/** Places the mind may raise before any statute exists. */
+export const OPEN_CONSTRUCT_KINDS = ["house", "farm", "workshop", "park", "amusement", "bank"] as const;
 
 export type Rect = { x: number; y: number; w: number; h: number };
 export type Tile = { x: number; y: number };

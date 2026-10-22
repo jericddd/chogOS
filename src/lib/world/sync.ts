@@ -55,6 +55,20 @@ export const ONCHAIN_CATEGORY_FILTER =
 
 const TOWN_GROWTH_KINDS = new Set(["wallet.created", "wallet.decided"]);
 
+/** Civic acts the mind recorded. Simulation breaches stay on the activity feed. */
+const CIVIC_GROWTH_KINDS = new Set([
+  "civic.law_proclaimed",
+  "civic.fine",
+  "civic.fine_unpaid",
+  "civic.sentenced",
+  "civic.released",
+  "civic.law_amended",
+  "civic.pardoned",
+  "civic.watch",
+  "civic.marked",
+  "citizen.bank_visit",
+]);
+
 /** Roads and buildings, plus AI wallet decisions. A created wallet replaces that token's earlier decision. */
 export function townGrowthEvents(events: readonly WorldEventView[], limit = 8): WorldEventView[] {
   const createdTokens = new Set(
@@ -68,7 +82,8 @@ export function townGrowthEvents(events: readonly WorldEventView[], limit = 8): 
     }
     const construction = event.category === "construction";
     const wallet = TOWN_GROWTH_KINDS.has(event.kind);
-    if (!construction && !wallet) {
+    const civic = CIVIC_GROWTH_KINDS.has(event.kind);
+    if (!construction && !wallet && !civic) {
       return false;
     }
     if (event.kind === "wallet.decided" && event.tokenId && createdTokens.has(event.tokenId)) {

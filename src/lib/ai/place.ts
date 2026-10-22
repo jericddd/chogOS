@@ -1,5 +1,6 @@
 import type { DecisionContext } from "@/lib/ai/context";
 import { worldDay } from "@/lib/world/clock";
+import { civicLines } from "@/lib/world/civic";
 import { GRID_H, GRID_W, REGIONS, type BuildingKind } from "@/lib/world/layout";
 import { KIND_LABEL } from "@/lib/world/present";
 
@@ -18,6 +19,10 @@ const LAND_USE: Record<BuildingKind, string> = {
   workshop: "tools",
   storehouse: "the town's stock",
   market: "trade",
+  park: "open leisure after 07:00",
+  amusement: "open leisure after 07:00",
+  bank: "a door onto the public books, which does not move money",
+  jail: "a room for a sentence, with no job",
 };
 
 /**
@@ -105,6 +110,7 @@ export function describePlace(context: DecisionContext): string {
   if (context.goals.length > 0) {
     lines.push(`Goals still open: ${context.goals.map((goal) => goal.title).join("; ")}.`);
   }
+  lines.push(...civicLines(context.civic));
   const traits = context.personality;
   lines.push(
     `Temperament, on a 0–100 scale: curiosity ${traits.curiosity}, planning ${traits.planning}, caution ${traits.caution}, industriousness ${traits.industriousness}, resourcefulness ${traits.resourcefulness}, sociability ${traits.sociability}, cooperation ${traits.cooperation}.`,

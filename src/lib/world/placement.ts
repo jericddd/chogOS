@@ -103,15 +103,19 @@ export function nextHouseId(existingIds: readonly string[]): string {
   return nextConstructionId("house", existingIds);
 }
 
+const CONSTRUCTION_TITLE: Record<ConstructKind, string> = {
+  house: "House",
+  farm: "Farm",
+  workshop: "Workshop",
+  park: "Park",
+  amusement: "Amusement",
+  bank: "Bank",
+  jail: "Jail",
+};
+
 export function constructionName(kind: ConstructKind, buildingId: string): string {
   const index = /^[a-z]+-(\d+)$/.exec(buildingId)?.[1] ?? "01";
-  if (kind === "house") {
-    return `House ${index}`;
-  }
-  if (kind === "farm") {
-    return `Farm ${index}`;
-  }
-  return `Workshop ${index}`;
+  return `${CONSTRUCTION_TITLE[kind]} ${index}`;
 }
 
 export type PlacementPlan = {

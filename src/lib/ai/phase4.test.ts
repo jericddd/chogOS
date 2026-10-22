@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { evaluateBudget, haltFromError, isRetriableHaltReason, usagePeriods } from "@/lib/ai/budget";
 import { buildDecisionContext, decisionMessages } from "@/lib/ai/context";
+import { CONSTRUCT_KINDS } from "@/lib/world/layout";
 import { acceptGrowth, growthBlocker, landCanGrow } from "@/lib/ai/growth";
 import { describePlace } from "@/lib/ai/place";
 import { preferredFeasibleAction, rankActions, type PersonalityTraits } from "@/lib/ai/personality";
@@ -573,7 +574,7 @@ describe("decision context", () => {
     expect(context.suggested).toBe("work");
     expect(context.walletActivation.state).toBe("unassigned");
     expect(context.walletActivation.eligibleToRequest).toBe(false);
-    expect(context.construction.validKinds).toEqual(["house", "farm", "workshop"]);
+    expect(context.construction.validKinds).toEqual([...CONSTRUCT_KINDS]);
     expect(context.construction.suggestedBuildKind).toBe("workshop");
     const hungry = buildDecisionContext({
       citizenId: "11111111-1111-4111-8111-111111111111",
