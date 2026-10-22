@@ -25,7 +25,7 @@ import {
   type TownProjectRow,
   type WorldStateRow,
 } from "@/lib/world/rows";
-import { resolveEventFilter } from "@/lib/world/sync";
+import { ONCHAIN_CATEGORY_FILTER, resolveEventFilter } from "@/lib/world/sync";
 import type {
   CitizenView,
   EventFilter,
@@ -132,7 +132,9 @@ function applyFilter<Q extends { eq: (column: string, value: string) => Q; or: (
 ): Q {
   const resolved = resolveEventFilter(filter);
   let next = query;
-  if (resolved.category) {
+  if (resolved.category === "onchain") {
+    next = next.or(ONCHAIN_CATEGORY_FILTER);
+  } else if (resolved.category) {
     next = next.eq("category", resolved.category);
   }
   if (resolved.source) {

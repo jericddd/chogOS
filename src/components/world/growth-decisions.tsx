@@ -3,11 +3,20 @@
 import { useEffect, useState } from "react";
 import { EventItem } from "@/components/world/event-item";
 import { useNow } from "@/components/world/use-now";
+import { townGrowthEvents } from "@/lib/world/sync";
 import type { EventPage, WorldEventView } from "@/lib/world/types";
 
+const CONSTRUCTION_URL = "/api/world/events?source=ai&category=construction&limit=5";
+const DECISIONS_URL = "/api/world/events?source=ai&limit=50";
+
+async function readPage(url: string): Promise<EventPage> {
+  const response = await fetch(url, { cache: "no-store" });
+  return (await response.json()) as EventPage;
+}
+
 /**
- * Real AI construction already stored in history, including the model's own
- * reason when the event points at a decision. Does not invent a row.
+ * Recorded AI construction and citizen-wallet decisions, including the model's
+ * own reason when the event points at a decision. Does not invent a row.
  */
 export function GrowthDecisions({ dock = false, inactive = false }: { dock?: boolean; inactive?: boolean }) {
   const now = useNow(15_000);
@@ -16,18 +25,21 @@ export function GrowthDecisions({ dock = false, inactive = false }: { dock?: boo
 
   useEffect(() => {
     let cancelled = false;
-    fetch("/api/world/events?source=ai&category=construction&limit=5", { cache: "no-store" })
-      .then(async (response) => (await response.json()) as EventPage)
-      .then((page) => {
+    Promise.all([readPage(CONSTRUCTION_URL), readPage(DECISIONS_URL)])
+      .then(([construction, decisions]) => {
         if (cancelled) {
           return;
         }
-        if (page.status !== "ok") {
-          setDetail(page.detail);
+        const ready = [construction, decisions].filter(
+          (page): page is Extract<EventPage, { status: "ok" }> => page.status === "ok",
+        );
+        if (ready.length === 0) {
+          const detailFor = (page: EventPage) => (page.status === "ok" ? "" : page.detail);
+          setDetail(detailFor(construction) || detailFor(decisions) || "Growth decisions could not be read.");
           setEvents([]);
           return;
         }
-        setEvents(page.events);
+        setEvents(townGrowthEvents(ready.flatMap((page) => page.events), dock ? 8 : 12));
       })
       .catch(() => {
         if (!cancelled) {
@@ -38,13 +50,13 @@ export function GrowthDecisions({ dock = false, inactive = false }: { dock?: boo
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [dock]);
 
   const empty =
     detail ||
     (dock
-      ? "No AI construction is recorded yet."
-      : "No AI construction is recorded yet. A growth decision appears here after the mind places a road or a building.");
+      ? "No AI town decision is recorded yet."
+      : "No AI town decision is recorded yet. A row appears here after the mind places a road or building, or records a citizen wallet decision.");
 
   return (
     <section
@@ -57,8 +69,9 @@ export function GrowthDecisions({ dock = false, inactive = false }: { dock?: boo
         </h2>
         {dock ? null : (
           <p className="mt-1 text-sm leading-6 text-muted">
-            These are recorded AI construction events. The sentence under a row is the mind&apos;s own reason, when that
-            decision was stored. Sleep, work, and visits stay on the simulation below.
+            These are AI decisions about roads, buildings, and citizen wallets. The sentence under a row is the mind&apos;s
+            own reason, when that decision was stored. Verify opens the stored decision and any Monad receipt. Sleep, work,
+            and visits stay on the simulation below.
           </p>
         )}
       </div>

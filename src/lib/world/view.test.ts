@@ -26,12 +26,15 @@ import {
 } from "@/lib/world/scene";
 import {
   eventFilterFromSearch,
+  isConfirmedAiWallet,
   matchesFilter,
   mergeEvents,
+  ONCHAIN_CATEGORY_FILTER,
   pickAiConstructionEvent,
   receiveLive,
   resolveEventFilter,
   revealPending,
+  townGrowthEvents,
 } from "@/lib/world/sync";
 import type { BuildingView, CitizenView, ClockView, WorldEventView } from "@/lib/world/types";
 
@@ -368,6 +371,96 @@ describe("live merge", () => {
     expect(receiveLive({ shown: [], pending: [] }, [road, social], { category: "ai" }, true).shown.map((e) => e.id)).toEqual([
       "e8",
     ]);
+  });
+
+  it("includes a confirmed AI wallet creation in the Onchain category", () => {
+    const hash = `0x${"ab".repeat(32)}`;
+    const created = event(11, {
+      kind: "wallet.created",
+      category: "ai",
+      source: "ai",
+      chainStatus: "confirmed",
+      txHash: hash,
+      tokenId: "91",
+    });
+    const decided = event(10, {
+      kind: "wallet.decided",
+      category: "ai",
+      source: "ai",
+      tokenId: "91",
+    });
+    const transfer = event(9, {
+      kind: "nft.transferred",
+      category: "onchain",
+      source: "onchain",
+      chainStatus: "confirmed",
+      txHash: hash,
+    });
+    const allocation = event(8, {
+      kind: "treasury.allocation",
+      category: "ai",
+      source: "ai",
+      chainStatus: "offchain",
+    });
+    const observed = event(7, {
+      kind: "wallet.created",
+      category: "ai",
+      source: "ai",
+      chainStatus: "offchain",
+      txHash: null,
+      tokenId: "104",
+    });
+    expect(isConfirmedAiWallet(created)).toBe(true);
+    expect(isConfirmedAiWallet(observed)).toBe(false);
+    expect(ONCHAIN_CATEGORY_FILTER).toBe(
+      'category.eq.onchain,and(source.eq.ai,kind.eq."wallet.created",chain_status.eq.confirmed)',
+    );
+    expect(matchesFilter(created, { category: "onchain" })).toBe(true);
+    expect(matchesFilter(transfer, { category: "onchain" })).toBe(true);
+    expect(matchesFilter(decided, { category: "onchain" })).toBe(false);
+    expect(matchesFilter(allocation, { category: "onchain" })).toBe(false);
+    expect(matchesFilter(observed, { category: "onchain" })).toBe(false);
+    expect(matchesFilter(created, { source: "onchain" })).toBe(false);
+    expect(matchesFilter(created, { category: "onchain", source: "onchain" })).toBe(false);
+    expect(matchesFilter(created, { category: "ai" })).toBe(true);
+    expect(matchesFilter(created, { category: "construction" })).toBe(false);
+    expect(
+      receiveLive({ shown: [], pending: [] }, [created, decided, transfer, allocation], { category: "onchain" }, true).shown.map(
+        (row) => row.id,
+      ),
+    ).toEqual(["e11", "e9"]);
+  });
+
+  it("shows AI wallet decisions in town growth and keeps the confirmed creation over the earlier decision", () => {
+    const hash = `0x${"cd".repeat(32)}`;
+    const created = event(12, {
+      kind: "wallet.created",
+      category: "ai",
+      source: "ai",
+      chainStatus: "confirmed",
+      txHash: hash,
+      tokenId: "91",
+    });
+    const decidedSame = event(11, {
+      kind: "wallet.decided",
+      category: "ai",
+      source: "ai",
+      tokenId: "91",
+    });
+    const decidedOther = event(10, {
+      kind: "wallet.decided",
+      category: "ai",
+      source: "ai",
+      tokenId: "115",
+    });
+    const road = event(4, { kind: "road.placed", category: "construction", source: "ai", tokenId: null });
+    const allocation = event(9, { kind: "treasury.allocation", category: "ai", source: "ai" });
+    const social = event(3, { category: "social", source: "simulation" });
+    expect(townGrowthEvents([decidedSame, created, decidedOther, allocation, road, social]).map((row) => row.seq)).toEqual([
+      12, 10, 4,
+    ]);
+    expect(townGrowthEvents([road], 1)).toEqual([road]);
+    expect(townGrowthEvents([social, allocation])).toEqual([]);
   });
 
   it("picks only a real AI construction event for Verify discovery", () => {
