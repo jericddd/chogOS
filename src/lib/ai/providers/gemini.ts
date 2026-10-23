@@ -162,12 +162,34 @@ export function createGeminiProvider(config: AppConfig): AiProvider {
       }
 
       const timeoutMs = request.timeoutMs ?? config.aiRequestTimeoutMs;
+      const deadlineAt = Date.now() + timeoutMs;
+      const minAttemptMs = 1_000;
       const headers = {
         "x-goog-api-key": apiKey,
         "Content-Type": "application/json",
       };
       const models = withRememberedModel(geminiModelsToTry(configured), rememberedModel);
       let lastFailure: AiProviderError | undefined;
+
+      const readBody = (response: Response, signal: AbortSignal): Promise<string> =>
+        new Promise((resolve, reject) => {
+          const abort = () => reject(Object.assign(new Error("aborted"), { name: "AbortError" }));
+          if (signal.aborted) {
+            abort();
+            return;
+          }
+          signal.addEventListener("abort", abort, { once: true });
+          response.text().then(
+            (text) => {
+              signal.removeEventListener("abort", abort);
+              resolve(text);
+            },
+            (error: unknown) => {
+              signal.removeEventListener("abort", abort);
+              reject(error);
+            },
+          );
+        });
 
       for (const model of models) {
         const generationConfig: Record<string, unknown> = {
@@ -190,8 +212,12 @@ export function createGeminiProvider(config: AppConfig): AiProvider {
         let response: Response | undefined;
 
         for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+          const remaining = deadlineAt - Date.now();
+          if (attempt > 1 && remaining < minAttemptMs) {
+            throw lastFailure ?? new AiProviderError("Gemini request timed out.", "timeout", false);
+          }
           const controller = new AbortController();
-          const timeout = setTimeout(() => controller.abort(), timeoutMs);
+          const timeout = setTimeout(() => controller.abort(), Math.max(1, remaining));
           try {
             response = await fetch(endpoint, {
               method: "POST",
@@ -199,12 +225,16 @@ export function createGeminiProvider(config: AppConfig): AiProvider {
               body: JSON.stringify(payload),
               signal: controller.signal,
             });
+            bodyText = await readBody(response, controller.signal);
           } catch (error) {
             if (error instanceof Error && error.name === "AbortError") {
               throw new AiProviderError("Gemini request timed out.", "timeout", false);
             }
-            if (attempt < maxAttempts) {
-              await new Promise((resolve) => setTimeout(resolve, 800));
+            const pause = Math.min(800, deadlineAt - Date.now() - minAttemptMs);
+            if (attempt < maxAttempts && pause >= 0) {
+              if (pause > 0) {
+                await new Promise((resolve) => setTimeout(resolve, pause));
+              }
               continue;
             }
             throw new AiProviderError("Gemini request failed to reach the API.", "unavailable", false);
@@ -212,7 +242,6 @@ export function createGeminiProvider(config: AppConfig): AiProvider {
             clearTimeout(timeout);
           }
 
-          bodyText = await response.text();
           if (response.ok) {
             let body: unknown;
             try {
@@ -243,8 +272,11 @@ export function createGeminiProvider(config: AppConfig): AiProvider {
             break;
           }
           const retryable = !failure.halt && failure.code === "unavailable" && response.status >= 500;
-          if (retryable && attempt < maxAttempts) {
-            await new Promise((resolve) => setTimeout(resolve, 800));
+          const pause = Math.min(800, deadlineAt - Date.now() - minAttemptMs);
+          if (retryable && attempt < maxAttempts && pause >= 0) {
+            if (pause > 0) {
+              await new Promise((resolve) => setTimeout(resolve, pause));
+            }
             continue;
           }
           throw failure;

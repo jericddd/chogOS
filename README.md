@@ -32,9 +32,9 @@ The website does not sign or broadcast. `POST /api/transactions` returns 403. Th
 
 GitHub Actions on `main` runs `.github/workflows/ai-mind.yml` on the schedule `*/10 * * * *`, and when someone starts it by hand. GitHub may start that schedule later than the expression. The workflow has three jobs:
 
-1. `run` calls the production mind.
-2. `issue` uses the wallet agent key to create a citizen wallet from an accepted issuance decision. The gas key pays that transaction.
-3. `pay` uses the ChogBank authorizer key to sign an accepted MON allocation, and the gas key to submit `distribute`. The agent key is not used for payouts.
+1. `run` calls the production mind. The poke waits up to 290 seconds and retries once. If work is still open at 250 seconds of function time, the route returns the decisions already saved and the next poke continues.
+2. `issue` uses the wallet agent key to create a citizen wallet from an accepted issuance decision. The gas key pays that transaction. This job still runs when the mind poke fails, so a timeout does not leave an accepted wallet uncreated.
+3. `pay` uses the ChogBank authorizer key to sign an accepted MON allocation, and the gas key to submit `distribute`. The agent key is not used for payouts. This job still runs after a failed poke when wallet issuance succeeds.
 
 Those keys are GitHub Actions secrets. They are not in this repository, and the website does not receive them. The agent key can move MON out of a citizen wallet, because `CitizenAccountV3` authorizes calls with that one key. The NFT holder does not control the citizen wallet.
 

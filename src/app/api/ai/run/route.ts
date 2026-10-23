@@ -1,11 +1,17 @@
 import { NextResponse } from "next/server";
 import { bearerMatches } from "@/lib/auth/bearer";
 import { clientKey, rateLimit } from "@/lib/auth/rate-limit";
-import { deadlineForRequest } from "@/lib/ai/invocation";
+import {
+  deadlineForRequest,
+  finishBeforeCutoff,
+  MIND_CUTOFF_REASON,
+  RESPONSE_CUTOFF,
+  responseBudgetForRequest,
+} from "@/lib/ai/invocation";
 import { runAiMind } from "@/lib/ai/runner";
 import { readAppConfig } from "@/lib/config/env";
 
-/** Hobby maximum is 300s. The runner stops starting calls before that. */
+/** Hobby maximum is 300s. New Gemini calls stop earlier, and the handler returns a body at the response budget. */
 export const maxDuration = 300;
 
 /**
@@ -37,7 +43,22 @@ async function handle(request: Request): Promise<NextResponse> {
     return denied;
   }
   const config = readAppConfig();
-  const report = await runAiMind(config, deadlineForRequest(request));
+  const outcome = await finishBeforeCutoff(runAiMind(config, deadlineForRequest(request)), responseBudgetForRequest(request));
+  const report =
+    outcome === RESPONSE_CUTOFF
+      ? {
+          status: "idle" as const,
+          provider: config.aiProvider,
+          model: config.aiModel ?? null,
+          reason: MIND_CUTOFF_REASON,
+          claimed: 0,
+          inferred: 0,
+          submitted: 0,
+          constructed: 0,
+          rejected: 0,
+          decisions: [],
+        }
+      : outcome;
   const status =
     report.status === "unconfigured" ? 503 : report.status === "disabled" ? 403 : report.status === "error" ? 502 : 200;
   return NextResponse.json({ ok: report.status === "ran" || report.status === "idle", report }, { status });

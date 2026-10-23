@@ -8,10 +8,16 @@ import { preferredFeasibleAction, rankActions, type PersonalityTraits } from "@/
 import {
   AI_INVOCATION_DEADLINE_MS,
   AI_INVOCATION_DEADLINE_SHORT_MS,
+  AI_RESPONSE_BUDGET_MS,
+  AI_RESPONSE_BUDGET_SHORT_MS,
   FREE_TIER_REQUEST_GAP_MS,
+  MIND_CUTOFF_REASON,
+  RESPONSE_CUTOFF,
   awaitFreeTierSlot,
   deadlineForRequest,
+  finishBeforeCutoff,
   freeTierWaitMs,
+  responseBudgetForRequest,
   timeoutWithinDeadline,
 } from "@/lib/ai/invocation";
 import {
@@ -420,6 +426,50 @@ describe("Gemini adapter", () => {
     expect(fetchSpy).toHaveBeenCalledTimes(1);
   });
 
+  it("stops a second Gemini attempt when the shared timeout is already spent", async () => {
+    const fetchSpy = vi.fn(async () => new Response("unavailable", { status: 503 }));
+    vi.stubGlobal("fetch", fetchSpy);
+    const config = readAppConfig({
+      AI_PROVIDER: "gemini",
+      AI_API_KEY: "test-key",
+    } as unknown as NodeJS.ProcessEnv);
+    await expect(
+      createGeminiProvider(config).complete({
+        purpose: "x",
+        messages: [{ role: "user", content: "x" }],
+        timeoutMs: 500,
+      }),
+    ).rejects.toMatchObject({ code: "unavailable", halt: false });
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("aborts a Gemini body that never arrives and does not open another attempt", async () => {
+    vi.useFakeTimers();
+    try {
+      const fetchSpy = vi.fn(async () => ({
+        ok: true,
+        status: 200,
+        text: () => new Promise<string>(() => {}),
+      }));
+      vi.stubGlobal("fetch", fetchSpy);
+      const config = readAppConfig({
+        AI_PROVIDER: "gemini",
+        AI_API_KEY: "test-key",
+      } as unknown as NodeJS.ProcessEnv);
+      const pending = createGeminiProvider(config).complete({
+        purpose: "x",
+        messages: [{ role: "user", content: "x" }],
+        timeoutMs: 5_000,
+      });
+      const expectation = expect(pending).rejects.toMatchObject({ code: "timeout", halt: false });
+      await vi.advanceTimersByTimeAsync(5_000);
+      await expectation;
+      expect(fetchSpy).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("does not call Ajax or an unconfigured provider", async () => {
     const fetchSpy = vi.spyOn(globalThis, "fetch");
     await expect(
@@ -450,6 +500,25 @@ describe("budgets", () => {
     expect(config.aiMaxOutputTokens).toBe(2048);
     expect(AI_INVOCATION_DEADLINE_MS).toBe(240_000);
     expect(AI_INVOCATION_DEADLINE_SHORT_MS).toBe(80_000);
+    expect(AI_RESPONSE_BUDGET_MS).toBe(250_000);
+    expect(AI_RESPONSE_BUDGET_SHORT_MS).toBe(85_000);
+    expect(responseBudgetForRequest(new Request("http://x"))).toBe(AI_RESPONSE_BUDGET_SHORT_MS);
+    expect(responseBudgetForRequest(new Request("http://x", { headers: { "x-chog-ai-wait": "long" } }))).toBe(
+      AI_RESPONSE_BUDGET_MS,
+    );
+    const cutoff = finishBeforeCutoff(new Promise(() => {}), AI_RESPONSE_BUDGET_MS, (_ms, fire) => {
+      fire();
+      return () => {};
+    });
+    await expect(cutoff).resolves.toBe(RESPONSE_CUTOFF);
+    let cancelled = false;
+    await expect(
+      finishBeforeCutoff(Promise.resolve("saved"), AI_RESPONSE_BUDGET_MS, () => () => {
+        cancelled = true;
+      }),
+    ).resolves.toBe("saved");
+    expect(cancelled).toBe(true);
+    expect(MIND_CUTOFF_REASON).toMatch(/Decisions already saved stay saved/);
     expect(deadlineForRequest(new Request("http://x"))).toBe(AI_INVOCATION_DEADLINE_SHORT_MS);
     expect(deadlineForRequest(new Request("http://x", { headers: { "x-chog-ai-wait": "long" } }))).toBe(
       AI_INVOCATION_DEADLINE_MS,

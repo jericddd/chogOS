@@ -1,7 +1,7 @@
 /**
  * Stop starting Gemini calls before the route's maxDuration. Hobby allows 300s.
- * Four minutes leaves one in-flight call, up to the 40s request timeout, time
- * to finish. The GitHub poke waits 290s for that body.
+ * The GitHub poke waits 290s, and that wait includes cold start. New calls stop
+ * at four minutes. One in-flight call still finishes inside the response budget.
  */
 export const AI_INVOCATION_DEADLINE_MS = 240_000;
 /**
@@ -9,7 +9,18 @@ export const AI_INVOCATION_DEADLINE_MS = 240_000;
  * sends x-chog-ai-wait: long and waits 290s.
  */
 export const AI_INVOCATION_DEADLINE_SHORT_MS = 80_000;
+/**
+ * Return a JSON body while the GitHub curl is still open. 250s of function
+ * time leaves room for a cold start inside the 290s curl and stays under the
+ * 300s platform limit. Decisions already saved stay saved.
+ */
+export const AI_RESPONSE_BUDGET_MS = 250_000;
+/** Short callers hang up near 90s. Return while that connection is still open. */
+export const AI_RESPONSE_BUDGET_SHORT_MS = 85_000;
+export const MIND_CUTOFF_REASON =
+  "This poke returned before the platform cutoff. Decisions already saved stay saved. The next poke continues.";
 export const AI_LONG_WAIT_HEADER = "x-chog-ai-wait";
+export const RESPONSE_CUTOFF = Symbol("chog-response-cutoff");
 /** Five requests per minute. The tighter free-tier pace for Gemini Flash. */
 export const FREE_TIER_REQUEST_GAP_MS = 12_000;
 const RESERVE_MS = 2_500;
@@ -26,6 +37,32 @@ export function deadlineForRequest(request: Request): number {
   return request.headers.get(AI_LONG_WAIT_HEADER) === "long"
     ? AI_INVOCATION_DEADLINE_MS
     : AI_INVOCATION_DEADLINE_SHORT_MS;
+}
+
+export function responseBudgetForRequest(request: Request): number {
+  return request.headers.get(AI_LONG_WAIT_HEADER) === "long"
+    ? AI_RESPONSE_BUDGET_MS
+    : AI_RESPONSE_BUDGET_SHORT_MS;
+}
+
+/**
+ * Resolve with the mind report, or with RESPONSE_CUTOFF when the budget ends
+ * first. The caller returns that cutoff as a normal idle body so the platform
+ * does not discard the poke with zero bytes.
+ */
+export function finishBeforeCutoff<T>(
+  work: Promise<T>,
+  budgetMs: number,
+  schedule: (ms: number, fire: () => void) => () => void = (ms, fire) => {
+    const timer = setTimeout(fire, ms);
+    return () => clearTimeout(timer);
+  },
+): Promise<T | typeof RESPONSE_CUTOFF> {
+  let cancel = () => {};
+  const cutoff = new Promise<typeof RESPONSE_CUTOFF>((resolve) => {
+    cancel = schedule(Math.max(0, budgetMs), () => resolve(RESPONSE_CUTOFF));
+  });
+  return Promise.race([work, cutoff]).finally(() => cancel());
 }
 
 /**
