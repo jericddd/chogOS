@@ -38,11 +38,13 @@ jobs:
             fi
             exit 0
           fi
+          # Vercel allows 300s. The runner stops starting Gemini calls at 240s,
+          # then one call can still finish. Wait 290s so that body comes back.
           code="$(curl -sS -o /tmp/ai-mind.json -w "%{http_code}" -X POST \
             -H "Authorization: Bearer ${AI_RUNNER_SECRET}" \
             -H "Content-Type: application/json" \
             -H "x-chog-ai-wait: long" \
-            --max-time 260 \
+            --max-time 290 \
             "$url")"
           python3 -c 'from pathlib import Path; print(Path("/tmp/ai-mind.json").read_text()[:2000])'
           echo "http $code"

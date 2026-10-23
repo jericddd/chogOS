@@ -1,12 +1,12 @@
 /**
  * Stop starting Gemini calls before the route's maxDuration. Hobby allows 300s.
- * Four minutes leaves the in-flight call time to finish before the GitHub poke
- * stops waiting at 260s.
+ * Four minutes leaves one in-flight call, up to the 40s request timeout, time
+ * to finish. The GitHub poke waits 290s for that body.
  */
 export const AI_INVOCATION_DEADLINE_MS = 240_000;
 /**
- * Used when the caller will hang up at 90s. The GitHub timer on main still
- * does that until its workflow asks for the long wait.
+ * Used when the caller does not send the long-wait header. The GitHub workflow
+ * sends x-chog-ai-wait: long and waits 290s.
  */
 export const AI_INVOCATION_DEADLINE_SHORT_MS = 80_000;
 export const AI_LONG_WAIT_HEADER = "x-chog-ai-wait";
