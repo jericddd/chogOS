@@ -96,6 +96,6 @@ describe("AI runner route", () => {
       }),
     );
     expect(longWait.status).toBe(403);
-    expect(runAiMind.mock.calls[1]?.[1]).toBe(240_000);
+    expect(runAiMind.mock.calls[1]?.[1]).toBe(200_000);
   });
 });

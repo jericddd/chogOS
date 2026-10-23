@@ -77,7 +77,7 @@ describe("parks, the bank door, and civic records", () => {
         JSON.stringify(jailPlan.plan.routes),
       ],
     );
-    expect(refusedJail.rows[0]!.r).toMatchObject({ ok: false, reason: "a jail waits until a law is proclaimed" });
+    expect(refusedJail.rows[0]!.r).toMatchObject({ ok: false, reason: "jail construction is disabled" });
 
     const early = await db.query<{ r: { ok: boolean; reason?: string } }>(
       "select world_proclaim_law('ration_fine', 'The storehouse is short and a breach is stored.', $1, null) as r",
@@ -154,53 +154,37 @@ describe("parks, the bank door, and civic records", () => {
         JSON.stringify(jailPlan.plan.routes),
       ],
     );
-    expect(placed.rows[0]!.r.ok).toBe(true);
-    await db.query(
-      "update world_buildings set status = 'active', construction_progress = 100, completed_at = now() where id = $1",
-      [jailPlan.plan.buildingId],
-    );
-    await db.query("update citizen_world_state set role = null, work_id = null where role = 'builder' and work_id = $1", [
-      jailPlan.plan.buildingId,
-    ]);
-    const [farm] = await rows<{ id: string }>(db, "select id from world_buildings where kind = 'farm' and status = 'active' order by id limit 1");
-    await db.query("update citizen_world_state set role = 'farmer', work_id = $2 where citizen_id = $1", [
-      citizen!.citizen_id,
-      farm!.id,
-    ]);
-    const sentenced = await db.query<{ r: { ok: boolean; reason?: string; jailId?: string } }>(
+    expect(placed.rows[0]!.r).toMatchObject({ ok: false, reason: "jail construction is disabled" });
+    const sentenced = await db.query<{ r: { ok: boolean; reason?: string } }>(
       "select world_detain_citizen($1, null) as r",
       [citizen!.citizen_id],
     );
-    expect(sentenced.rows[0]!.r.ok).toBe(true);
+    expect(sentenced.rows[0]!.r).toMatchObject({ ok: false, reason: "detention is disabled" });
+    const fined = await db.query<{ r: { ok: boolean; reason?: string } }>("select world_levy_fine($1, null) as r", [
+      citizen!.citizen_id,
+    ]);
+    expect(fined.rows[0]!.r).toMatchObject({ ok: false, reason: "punitive fines are disabled" });
+    await db.query(
+      `insert into world_buildings (
+         id, layout_version, kind, name, x, y, w, h, door_x, door_y, capacity, status
+       )
+       select 'old-jail', layout_version, 'jail', 'Old Jail', 90, 90, 3, 3, 90, 90, 4, 'active'
+       from world_state where singleton`,
+    );
+    await db.query(
+      `insert into world_sentences (citizen_id, jail_id, offense, started_world_s, ends_world_s)
+       select s.citizen_id, 'old-jail', 'historical', 1, 100000
+       from citizen_world_state s
+       where s.role = 'farmer' and s.activity <> 'unavailable'
+       limit 1`,
+    );
     const amended = await db.query<{ r: { ok: boolean; status?: string; reason?: string } }>(
-      "select world_amend_law('ration_fine', 'Detained farmers left the fields while food was under forty.', $1, null, false) as r",
+      "select world_amend_law('ration_fine', 'The ration rule can still be amended without a jail.', $1, null, false) as r",
       [other!.citizen_id],
     );
     expect(amended.rows[0]!.r).toMatchObject({ ok: true, status: "amended" });
-
-    const [sentence] = await rows<{ ends_world_s: string }>(
-      db,
-      "select ends_world_s::text from world_sentences where citizen_id = $1 and released_at is null",
-      [citizen!.citizen_id],
-    );
-    const ends = Number(sentence!.ends_world_s);
-    await db.query("select world_release_due($1, $2)", [citizen!.citizen_id, ends]);
-    const still = await db.query<{ marked: boolean }>("select world_is_hostile($1, $2) as marked", [
-      citizen!.citizen_id,
-      ends + 86_400,
-    ]);
-    expect(still.rows[0]!.marked).toBe(true);
-    const faded = await db.query<{ marked: boolean }>("select world_is_hostile($1, $2) as marked", [
-      citizen!.citizen_id,
-      ends + 3 * 86_400,
-    ]);
-    expect(faded.rows[0]!.marked).toBe(false);
-    const released = await rows<{ n: number }>(
-      db,
-      "select count(*)::int as n from civilization_events where kind = 'civic.released' and actor_citizen_id = $1",
-      [citizen!.citizen_id],
-    );
-    expect(released[0]!.n).toBe(1);
+    const sentences = await rows<{ n: number }>(db, "select count(*)::int as n from world_sentences");
+    expect(sentences[0]!.n).toBe(1);
 
     await db.query(
       "insert into world_intents (citizen_id, action, building_id, source) values ($1, 'rest', $2, 'system')",
@@ -220,6 +204,7 @@ describe("parks, the bank door, and civic records", () => {
     expect(snapshot.rows[0]!.r.bankId).toBe("chog-bank");
     expect(snapshot.rows[0]!.r.breachTokens).toContain(citizen!.token_id);
     expect(snapshot.rows[0]!.r.laws).toEqual([{ code: "ration_fine", status: "amended" }]);
+    await db.query("update world_sentences set released_at = now(), released_world_s = ends_world_s where released_at is null");
 
     const ran = await runFor(db, START, 90, 5);
     expect(ran.failed).toBe(0);

@@ -2,6 +2,7 @@ import "server-only";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { createServerClient } from "@supabase/ssr";
 import { cookies } from "next/headers";
+import { fetchWithDeadline } from "@/lib/ai/invocation";
 import { readAppConfig } from "@/lib/config/env";
 
 function requireSupabaseUrl(): { url: string; anonKey?: string; serviceRoleKey?: string } {
@@ -21,7 +22,7 @@ function requireSupabaseUrl(): { url: string; anonKey?: string; serviceRoleKey?:
  * Server-only client for trusted jobs. The service role bypasses row level
  * security, so browser code must never import this function.
  */
-export function createServiceRoleClient(): SupabaseClient {
+export function createServiceRoleClient(options?: { timeoutMs?: number }): SupabaseClient {
   const { url, serviceRoleKey } = requireSupabaseUrl();
   if (!serviceRoleKey) {
     throw new Error("Supabase service role is not configured. Set SUPABASE_SERVICE_ROLE_KEY.");
@@ -32,6 +33,7 @@ export function createServiceRoleClient(): SupabaseClient {
       persistSession: false,
       autoRefreshToken: false,
     },
+    global: options?.timeoutMs ? { fetch: fetchWithDeadline(options.timeoutMs) } : undefined,
   });
 }
 

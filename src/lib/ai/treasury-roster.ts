@@ -32,23 +32,36 @@ export function selectRotatedRoster<T extends { tokenId: string }>(entries: read
   return Array.from({ length: limit }, (_, index) => sorted[(start + index) % sorted.length]!);
 }
 
+export type RosterSelection =
+  | { status: "ready"; roster: RosterWallet[]; unread: string[] }
+  | { status: "unreadable"; unread: string[] }
+  | { status: "none"; unread: string[] };
+
 /**
  * Keep citizens whose wallet contract was read and matches that token.
- * An unread set fails closed. A read that finds no code is an empty roster.
+ * One unread wallet is left out of this review. A set where every read failed
+ * stays closed. A read that finds no code is an empty roster.
  */
 export function rosterFromDeployedWallets(input: {
   wallets: readonly RosterWallet[];
   code: ReadonlyMap<string, WalletCode | "unread">;
   cursor: number;
   limit?: number;
-}): { status: "ready"; roster: RosterWallet[] } | { status: "unreadable" } | { status: "none" } {
-  if (input.wallets.length === 0) return { status: "none" };
+}): RosterSelection {
+  if (input.wallets.length === 0) return { status: "none", unread: [] };
   const deployed: RosterWallet[] = [];
+  const unread: string[] = [];
+  let read = 0;
   for (const wallet of input.wallets) {
     const code = input.code.get(wallet.tokenId);
-    if (code == null || code === "unread") return { status: "unreadable" };
+    if (code == null || code === "unread") {
+      unread.push(wallet.tokenId);
+      continue;
+    }
+    read += 1;
     if (code.codeBytes > 0 && code.identityMatches) deployed.push(wallet);
   }
-  if (deployed.length === 0) return { status: "none" };
-  return { status: "ready", roster: selectRotatedRoster(deployed, input.cursor, input.limit ?? 12) };
+  if (read === 0) return { status: "unreadable", unread };
+  if (deployed.length === 0) return { status: "none", unread };
+  return { status: "ready", roster: selectRotatedRoster(deployed, input.cursor, input.limit ?? 12), unread };
 }

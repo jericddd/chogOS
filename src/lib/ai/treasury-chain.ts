@@ -1,5 +1,6 @@
 import "server-only";
 import { createPublicClient, getAddress, http, zeroAddress, type Address } from "viem";
+import { withTimeout } from "@/lib/ai/invocation";
 import { addresses } from "@/lib/blockchain/addresses";
 import { getChain } from "@/lib/blockchain/chains";
 import { MAINNET_CHOG_BANK } from "@/lib/chogbank/bank";
@@ -8,6 +9,12 @@ import type { AppConfig } from "@/lib/config/env";
 import { walletTokenAbi } from "@/lib/wallets/issuer";
 
 const RPC = "https://rpc.monad.xyz";
+const RPC_CALL_MS = 8_000;
+
+function rpcReason(error: unknown): string {
+  const text = error instanceof Error ? error.message : "rpc failed";
+  return text.replace(/https?:\/\/\S+/gi, "[redacted-url]").replace(/\s+/g, " ").trim().slice(0, 180);
+}
 
 const CHOG_ABI = [
   { type: "function", name: "decimals", stateMutability: "view", inputs: [], outputs: [{ type: "uint8" }] },
@@ -69,6 +76,7 @@ export async function readTreasuryChain(config: AppConfig): Promise<{ ok: true; 
     >(
       functionName: T,
     ) => client.readContract({ address: bank, abi: bankAbi, functionName });
+    const bound = <T,>(call: Promise<T>) => withTimeout(call, RPC_CALL_MS, "ChogBank read");
     const [
       authorizer,
       chainId,
@@ -87,22 +95,22 @@ export async function readTreasuryChain(config: AppConfig): Promise<{ ok: true; 
       chogDecimals,
       block,
     ] = await Promise.all([
-      read("authorizer"),
-      read("configuredChainId"),
-      read("genesis"),
-      read("chogToken"),
-      read("windowSeconds"),
-      read("maxAuthorizationTtl"),
-      read("maxPerTxMon"),
-      read("maxCitizenWindowMon"),
-      read("maxAggregateWindowMon"),
-      read("maxPerTxChog"),
-      read("maxCitizenWindowChog"),
-      read("maxAggregateWindowChog"),
-      client.getBalance({ address: bank }),
-      client.readContract({ address: addresses.chogToken, abi: CHOG_ABI, functionName: "balanceOf", args: [bank] }),
-      client.readContract({ address: addresses.chogToken, abi: CHOG_ABI, functionName: "decimals" }),
-      client.getBlock({ blockTag: "latest" }),
+      bound(read("authorizer")),
+      bound(read("configuredChainId")),
+      bound(read("genesis")),
+      bound(read("chogToken")),
+      bound(read("windowSeconds")),
+      bound(read("maxAuthorizationTtl")),
+      bound(read("maxPerTxMon")),
+      bound(read("maxCitizenWindowMon")),
+      bound(read("maxAggregateWindowMon")),
+      bound(read("maxPerTxChog")),
+      bound(read("maxCitizenWindowChog")),
+      bound(read("maxAggregateWindowChog")),
+      bound(client.getBalance({ address: bank })),
+      bound(client.readContract({ address: addresses.chogToken, abi: CHOG_ABI, functionName: "balanceOf", args: [bank] })),
+      bound(client.readContract({ address: addresses.chogToken, abi: CHOG_ABI, functionName: "decimals" })),
+      bound(client.getBlock({ blockTag: "latest" })),
     ]);
     const problem = bankSnapshotProblem({
       authorizer,
@@ -123,12 +131,16 @@ export async function readTreasuryChain(config: AppConfig): Promise<{ ok: true; 
     if (problem) return { ok: false, reason: `${problem} No allocation was requested.` };
     if (windowSeconds <= 0n) return { ok: false, reason: "ChogBank's spending window was not read. No allocation was requested." };
     const windowId = block.timestamp / windowSeconds;
-    const spent = await client.readContract({
-      address: bank,
-      abi: bankAbi,
-      functionName: "spentInWindow",
-      args: [spendKeys(zeroAddress, windowId, 0n).window],
-    });
+    const spent = await withTimeout(
+      client.readContract({
+        address: bank,
+        abi: bankAbi,
+        functionName: "spentInWindow",
+        args: [spendKeys(zeroAddress, windowId, 0n).window],
+      }),
+      RPC_CALL_MS,
+      "ChogBank window spend",
+    );
     return {
       ok: true,
       facts: {
@@ -146,29 +158,44 @@ export async function readTreasuryChain(config: AppConfig): Promise<{ ok: true; 
         observedWindowSpentMon: spent,
       },
     };
-  } catch {
-    return { ok: false, reason: "ChogBank balances and caps were not read. No allocation was requested." };
+  } catch (error) {
+    return {
+      ok: false,
+      reason: `ChogBank balances and caps were not read (${rpcReason(error)}). No allocation was requested.`,
+    };
   }
 }
 
-/** Code and token identity for candidate wallets. Any unread wallet fails the whole set. */
+export type ChainReadGap = { tokenId: string; reason: string };
+
+/** Code and token identity. One failed wallet is reported and left out. */
 export async function observeCitizenWallets(
   config: AppConfig,
   wallets: readonly { tokenId: string; accountAddress: string }[],
-): Promise<Map<string, WalletObservation> | null> {
-  if (wallets.length === 0) return new Map();
+): Promise<{ code: Map<string, WalletObservation>; unread: ChainReadGap[] }> {
+  const code = new Map<string, WalletObservation>();
+  const unread: ChainReadGap[] = [];
+  if (wallets.length === 0) return { code, unread };
   const client = chainClient(config);
-  const observed = new Map<string, WalletObservation>();
-  const chunk = 8;
+  const chunk = 4;
   for (let index = 0; index < wallets.length; index += chunk) {
     const slice = wallets.slice(index, index + chunk);
-    const rows = await Promise.all(slice.map((wallet) => readWalletCode(client, wallet)));
-    for (const row of rows) {
-      if (!row) return null;
-      observed.set(row.tokenId, row.observation);
-    }
+    await Promise.all(
+      slice.map(async (wallet) => {
+        try {
+          const row = await withTimeout(readWalletCode(client, wallet), RPC_CALL_MS, `wallet ${wallet.tokenId}`);
+          if (!row) {
+            unread.push({ tokenId: wallet.tokenId, reason: "the wallet code call failed" });
+            return;
+          }
+          code.set(row.tokenId, row.observation);
+        } catch (error) {
+          unread.push({ tokenId: wallet.tokenId, reason: rpcReason(error) });
+        }
+      }),
+    );
   }
-  return observed;
+  return { code, unread };
 }
 
 async function readWalletCode(
@@ -189,27 +216,38 @@ async function readWalletCode(
   }
 }
 
+/** Per-citizen MON already spent. Unread citizens are listed instead of failing the whole set. */
 export async function readCitizenMonSpent(
   config: AppConfig,
   tokenIds: readonly string[],
   windowId: bigint,
-): Promise<Map<string, bigint> | null> {
-  if (tokenIds.length === 0) return new Map();
-  try {
-    const client = chainClient(config);
-    const entries = await Promise.all(
-      tokenIds.map(async (tokenId) => {
-        const spent = await client.readContract({
-          address: MAINNET_CHOG_BANK,
-          abi: bankAbi,
-          functionName: "spentByCitizen",
-          args: [spendKeys(zeroAddress, windowId, BigInt(tokenId)).citizen],
-        });
-        return [tokenId, spent] as const;
+): Promise<{ spent: Map<string, bigint>; unread: ChainReadGap[] }> {
+  const spent = new Map<string, bigint>();
+  const unread: ChainReadGap[] = [];
+  if (tokenIds.length === 0) return { spent, unread };
+  const client = chainClient(config);
+  const chunk = 4;
+  for (let index = 0; index < tokenIds.length; index += chunk) {
+    const slice = tokenIds.slice(index, index + chunk);
+    await Promise.all(
+      slice.map(async (tokenId) => {
+        try {
+          const value = await withTimeout(
+            client.readContract({
+              address: MAINNET_CHOG_BANK,
+              abi: bankAbi,
+              functionName: "spentByCitizen",
+              args: [spendKeys(zeroAddress, windowId, BigInt(tokenId)).citizen],
+            }),
+            RPC_CALL_MS,
+            `citizen ${tokenId} MON spend`,
+          );
+          spent.set(tokenId, value);
+        } catch (error) {
+          unread.push({ tokenId, reason: rpcReason(error) });
+        }
       }),
     );
-    return new Map(entries);
-  } catch {
-    return null;
   }
+  return { spent, unread };
 }

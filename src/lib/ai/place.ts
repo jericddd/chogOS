@@ -1,5 +1,6 @@
 import type { DecisionContext } from "@/lib/ai/context";
 import { worldDay } from "@/lib/world/clock";
+import { shortageLines } from "@/lib/world/shortage";
 import { civicLines } from "@/lib/world/civic";
 import { GRID_H, GRID_W, REGIONS, type BuildingKind } from "@/lib/world/layout";
 import { KIND_LABEL } from "@/lib/world/present";
@@ -63,6 +64,10 @@ export function describePlace(context: DecisionContext): string {
 
   const stock = context.stock;
   lines.push(`The storehouse holds food ${stock.food}, wood ${stock.wood}, stone ${stock.stone}, and tools ${stock.tools}.`);
+  const pressure = shortageLines(stock);
+  if (pressure.length > 0) {
+    lines.push(pressure.join(" "));
+  }
   const needs = context.townNeeds.filter((need) => need.status === "active" || need.status === "blocked");
   if (needs.length === 0) {
     lines.push("No shortage is active.");
