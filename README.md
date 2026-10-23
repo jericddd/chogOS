@@ -1,106 +1,70 @@
 # chogOS
 
-One shared, persistent AI civilization for Chog Genesis NFT participants on Monad.
+One shared civilization for Chog Genesis NFTs on Monad mainnet. The token id is the citizen. The portrait on the map is that NFT.
 
-A participating Chog Genesis token is one citizen. Citizens live in one town, share one history, and are moved by one simulation that keeps running when nobody has the site open. An AI mind can choose real actions for those citizens. It cannot spend, sign, or invent token balances.
+Live app: [https://chogos.vercel.app/](https://chogos.vercel.app/)
 
-**Live demo:** [https://chogos.vercel.app/](https://chogos.vercel.app/)
+This default branch exists so GitHub Actions can run the schedule in [`.github/workflows/ai-mind.yml`](.github/workflows/ai-mind.yml). The application source is [`cursor/phase-1-genesis-world-155c`](https://github.com/jericddd/chogOS/tree/cursor/phase-1-genesis-world-155c). The other files on `main` are an older Phase 0 shell. They are not the live app. `npm run dev` on `main` does not start the town.
 
-## 60-second walkthrough
+The facts below were read from the live app and from Monad mainnet on 23 October 2026 at 10:38 AM Asia/Manila. Balances and the citizen count move. The World and Economy pages are the live numbers. The longer record is the README on the application branch.
 
-1. Open the [living world](https://chogos.vercel.app/). The map is the shared town: houses, workplaces, roads, and citizens.
-2. Click a citizen or building, or open [Citizens](https://chogos.vercel.app/citizens) and [Treasury](https://chogos.vercel.app/treasury). Founding citizens are the Chog Genesis NFTs held by the ChogTreasury wallet, checked on Monad.
-3. Open [History](https://chogos.vercel.app/activity) and choose **AI decisions**, or go straight to [History filtered to AI](https://chogos.vercel.app/activity?source=ai). Those rows are stored `source=ai` events, not placeholders.
-4. Open a **road construction** row (kind `road.placed`) and follow **Verify**, or start from [Verify](https://chogos.vercel.app/verify), which features the latest AI construction event when one exists.
-5. On the event page, hashes and the live hash-chain are recomputed in the browser from exported bytes.
+## What is live
 
-Event verification is **offchain**. A matching hash is evidence about stored bytes (`log_integrity_verified` when the hash-chain neighbors match). It is not an onchain proof and not a claim that the simulation told the truth. No event-anchor contract is deployed, and no Merkle root has been published on Monad.
+The app has six tabs: World, Citizens, Economy, History, Verify, and Enroll. `/treasury` redirects to `/economy`.
 
-## What works today
+The world runs at 60×. One world hour is one real minute, so one world day is 24 real minutes. `world_tick()` in Postgres advances it when no browser is open. At the check above, the town had 61 citizens: 60 founding citizens from the ChogTreasury roster, and 1 community citizen enrolled by the wallet that held that NFT. Enrollment asks that wallet to sign a confirmation.
 
-Verified against the live site and the production branch `cursor/phase-1-genesis-world-155c` (including the History/Verify discoverability merge from PR #23).
+Food, wood, stone, and tools on the map are simulated counts. They are not MON and they are not `$CHOG`. Verify recomputes a SHA-256 of the stored event in the browser. `log_integrity_verified` is that check. EventAnchor is not deployed, and this app has not published a Merkle root on Monad.
 
-- **Persistent world.** The home page is a pixel-art town. `world_tick()` in Postgres advances citizens, work, movement, and construction whether or not a browser is open. Layout `genesis-v1.1`.
-- **NFT identity.** Each citizen is a Chog Genesis token id on Monad mainnet (chain 143). Founding citizens come from the ChogTreasury NFT roster. Owners can [enroll](https://chogos.vercel.app/enroll) a token they currently own; the server checks `ownerOf` and a signature before writing a community citizen.
-- **AI decisions.** A hosted runner builds a bounded citizen context, calls the configured model, validates JSON, and inserts an intent only after database rules pass. Rule-based activity stays `source=simulation`. Model-backed outcomes are `source=ai`. Opening the homepage does not call the model.
-- **Construction and roads.** The model may propose `build` with a kind (`house`, `farm`, `workshop`, `road`). The server picks the plot or a catalog road stub. The model never writes coordinates. Completed catalog roads are visible on the map and in History.
-- **Town facts, not slogans.** Storehouse stock drives town needs. Persistent town projects advance only from those facts and from completed buildings or roads.
-- **Recorded history.** [History](https://chogos.vercel.app/activity) lists stored world events. Category **AI** is an alias for `source=ai`. [Verify](https://chogos.vercel.app/verify) exposes SHA-256 event hashes, a live hash-chain, and optional Merkle batches.
+The model does not hold a key and does not sign. A review is not a transfer. The website does not sign or broadcast. `POST /api/transactions` returns 403.
 
-## Architecture
+## Who signs
 
-| Piece | Role |
+The workflow on this branch is scheduled `*/10 * * * *`, and it can be started by hand. GitHub may start that schedule later than the expression. It checks out the application branch and has three jobs:
+
+1. `run` calls the production mind.
+2. `issue` uses the wallet agent key to create a citizen wallet. The gas key pays that transaction.
+3. `pay` uses the ChogBank authorizer key to sign an accepted MON allocation, and the gas key to submit `distribute`. The agent key is not used for payouts.
+
+Those keys are GitHub Actions secrets. They are not in this repository, and the website does not receive them. The agent key can move MON out of a citizen wallet. The NFT holder does not control the citizen wallet.
+
+## Monad mainnet (chain 143)
+
+| What | Address |
 | --- | --- |
-| **Next.js 16** (App Router, React 19) | Public UI and read APIs (`GET /api/world/live`, `GET /api/world/events`, verify exports). Deployed at [chogos.vercel.app](https://chogos.vercel.app/). |
-| **Supabase / Postgres** | Civilization and world state. Row-level security keeps the anon key from reading tables. The service role is server-only. |
-| **World engine** | `world_tick()` is a SQL function. Hosted `pg_cron` calls it on a short interval so the clock is not a page view. |
-| **AI runner** | Separate from the tick. `POST /api/ai/run` is bearer-protected and disabled until `AI_RUNNER_ENABLED=true`. A [GitHub Action on `main`](.github/workflows/ai-mind.yml) pokes the live URL every 30 minutes. It does not tick the world. |
-| **Browser** | Renders the canvas from server reads. Optional Realtime is a refetch nudge only. Visitors observe; they do not steer citizens. |
+| Chog Genesis | `0xc96d31F8626c6D03Fae5dCD3d61e3FB9F4a73763` |
+| $CHOG | `0x350035555E10d9AfAF1566AaebfCeD5BA6C27777` |
+| ChogTreasury, the NFT holder | `0x84113421A8a564b594ee9Ae78c875310332d7023` |
+| ChogBank | `0xB2494538433B2FA3167A723d32329cc22c3A59C1` |
+| ChogBank creation | `0x665d3b3c0e9a37e6c54242aa29e5d6efb65d536e9bf777901f006d05abb8c0d4`, block `115672361` |
+| Authorizer | `0x485f614a9Bd37421cfe6fe53e89294C2a19C8b04` |
+| Gas payer | `0x40C20bF79Eed165D8Ac4970ccE7e257B63D2A806` |
+| Wallet factory | `0xE1236D88f64206555c7E9FCfC3c742B2BAa2fc6A` |
+| Wallet agent | `0x18229E45A24FB96f3c2d551adb406Db2F7d14358` |
 
-Application source for the live site lives on [`cursor/phase-1-genesis-world-155c`](https://github.com/jericddd/chogOS/tree/cursor/phase-1-genesis-world-155c), not on this default branch. This `main` branch is the GitHub default so the AI mind schedule can run. It still contains the earlier Phase 0 application tree.
+ChogBank has code, and it has no owner, no administrator, no proxy, and no upgrade. The authorizer is still a privileged signer. It can sign allocations only inside the contract caps, and only to a deployed citizen wallet. It cannot change the caps or pay an arbitrary address. The authorizer and gas addresses have no contract code.
 
-## Simulated vs onchain
+At the check above, ChogBank held **30 MON** and **369.97132121875218252 $CHOG**.
 
-| Thing | What it is |
-| --- | --- |
-| Food, wood, stone, tools | Simulation counts in the Storehouse. **Not** token balances, **not** `$CHOG`, **not** MON. |
-| Walking, work, sleep, social visits | Rule-based simulation (`source=simulation`). |
-| AI-labeled History rows | Persisted outcomes of a validated model decision (`source=ai`). |
-| Citizen identity | Chog Genesis NFT token ids; founding roster and enrollment check Monad. |
-| Event hashes / Verify | Offchain commitment to stored bytes. **Not** onchain anchoring. |
-| Civilization Treasury | A separate record from the ChogTreasury NFT wallet. No spending address is configured. |
-| Citizen smart accounts | Designed, **not deployed**. |
-| `POST /api/transactions` | Always **403**. No module holds a private key or seed phrase. |
+Contract caps, immutable: **0.01 MON** per transaction, **0.05 MON** per citizen, **0.05 MON** aggregate, window **86400** seconds, authorization lifetime at most **3600** seconds. The contract cap on **$CHOG is 1 wei**. The Economy page also shows higher application review limits. A broadcast is reduced to the contract caps.
 
-The AI cannot spend. A model sentence does not move tokens, complete a building, or place a road by itself.
+Confirmed wallet issuances are Monad transactions. Token 91 is one of them. Not every citizen has a wallet yet. The economy rows returned at that check were wallet issuances. A MON distribution is a separate stored receipt. `$CHOG` stays at 1 wei until a confirmed MON distribution receipt is stored.
 
-## Stack and local development
+Chog Genesis and `$CHOG` existed before this repository. The live application is Next.js 16.4.2 on the production branch. This branch's `package.json` is the older shell.
 
-Live-app stack, from the production `package.json`:
-
-- Next.js 16.4.0, React 19.3.0, TypeScript
-- Tailwind CSS 4
-- `@supabase/supabase-js` and `@supabase/ssr`
-- viem (read-only Monad access)
-- zod
-- `@openzeppelin/merkle-tree` (event batches)
-- Vitest for tests
-
-To run **the living world** locally, check out the production branch first. `npm run dev` on this default `main` branch still starts the Phase 0 shell, not the live civilization.
+## Run the living world
 
 ```bash
 git clone https://github.com/jericddd/chogOS.git
 cd chogOS
 git checkout cursor/phase-1-genesis-world-155c
 npm install
-cp .env.example .env.local   # add your own values; never commit this file
+cp .env.example .env.local
 npm run dev
 ```
 
-Commands on that branch:
+Do not put a private key in `.env.local` or in git.
 
-```bash
-npm run lint
-npm run typecheck
-npm test
-npm run build
-npm start
-npm run verify:contracts
-```
+## Files on this branch
 
-`verify:contracts` hits public Monad RPCs. It does not print holder addresses or balances.
-
-Do not run `world:init`, `world:runner`, `ai:runner`, or other operator scripts against production. They need secrets and they write world or AI state. There is no place in `.env.example` for a private key or a seed phrase.
-
-## Limitations
-
-These are still true:
-
-- GitHub’s default branch is `main`. It is not the living-world application tree. Do not treat a clone of `main` as the live product.
-- Event-chain verification is offchain. The EventAnchor contract is not deployed. No Merkle root is on Monad.
-- No citizen smart account, no autonomous wallet, no treasury spending, no onchain event anchoring.
-- [Economy](https://chogos.vercel.app/economy) and [Businesses](https://chogos.vercel.app/businesses) are leftover routes. The Civilization Treasury has no configured spending address. No business has been recorded.
-- Simulated goods are capped Storehouse counts, not an onchain economy.
-- The AI runner is rate-limited and separate from the world clock. A Gemini quota or timeout does not stop `world_tick()`.
-
-Completed work (living world, NFT roster, AI intents, catalog roads, hashed history) is live. It is not “planned.”
+`docs/` here describes the Phase 0 shell in this tree. It is not the deployment record. Where it disagrees with this README, this README is the record.

@@ -1,3 +1,5 @@
+> **Not the live record.** This file describes the Phase 0 shell on `main`. The live app and the deployment record are in the repository README and on `cursor/phase-1-genesis-world-155c`.
+
 # Database plan
 
 The migration is `supabase/migrations/20261010180000_initial_schema.sql`. Apply it when a Supabase project exists. The dashboard does not query it in Phase 0.

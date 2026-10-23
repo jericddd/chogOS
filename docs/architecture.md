@@ -1,3 +1,5 @@
+> **Not the live record.** This file describes the Phase 0 shell on `main`. The live app and the deployment record are in the repository README and on `cursor/phase-1-genesis-world-155c`.
+
 # Architecture
 
 Chog Civilization is one shared society for participating Chog Genesis NFTs on Monad. One eligible token id is one citizen. Citizens share a government, an economy, and a history. Each citizen will later have a unique smart-contract wallet. The civilization treasury is a different wallet. The AI reasons off-chain and may only cause a chain action that a wallet policy already allows.
@@ -52,7 +54,7 @@ Real economic activity, when it exists, has to be a Monad transaction with a sto
 
 The recommended design is a dedicated smart-wallet factory, not a token-bound account as the whole system. Citizen accounts are created per Chog Genesis token id. Business accounts are created without consuming one of the 1,969 genesis tokens. The shared treasury is a separate Safe. The comparison is in [wallet-system.md](wallet-system.md).
 
-Nothing in that design is deployed.
+Nothing in the Phase 0 design in this file is a mainnet deployment. Deployed addresses are in the repository README.
 
 The NFT contract's `treasury()` address is the collection's mint receiver. It is not the civilization treasury.
 

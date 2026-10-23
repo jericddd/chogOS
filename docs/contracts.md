@@ -1,3 +1,5 @@
+> **Not the live record.** This file describes the Phase 0 shell on `main`. The live app and the deployment record are in the repository README and on `cursor/phase-1-genesis-world-155c`.
+
 # Contract evidence
 
 Checked on 10 October 2026. Repeat the calls with `npm run verify:contracts`. That script uses the public RPCs below, prints pass or fail, and does not request holder balances or print `ownerOf` results.
