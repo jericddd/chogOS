@@ -1,5 +1,22 @@
 -- Close new jail construction, detention, and punitive fines.
 -- Existing laws, breaches, and sentences stay. Dating is stored from repeated meetings.
+--
+-- This file replaces civic functions and must follow 20261023040000_civic_places.sql.
+-- Filename order already does that. The guard refuses an out-of-order apply so
+-- CREATE OR REPLACE cannot invent world_levy_fine before the civic migration's
+-- CREATE FUNCTION, and cannot restore jail construction afterwards.
+
+do $$
+begin
+  if to_regclass('public.world_laws') is null
+     or to_regclass('public.world_sentences') is null
+     or to_regprocedure('public.world_open_civic_places()') is null
+     or to_regprocedure('public.world_civic_snapshot()') is null
+     or to_regprocedure('public.world_levy_fine(uuid,uuid)') is null
+     or to_regprocedure('public.world_detain_citizen(uuid,uuid)') is null then
+    raise exception '20261023040000_civic_places.sql must be applied before 20261023190000_mind_repair.sql';
+  end if;
+end $$;
 
 create or replace function world_place_building(
   p_plot text,
