@@ -1,10 +1,12 @@
 import { readFileSync } from "node:fs";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import { pendingPayoutFromOutput } from "@/lib/chogbank/payout";
 import { loadProtectedSigner } from "@/lib/chogbank/signer";
 import { considerTreasuryAllocation, type TreasuryDecisionInsert } from "@/lib/ai/treasury-run";
 import { AiProviderError, type AiCompletion } from "@/lib/ai/types";
 
 const roster = [{ tokenId: "104", name: "CHOG #104", goal: "Finish the east road", citizenId: "citizen-104" }];
+const BALANCE = 30n * 10n ** 18n;
 
 function completion(text: string): AiCompletion {
   return { provider: "gemini", model: "test", text, promptChars: 40, outputTokens: 8 };
@@ -48,9 +50,10 @@ describe("treasury consideration", () => {
       nowMs: Date.UTC(2026, 9, 21),
       roster,
       prior: [],
-      monBalance: null,
-      chogBalance: null,
+      monBalance: BALANCE,
+      chogBalance: 1n,
       chogDecimals: 18,
+      walletDeployed: true,
       timeoutMs: 1000,
       maxOutputTokens: 200,
       provider: "gemini",
@@ -68,6 +71,10 @@ describe("treasury consideration", () => {
     expect(rows[0]?.citizenId).toBe("citizen-104");
     expect(rows[0]?.output.tokenId).toBe("104");
     expect(JSON.stringify(rows[0]?.output)).not.toContain("recipient");
+    const payable = pendingPayoutFromOutput(rows[0]?.output ?? {});
+    expect(payable?.tokenId).toBe("104");
+    expect(payable?.asset).toBe("MON");
+    expect(payable?.amountRaw).toBe("1000000000000000");
 
     const second = await considerTreasuryAllocation({
       nowMs: Date.UTC(2026, 9, 21),
@@ -81,9 +88,10 @@ describe("treasury consideration", () => {
           windowId: rows[0]?.output.windowId ?? "",
         },
       ],
-      monBalance: null,
-      chogBalance: null,
+      monBalance: BALANCE,
+      chogBalance: 1n,
       chogDecimals: 18,
+      walletDeployed: true,
       timeoutMs: 1000,
       maxOutputTokens: 200,
       provider: "gemini",
@@ -104,9 +112,9 @@ describe("treasury consideration", () => {
       nowMs: Date.UTC(2026, 9, 21),
       roster,
       prior: [],
-      monBalance: null,
-      chogBalance: null,
-      chogDecimals: null,
+      monBalance: BALANCE,
+      chogBalance: 1n,
+      chogDecimals: 18,
       timeoutMs: 1000,
       maxOutputTokens: 200,
       provider: "gemini",
@@ -131,9 +139,9 @@ describe("treasury consideration", () => {
       nowMs: Date.UTC(2026, 9, 21),
       roster,
       prior: [],
-      monBalance: null,
-      chogBalance: null,
-      chogDecimals: null,
+      monBalance: BALANCE,
+      chogBalance: 1n,
+      chogDecimals: 18,
       timeoutMs: 1000,
       maxOutputTokens: 200,
       provider: "gemini",
@@ -150,11 +158,105 @@ describe("treasury consideration", () => {
   it("leaves signing and broadcasting out of the mind runner", () => {
     const runner = readFileSync("src/lib/ai/runner.ts", "utf8");
     expect(runner).toContain("considerTreasuryAllocation");
+    expect(runner.indexOf("await attachTreasury()")).toBeLessThan(runner.indexOf("while (!endRun)"));
+    expect(runner).toContain("Stopped before the host timeout. No treasury allocation was requested.");
+    expect(runner).toContain("Citizen wallet code was not read, so no allocation was requested.");
+    expect(runner).toContain("No eligible citizen has a deployed wallet whose stored token id matches, so no allocation was requested.");
+    expect(runner).toContain("Citizen MON spending was not read, so no allocation was requested.");
     expect(runner).not.toMatch(/sendTransaction|signTypedData|walletClient|eth_sendRawTransaction/);
     expect(readFileSync("src/lib/ai/context.ts", "utf8")).toContain("Do not return propose_economy or request_wallet_activation");
     expect(readFileSync("src/lib/economy/treasury-load.ts", "utf8")).not.toMatch(/sendTransaction|writeContract|signTypedData/);
     const signer = loadProtectedSigner({ CHOG_BANK_AUTHORIZER_PRIVATE_KEY: "0xabc" });
     expect(signer.kind).toBe("none");
     expect(JSON.stringify(signer)).not.toContain("0xabc");
+  });
+
+  it("does not call the model when balances were not read", async () => {
+    const complete = vi.fn();
+    const recorded: TreasuryDecisionInsert[] = [];
+    const result = await considerTreasuryAllocation({
+      nowMs: Date.UTC(2026, 9, 21),
+      roster,
+      prior: [],
+      monBalance: null,
+      chogBalance: null,
+      chogDecimals: null,
+      timeoutMs: 1000,
+      maxOutputTokens: 200,
+      provider: "gemini",
+      model: "test",
+      complete,
+      record: async (row) => {
+        recorded.push(row);
+        return true;
+      },
+    });
+    expect(complete).not.toHaveBeenCalled();
+    expect(result.status).toBe("failed");
+    expect(recorded[0]?.status).toBe("failed");
+    expect(recorded[0]?.output.executed).toBe(false);
+    expect(recorded[0]?.output.txHash).toBeNull();
+  });
+
+  it("does not call the model when the MON balance cannot cover a payout", async () => {
+    const complete = vi.fn();
+    const recorded: TreasuryDecisionInsert[] = [];
+    const result = await considerTreasuryAllocation({
+      nowMs: Date.UTC(2026, 9, 21),
+      roster,
+      prior: [],
+      monBalance: 0n,
+      chogBalance: 1n,
+      chogDecimals: 18,
+      timeoutMs: 1000,
+      maxOutputTokens: 200,
+      provider: "gemini",
+      model: "test",
+      complete,
+      record: async (row) => {
+        recorded.push(row);
+        return true;
+      },
+    });
+    expect(complete).not.toHaveBeenCalled();
+    expect(result.status).toBe("rejected");
+    expect(recorded[0]?.output.amountRaw).toBeNull();
+    expect(recorded[0]?.output.executed).toBe(false);
+  });
+
+  it("records a $CHOG proposal as unavailable and does not mark it paid", async () => {
+    const recorded: TreasuryDecisionInsert[] = [];
+    const result = await considerTreasuryAllocation({
+      nowMs: Date.UTC(2026, 9, 21),
+      roster,
+      prior: [],
+      monBalance: BALANCE,
+      chogBalance: 10n ** 18n,
+      chogDecimals: 18,
+      walletDeployed: true,
+      timeoutMs: 1000,
+      maxOutputTokens: 200,
+      provider: "gemini",
+      model: "test",
+      complete: async () =>
+        completion(
+          JSON.stringify({
+            tokenId: "104",
+            asset: "CHOG",
+            amountRaw: "1",
+            reason: "A token gift.",
+            expectedOutcome: "The citizen receives $CHOG.",
+          }),
+        ),
+      record: async (row) => {
+        recorded.push(row);
+        return true;
+      },
+    });
+    expect(result.status).toBe("rejected");
+    expect(result.detail).toContain("not available");
+    expect(recorded[0]?.output.executed).toBe(false);
+    expect(recorded[0]?.output.onchain).toBe(false);
+    expect(recorded[0]?.output.txHash).toBeNull();
   });
 });

@@ -113,6 +113,8 @@ export type ChogBankPublicView = {
   otherTokens: PublicOtherToken[];
   execution: string;
   policy: string[];
+  reviewThresholds: string[];
+  contractLimits: string[];
   funding: string[];
   fundingRows: Array<VerifiedFunding & { amountText: string; href: string | null; label: string }>;
   fundingNote: string;
@@ -224,7 +226,8 @@ function applicationPolicy(): string[] {
     `Chain ${limits.chainId}. Window ${limits.windowSeconds} seconds. Authorization lifetime at most ${limits.maxAuthorizationTtl} seconds.`,
     `MON per transaction ${formatTokenAmount(limits.maxPerTxMon.toString(10), 18, "MON")}. Per citizen ${formatTokenAmount(limits.maxCitizenWindowMon.toString(10), 18, "MON")}. Aggregate ${formatTokenAmount(limits.maxAggregateWindowMon.toString(10), 18, "MON")}.`,
     chogSpendingCapSentence(limits.maxPerTxChog, limits.maxCitizenWindowChog, limits.maxAggregateWindowChog, "Review"),
-    "A model cannot raise these limits. A passing review is not itself a signature. An accepted MON amount above the ChogBank cap is reduced to that cap before it can be broadcast.",
+    "$CHOG is not available for a payout while that deployed cap is 1 wei. MON is the usable payout asset.",
+    "A model cannot raise these limits. A passing review is not itself a signature. A proposal above a contract cap is rejected. A confirmed payout shows the amount in the Distributed event. When that amount differs from the request, both amounts are shown.",
     "A payout reverts unless that citizen's wallet has code and its stored token id matches. An empty prediction is not paid. The NFT holder does not control the wallet. A wallet-issuance proposal is not a deployment until its Monad transaction is confirmed. The website does not sign or broadcast.",
   ];
 }
@@ -243,6 +246,7 @@ type Output = {
   tokenId?: string;
   asset?: string;
   amountRaw?: string;
+  requestedAmountRaw?: string;
   reason?: string;
   expectedOutcome?: string;
   decisionId?: string;
@@ -265,6 +269,7 @@ function readOutput(value: unknown): Output {
     tokenId: text("tokenId") ?? (typeof body.tokenId === "number" ? String(body.tokenId) : undefined),
     asset: text("asset"),
     amountRaw: text("amountRaw"),
+    requestedAmountRaw: text("requestedAmountRaw"),
     reason: text("reason"),
     expectedOutcome: text("expectedOutcome"),
     decisionId: text("decisionId"),
@@ -289,7 +294,28 @@ function amountText(asset: string | undefined, amountRaw: string | undefined, de
 function listedDecision(row: StoredTreasuryDecision): boolean {
   const output = readOutput(row.output);
   if (row.purpose === "wallet_issuance") return output.choice === "issue";
-  return row.status !== "rejected" && row.status !== "failed" && output.stage !== "rejected" && output.stage !== "failed";
+  return true;
+}
+
+function allocationAmountText(
+  statusLabel: PublicTreasuryDecision["statusLabel"],
+  asset: string | undefined,
+  amountRaw: string | undefined,
+  requestedAmountRaw: string | undefined,
+  decimals: number | null,
+): string | null {
+  const shown = amountText(asset, amountRaw, decimals);
+  if (!shown) return null;
+  const requested =
+    requestedAmountRaw && requestedAmountRaw !== amountRaw ? amountText(asset, requestedAmountRaw, decimals) : null;
+  if (statusLabel === "Confirmed") {
+    return requested ? `Confirmed ${shown}. The stored request was ${requested}.` : `Confirmed ${shown}`;
+  }
+  if (statusLabel === "Submitted") return `Submitted ${shown}. This is not a confirmed payout.`;
+  if (statusLabel === "Proposed" || statusLabel === "Authorized" || statusLabel === "Pending") {
+    return `Proposed ${shown}. This is not a payment.`;
+  }
+  return `${statusLabel} ${shown}. This is not a payment.`;
 }
 
 function issuanceDecision(row: StoredTreasuryDecision): PublicTreasuryDecision {
@@ -347,15 +373,16 @@ function offchainDecision(row: StoredTreasuryDecision, decimals: number | null):
   else if (output.stage === "failed" || row.status === "failed") statusLabel = "Failed";
   else if (output.stage === "rejected" || row.status === "rejected") statusLabel = "Rejected";
   else if (output.stage === "authorized") statusLabel = "Authorized";
-  else if (output.stage === "submitted") statusLabel = "Submitted";
+  else if (output.stage === "submitted" || row.status === "queued") statusLabel = "Submitted";
   else if (output.stage === "proposed" || row.status === "proposed" || row.status === "accepted") statusLabel = "Proposed";
   const storedHash = output.txHash && HASH.test(output.txHash) ? output.txHash : null;
+  const noun = statusLabel === "Confirmed" ? "payout" : statusLabel === "Submitted" ? "transaction" : "allocation";
   return {
     id: row.id,
     statusLabel,
-    headline: citizen ? `${statusLabel} review for ${citizen}` : `${statusLabel} treasury review`,
+    headline: citizen ? `${statusLabel} ${noun} for ${citizen}` : `${statusLabel} treasury ${noun}`,
     detail: `${reason}${expected}`,
-    amountText: amountText(output.asset, output.amountRaw, decimals),
+    amountText: allocationAmountText(statusLabel, output.asset, output.amountRaw, output.requestedAmountRaw, decimals),
     citizen,
     recipient: confirmed && output.recipient ? output.recipient : null,
     txHash: confirmed ? storedHash : null,
@@ -375,7 +402,7 @@ function chainDecision(row: VerifiedDistribution, decimals: number | null, db: S
     statusLabel: "Confirmed",
     headline: `Confirmed payout for citizen token ${row.tokenId}`,
     detail,
-    amountText: amountText(row.asset, row.amountRaw, decimals),
+    amountText: allocationAmountText("Confirmed", row.asset, row.amountRaw, output.requestedAmountRaw, decimals),
     citizen: `Citizen token ${row.tokenId}`,
     recipient: row.recipient,
     txHash: row.txHash,
@@ -398,7 +425,8 @@ export function presentOwnerlessTreasury(input: {
 }): ChogBankPublicView {
   const inspection = input.inspection;
   const warnings: string[] = [];
-  const policy = applicationPolicy();
+  const reviewThresholds = applicationPolicy();
+  const contractLimits: string[] = [];
   const execution =
     "Signing on this server is disabled. This server does not sign or broadcast. GitHub Actions broadcasts an accepted MON allocation inside the ChogBank cap, and Verify links the Monad receipt. $CHOG waits until that MON receipt is stored.";
   const sourceNote = "Source-code verification: not checked.";
@@ -466,7 +494,7 @@ export function presentOwnerlessTreasury(input: {
       deploymentState = "live";
       fundingReady = true;
       summary = "Deployed code on Monad mainnet passed the owner, proxy, chain, and asset checks. An accepted MON allocation is broadcast from GitHub Actions, and Verify links the receipt.";
-      policy.push(...chainPolicy(inspection.chainCaps));
+      contractLimits.push(...chainPolicy(inspection.chainCaps));
       if (inspection.deploymentTx && !inspection.deploymentTxVerified) {
         warnings.push("A deployment transaction was configured, and it is not linked. The receipt must be a successful creation of this contract.");
       }
@@ -544,7 +572,9 @@ export function presentOwnerlessTreasury(input: {
     otherTokenNote: other.note,
     otherTokens: other.rows,
     execution,
-    policy,
+    reviewThresholds,
+    contractLimits,
+    policy: [...reviewThresholds, ...contractLimits],
     funding: fundingReady
       ? [
           `Send native MON to ${inspection.configuredAddress}. A token approval is not required.`,

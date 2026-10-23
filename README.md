@@ -53,11 +53,11 @@ ChogBank has no `owner`, no administrator, no proxy, and no upgrade function. Th
 
 At the check above, ChogBank held **30 MON** and **369.97132121875218252 $CHOG**.
 
-The contract caps are immutable: **0.01 MON** per transaction, **0.05 MON** per citizen, **0.05 MON** aggregate, a **86400**-second window, and an authorization lifetime of at most **3600** seconds. The contract cap on **$CHOG is 1 wei** per transaction, per citizen, and for the whole bank in each window. The Economy page also shows higher application review limits. A broadcast is reduced to the contract caps. A payout above those caps reverts.
+The contract caps are immutable: **0.01 MON** per transaction, **0.05 MON** per citizen, **0.05 MON** aggregate, a **86400**-second window, and an authorization lifetime of at most **3600** seconds. The contract cap on **$CHOG is 1 wei** per transaction, per citizen, and for the whole bank in each window. Editing this repository does not raise that cap. The Economy page shows application review limits separately from the caps it reads off the contract. Before a proposal, the mind reads the live balance, those caps, the remaining window capacity, and citizens whose wallet contracts are deployed. It can propose MON only. `$CHOG` is not available for a payout while that cap is 1 wei. A proposal above a contract cap is rejected and is not stored as a smaller payment. A confirmed payout is a stored Monad receipt that includes a ChogBank `Distributed` event. The confirmed amount is the amount in that event. When it differs from the stored request, both amounts are shown. A payout above the contract caps reverts.
 
 Confirmed wallet issuances are Monad transactions. Token 91 is one of them. A Proposed issuance has not been broadcast. Not every citizen has a wallet yet.
 
-The economy rows returned at that check were wallet issuances. A MON distribution is a separate stored receipt. `$CHOG` stays at the 1 wei cap until a confirmed MON distribution receipt is stored.
+The economy rows returned at that check were wallet issuances, not MON distributions. A MON distribution is a separate stored receipt. The mind records a refusal when it decides not to allocate, and that row is not a payment.
 
 These addresses have code and are not chogOS deployments. Do not fund them:
 

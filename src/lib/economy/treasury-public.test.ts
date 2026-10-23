@@ -114,8 +114,11 @@ describe("public ownerless treasury", () => {
     expect(view.otherTokens).toEqual([]);
     expect(view.authorizerStatus).toContain("privileged spending authority");
     expect(view.execution).toContain("does not sign");
+    expect(view.reviewThresholds.join(" ")).toContain("application review limits");
+    expect(view.reviewThresholds.join(" ")).toContain("Review $CHOG cap is 1 wei of $CHOG");
+    expect(view.contractLimits.join(" ")).toContain("These values were read from the deployed contract");
+    expect(view.contractLimits.join(" ")).toContain("Contract $CHOG cap is");
     expect(view.policy.join(" ")).toContain("application review limits");
-    expect(view.policy.join(" ")).toContain("Review $CHOG cap is 1 wei of $CHOG");
     expect(view.policy.join(" ")).toContain("Contract $CHOG cap is");
     expect(view.fundingScan).toBe("empty");
     expect(view.fundingNote).toContain("finished");
@@ -212,6 +215,78 @@ describe("public ownerless treasury", () => {
     expect(confirmed.decisions[0]?.detail).toContain("Distributed event");
   });
 
+  it("shows a submitted allocation separately from a confirmed payout whose amount differs", () => {
+    const queued = presentOwnerlessTreasury({
+      inspection: pendingInspection(143),
+      decisionsLoaded: true,
+      decisions: [
+        {
+          id: "queued-1",
+          status: "queued",
+          rationale: "Fare for the east road.",
+          createdAt: null,
+          output: {
+            stage: "submitted",
+            tokenId: "104",
+            asset: "MON",
+            amountRaw: "10000000000000000",
+            reason: "Fare for the east road.",
+            expectedOutcome: "One trip.",
+          },
+        },
+      ],
+    });
+    expect(queued.decisions[0]?.statusLabel).toBe("Submitted");
+    expect(queued.decisions[0]?.headline).toContain("Submitted transaction");
+    expect(queued.decisions[0]?.amountText).toContain("not a confirmed payout");
+    expect(queued.decisions[0]?.txHref).toBeNull();
+
+    const paid = presentOwnerlessTreasury({
+      inspection: live(),
+      decisionsLoaded: true,
+      distributions: [
+        {
+          decisionId: DECISION,
+          tokenId: "104",
+          recipient: getAddress("0x3333333333333333333333333333333333333333"),
+          asset: "MON",
+          amountRaw: "10000000000000000",
+          txHash: HASH,
+          blockNumber: "42",
+        },
+      ],
+      decisions: [
+        {
+          id: "paid-1",
+          status: "executed",
+          rationale: "Fare for the east road.",
+          createdAt: null,
+          output: {
+            stage: "executed",
+            decisionId: DECISION,
+            tokenId: "104",
+            asset: "MON",
+            amountRaw: "10000000000000000",
+            requestedAmountRaw: "100000000000000000",
+            reason: "Fare for the east road.",
+            onchain: true,
+            verified: true,
+            txHash: HASH,
+            blockNumber: "42",
+            chainId: 143,
+          },
+        },
+      ],
+    });
+    expect(paid.decisions).toHaveLength(1);
+    expect(paid.decisions[0]?.statusLabel).toBe("Confirmed");
+    expect(paid.decisions[0]?.headline).toContain("Confirmed payout");
+    expect(paid.decisions[0]?.amountText).toContain("0.01 MON");
+    expect(paid.decisions[0]?.amountText).toContain("0.1 MON");
+    expect(paid.decisions[0]?.amountText).toContain("stored request");
+    expect(paid.decisions[0]?.txHref).toBe(`https://monadscan.com/tx/${HASH}`);
+  });
+
   it("shows a wallet-issuance proposal without a transaction", () => {
     const view = presentOwnerlessTreasury({
       inspection: pendingInspection(143),
@@ -241,7 +316,7 @@ describe("public ownerless treasury", () => {
     expect(view.fundingAddress).toBeNull();
   });
 
-  it("hides rejected reviews and wallet rows that did not choose issue", () => {
+  it("shows a rejected allocation and hides wallet rows that did not choose issue", () => {
     const view = presentOwnerlessTreasury({
       inspection: pendingInspection(143),
       decisionsLoaded: true,
@@ -279,8 +354,12 @@ describe("public ownerless treasury", () => {
         },
       ],
     });
-    expect(view.decisions).toHaveLength(1);
-    expect(view.decisions[0]?.headline).toContain("Citizen token 7");
+    expect(view.decisions).toHaveLength(2);
+    expect(view.decisions.map((row) => row.headline).join(" ")).toContain("Rejected allocation");
+    expect(view.decisions.map((row) => row.headline).join(" ")).toContain("Citizen token 104");
+    expect(view.decisions.find((row) => row.id === "rejected-review")?.txHref).toBeNull();
+    expect(view.decisions.map((row) => row.headline).join(" ")).toContain("Citizen token 7");
+    expect(view.decisions.some((row) => row.id === "unnecessary" || row.id === "not-json")).toBe(false);
   });
 
   it("shows a confirmed wallet issuance with its Monad transaction", () => {
