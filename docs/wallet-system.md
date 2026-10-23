@@ -1,6 +1,8 @@
+> **Not the live record.** This file describes the Phase 0 shell on `main`. The live app and the deployment record are in the repository README and on `cursor/phase-1-genesis-world-155c`.
+
 # Wallet system
 
-Phase 0 does not deploy a wallet. This note chooses the design to specify before any bytecode is sent to Monad.
+This Phase 0 note does not deploy a wallet. It chooses a design. The wallets that were later deployed are in the repository README.
 
 ## What the wallets have to do
 
@@ -56,7 +58,7 @@ The treasury should be a Safe, using the Safe singleton listed in Monad's mainne
 
 The administrator is the initial Safe owner, preferably as a hardware-backed signer or a small owner set the administrator controls. Funding is a normal MON or token transfer into that Safe. The AI is not an owner.
 
-A later module can give the AI a narrow allowance from the treasury. The module has to be revocable by the Safe owners without the AI's signature. Until that module exists, the AI cannot spend treasury funds.
+A later module can give the AI a narrow allowance from the treasury. The module has to be revocable by the Safe owners without the AI's signature. That Safe module was not built. Spending that exists today is the ChogBank path in the repository README.
 
 The Safe proxy factory address `0x4e1DCf7AD4e460CfD30791CCC4F9c8a4f820ec67` is listed in Monad's testnet documentation and has bytecode on mainnet as well. It was not in the mainnet canonical table read for this phase, and it was not hash-matched. Treat it as observed infrastructure, not as a finished choice.
 
