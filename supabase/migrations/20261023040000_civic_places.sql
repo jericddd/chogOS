@@ -6,54 +6,52 @@
 -- A visit does not move MON, $CHOG, or simulated food. Payout execution stays off.
 
 -- Wider kinds, activities, purposes, and intents ------------------------------
+--
+-- Production already has these check names from the founding schema:
+--   world_buildings_kind_check
+--   citizen_world_state_activity_check
+--   citizen_world_state_purpose_check
+--   world_intents_action_check
+-- pg_get_constraintdef does not always keep a separately quoted token such as
+-- 'market', so a text search can leave the old constraint in place. Adding the
+-- same name then fails. Drop the known names first. The loop only catches a
+-- renamed single-column allow-list that still excludes the civic value.
+-- world_intents_ai_decision and the multi-column citizen checks stay.
+
+alter table public.world_buildings drop constraint if exists world_buildings_kind_check;
+alter table public.citizen_world_state drop constraint if exists citizen_world_state_activity_check;
+alter table public.citizen_world_state drop constraint if exists citizen_world_state_purpose_check;
+alter table public.world_intents drop constraint if exists world_intents_action_check;
 
 do $$
 declare
-  c text;
+  c record;
 begin
   for c in
-    select con.conname
+    select con.conname, con.conrelid::regclass as rel
     from pg_constraint con
-    where con.conrelid = 'world_buildings'::regclass
-      and con.contype = 'c'
-      and pg_get_constraintdef(con.oid) ilike '%''market''%'
-      and pg_get_constraintdef(con.oid) not ilike '%''park''%'
+    join pg_attribute att
+      on att.attrelid = con.conrelid
+     and att.attnum = con.conkey[1]
+     and not att.attisdropped
+    where con.contype = 'c'
+      and array_length(con.conkey, 1) = 1
+      and (
+        (con.conrelid = 'public.world_buildings'::regclass
+          and att.attname = 'kind'
+          and pg_get_constraintdef(con.oid) not ilike '%park%')
+        or (con.conrelid = 'public.citizen_world_state'::regclass
+          and att.attname = 'activity'
+          and pg_get_constraintdef(con.oid) not ilike '%visiting%')
+        or (con.conrelid = 'public.citizen_world_state'::regclass
+          and att.attname = 'purpose'
+          and pg_get_constraintdef(con.oid) not ilike '%visit%')
+        or (con.conrelid = 'public.world_intents'::regclass
+          and att.attname = 'action'
+          and pg_get_constraintdef(con.oid) not ilike '%visit%')
+      )
   loop
-    execute format('alter table world_buildings drop constraint %I', c);
-  end loop;
-
-  for c in
-    select con.conname
-    from pg_constraint con
-    where con.conrelid = 'citizen_world_state'::regclass
-      and con.contype = 'c'
-      and pg_get_constraintdef(con.oid) ilike '%''sleeping''%'
-      and pg_get_constraintdef(con.oid) not ilike '%''visiting''%'
-  loop
-    execute format('alter table citizen_world_state drop constraint %I', c);
-  end loop;
-
-  for c in
-    select con.conname
-    from pg_constraint con
-    where con.conrelid = 'citizen_world_state'::regclass
-      and con.contype = 'c'
-      and pg_get_constraintdef(con.oid) ilike '%''sleep''%'
-      and pg_get_constraintdef(con.oid) not ilike '%''visit''%'
-      and pg_get_constraintdef(con.oid) not ilike '%activity%'
-  loop
-    execute format('alter table citizen_world_state drop constraint %I', c);
-  end loop;
-
-  for c in
-    select con.conname
-    from pg_constraint con
-    where con.conrelid = 'world_intents'::regclass
-      and con.contype = 'c'
-      and pg_get_constraintdef(con.oid) ilike '%''socialize''%'
-      and pg_get_constraintdef(con.oid) not ilike '%''visit''%'
-  loop
-    execute format('alter table world_intents drop constraint %I', c);
+    execute format('alter table %s drop constraint %I', c.rel, c.conname);
   end loop;
 end $$;
 
