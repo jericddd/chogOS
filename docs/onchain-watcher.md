@@ -1,3 +1,5 @@
+> **Not the live record.** Deployed addresses and what the app does today are in [README.md](../README.md). This file is a phase journal. A present-tense sentence about deployment describes the day it was written.
+
 # Onchain transfer watcher
 
 The watcher reads Chog Genesis `Transfer` logs on Monad mainnet and projects them into Activities → Onchain. It does not sign, broadcast, or change citizenship. An NFT transfer updates the stored owner only. Enrollment, home, work, role, and personality stay where they are.

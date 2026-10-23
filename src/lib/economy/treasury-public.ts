@@ -456,12 +456,12 @@ export function presentOwnerlessTreasury(input: {
     if (!inspection.chainCaps) unread.push("spending caps");
     if (problems.length > 0) {
       deploymentState = "rejected";
-      warnings.push(`${inspection.configuredAddress} failed the ownerless checks. It is not a funding address. ${problems.join(" ")}`);
-      summary = "Deployed code was found, and it did not pass the ownerless checks.";
+      warnings.push(`${inspection.configuredAddress} failed the owner, proxy, chain, and asset checks. It is not a funding address. ${problems.join(" ")}`);
+      summary = "Deployed code was found, and it did not pass the owner, proxy, chain, and asset checks.";
     } else if (unread.length > 0) {
       deploymentState = "unreadable";
       warnings.push(`${inspection.configuredAddress} is not a funding address. These checks did not finish: ${unread.join(", ")}.`);
-      summary = "Deployed code was found, and the ownerless checks did not finish.";
+      summary = "Deployed code was found, and the owner, proxy, chain, and asset checks did not finish.";
     } else if (inspection.chainCaps) {
       deploymentState = "live";
       fundingReady = true;

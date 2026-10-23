@@ -1,3 +1,5 @@
+> **Not the live record.** Deployed addresses and what the app does today are in [README.md](../README.md). This file is a phase journal. A present-tense sentence about deployment describes the day it was written.
+
 # Phase 5 — Civil works (growth the map can show)
 
 Phase 4 made the mind real. It did not make the town grow. Citizens still only picked work / rest / shop / socialize / one house on a pre-surveyed lot. The forest is scenery.

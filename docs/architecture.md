@@ -1,88 +1,39 @@
 # Architecture
 
-Chog Civilization is one shared society for participating Chog Genesis NFTs on Monad. One eligible token id is one citizen. Citizens share a government, an economy, and a history. Each citizen will later have a unique smart-contract wallet. The civilization treasury is a different wallet. The AI reasons off-chain and may only cause a chain action that a wallet policy already allows.
+The live record is [README.md](../README.md). This page is how the running system is split. It replaces the Phase 0 description of this same filename.
 
-Phase 0 builds the application boundary for that system. It does not deploy contracts, connect a signer, or present database rows as balances.
+## World
 
-## Frontend
+`world_tick()` in Postgres is the simulation writer. Hosted `pg_cron` calls it, so the clock moves when no browser is open. The Next.js server reads that state and serves `GET /api/world/live` and `GET /api/world/events`. The browser draws the canvas from those reads. Realtime, when the anon key is set, is only a signal to refetch.
 
-The Next.js App Router renders a small dashboard: overview, citizens, economy and treasury, businesses, and activity. Pages are server components. The navigation is the only client component, and it exists to mark the current page.
+Citizens, movement, work, and construction are simulated. Map resources are simulated counts. They are not token balances.
 
-Placeholder sections are labeled in the page and in the data module `src/lib/placeholder`. Recorded contract facts come from `src/lib/blockchain/recorded-check.ts`, which is a dated observation, not a live balance query.
+## Identity
 
-The interface does not connect a browser wallet.
+A citizen is a Chog Genesis token id on Monad mainnet (chain 143). Founding citizens come from the ChogTreasury NFT roster. A community citizen is enrolled by the wallet that currently holds that NFT, after that wallet signs the enrollment confirmation. The NFT holder is the owner shown on the citizen page. That address is not the citizen wallet.
 
-## Backend
+## Mind
 
-Server modules live under `src/lib`. There is no enrollment API yet.
+The homepage does not call the model. GitHub Actions job `run` calls `POST /api/ai/run` with a bearer secret. The provider has no tools and no wallet client. The server validates the model's JSON and stores a decision only when the database rules accept it. AI rows in History include the stored reason.
 
-- `src/lib/config/env.ts` reads deployment settings and refuses malformed addresses and URLs. Error text names the variable, not the secret.
-- `src/lib/db/client.ts` can open a Supabase service-role client or a cookie-backed anon client. Pages do not call either one. The service role bypasses row level security and is imported behind `server-only`.
-- `POST /api/transactions` returns 403 from `TransactionExecutionDisabledError`. It ignores any request body.
+The model can propose town growth, one wallet issuance, or one MON allocation review. It cannot sign.
 
-## Database
+## Wallets
 
-Supabase Postgres holds civilization state that is not itself a token balance: enrollment, life, skills, jobs, relationships, businesses, AI memory, decisions, proposals, and receipts. The schema is `supabase/migrations/20261010180000_initial_schema.sql`, explained in [database.md](database.md).
+`CitizenAccountFactoryV3` at `0xE1236D88f64206555c7E9FCfC3c742B2BAa2fc6A` creates one permanent wallet per enrolled citizen. The implementation is `CitizenAccountV3`. The NFT holder cannot call it. One agent address, `0x18229E45A24FB96f3c2d551adb406Db2F7d14358`, authorizes wallet calls. GitHub Actions job `issue` uses that key, which stays in Actions secrets.
 
-A balance observation stores a raw integer and the block it was read at. Spending code must read Monad again. A business ledger line is marked verified only when it points at a receipt row.
+`CitizenAccountV2` and the earlier predicted factories are unused. Their addresses are listed in the README so they are not funded by mistake.
 
-## AI decision-making
+## ChogBank
 
-`AiProvider` can complete a text request through Gemini `generateContent`, OpenAI-compatible chat completions, or the Anthropic messages API. The default provider is `none`, and calling it throws. Ajax still refuses. The interface has no tool list, no wallet client, and no public decision route. `POST /api/ai/run` is bearer-protected and disabled until `AI_RUNNER_ENABLED=true`.
+ChogBank at `0xB2494538433B2FA3167A723d32329cc22c3A59C1` holds MON and `$CHOG`. It has no owner, no administrator, no proxy, and no upgrade. An immutable authorizer signs an EIP-712 allocation. The contract still checks the asset, the caps, the expiry, the nonce, and the recipient. The recipient has to be the deployed citizen wallet for that token id.
 
-Later, a decision is written to `ai_decisions` before anyone prepares a proposal. Acceptance of a decision is still not permission to move funds. The wallet has to accept the call.
+The website does not sign. GitHub Actions job `pay` signs with the authorizer and submits `distribute` with the gas key. The agent key is not used for that job. `$CHOG` stays at the contract cap of 1 wei until a confirmed MON distribution receipt is stored.
 
-## Blockchain reading
+The Economy page shows application review limits and the lower caps read from the contract. Settlement uses the contract caps.
 
-viem supplies the Monad chain objects. Their chain ids are 143 and 10143, and their default HTTP RPCs are `https://rpc.monad.xyz` and `https://testnet-rpc.monad.xyz`, matching Monad's network documentation. Explorer URLs in this repo follow that documentation.
+## Verify
 
-`createChainClient` builds a public client. It has no account. `src/lib/blockchain/reads.ts` exposes NFT and token metadata reads for later server code. The dashboard does not call it, so a page render does not depend on the RPC.
+`/verify` recomputes a SHA-256 over the canonical stored event in the browser. A match can be labeled `log_integrity_verified`. That is evidence about stored bytes. EventAnchor is not deployed. No Merkle root from this app is published on Monad.
 
-The Chog Genesis read ABI is a subset of the verified ABI stored in `src/lib/blockchain/abi/chog-genesis.json`. The $CHOG ABI lists only view functions that returned data. Details and limits are in [contracts.md](contracts.md).
-
-`npm run verify:contracts` repeats the chain checks.
-
-## Transaction execution
-
-No module imports a private key, a mnemonic, or a wallet client. `assertExecutionDisabled` throws if a future caller tries to pass through the Phase 0 guard. The public HTTP path is the 403 route above.
-
-Real economic activity, when it exists, has to be a Monad transaction with a stored receipt. A proposal row is only an intention.
-
-## Citizen wallets and the treasury
-
-The recommended design is a dedicated smart-wallet factory, not a token-bound account as the whole system. Citizen accounts are created per Chog Genesis token id. Business accounts are created without consuming one of the 1,969 genesis tokens. The shared treasury is a separate Safe. The comparison is in [wallet-system.md](wallet-system.md).
-
-Nothing in that design is deployed.
-
-The NFT contract's `treasury()` address is the collection's mint receiver. It is not the civilization treasury.
-
-## Security boundary
-
-| Concern | Phase 0 rule |
-| --- | --- |
-| Private keys and seed phrases | Not requested, not stored, not accepted in configuration |
-| AI process | Can draft text only. It cannot sign |
-| Service role key | Server environment only |
-| Anon Supabase key | No table grants and no policies |
-| Database balances | Historical RPC readings, never spendable truth |
-| Treasury funding | A later manual transfer by the administrator into a deployed treasury wallet |
-| Contract deployment | Out of scope |
-| Legal and spending limits | Must be enforced by the wallet before autonomous trading exists |
-
-The administrator funds the treasury manually after that wallet exists. The AI does not receive the administrator key.
-
-## Living world (Phase 3)
-
-The simulation is a single PL/pgSQL function, `world_tick()`, scheduled by `pg_cron`. No browser or Next.js request drives it, so the world advances whether anyone is watching or not. The Next.js server reads world state with the service role and serves it through `GET /api/world/live` and `GET /api/world/events`. The browser renders a canvas map from that data. It joins a Realtime broadcast channel only as a signal to refetch. Rules, the time model, and the Phase 4 intent table are in [phase-3.md](phase-3.md).
-
-## Verifiable history (Phase 3.75)
-
-Canonical event documents and SHA-256 hashes live in `src/lib/verify`. Merkle batches use OpenZeppelin `StandardMerkleTree`. The browser recomputes proofs; `GET /api/verify/events/[id]` only supplies data. `EventAnchor` can record roots later. Nothing in this phase sends a transaction or labels simulated work as onchain.
-
-## AI mind (Phase 4)
-
-The simulation stays in `world_tick()`. A separate runner builds a bounded citizen context, calls the configured provider, validates JSON, and inserts `world_intents` or a house, farm, workshop, or catalog road stub. Outcome feedback writes memories, skills, and goals. Phase 5c adds deterministic town needs from Storehouse stock so ranking can prefer useful work or construction when a shortage is real. Phase 5b adds a persisted road overlay from catalog stubs; the model never writes coordinates. Phase 5d adds persistent town projects that survive scheduler gaps and advance only from those facts. Details are in [phase-4.md](phase-4.md) and [phase-5.md](phase-5.md).
-
-## Intentionally absent
-
-Enrollment, authentication, live balance display, contract deployment, swaps, DeFi adapters, and autonomous operation are later phases. The schema and the provider interface are here so those phases have a place to land without turning the project into a chatbot or a simulated economy.
+`POST /api/transactions` returns 403. Signing for issuance and payouts happens in GitHub Actions, not in the Next.js process.

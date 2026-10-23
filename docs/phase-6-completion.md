@@ -1,8 +1,10 @@
 # Phase 6 completion status
 
-Date: 19 October 2026. Read-only checks against Monad mainnet block 114788937 and the hosted Supabase project. Nothing in this audit was deployed, broadcast, funded, or enabled.
+The live record is [README.md](../README.md). This file is the audit from 19 October 2026. It is not the deployment status.
 
-Phase 6 is not operational. Account execution stays closed. The blocker is the Chog Genesis transfer race, not a missing build.
+Date: 19 October 2026. Read-only checks against Monad mainnet block 114788937 and the hosted Supabase project. That audit itself did not broadcast a transaction.
+
+As of that date, this note recorded account execution as closed. Citizen wallets and ChogBank were deployed later. See the README.
 
 ## Closeout on 19 October 2026
 

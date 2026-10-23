@@ -1,3 +1,5 @@
+> **Not the live record.** Deployed addresses and what the app does today are in [README.md](../README.md). This file is a phase journal. A present-tense sentence about deployment describes the day it was written.
+
 # Phase 3: the living civilization
 
 The home page is now a persistent 2D pixel-art world. Every eligible existing citizen has a home, a job, a current activity, and a history. One simulation runs inside the database, so the world moves whether or not anyone is watching. Visitors observe and inspect. They cannot steer citizens, and no public route writes world state.
@@ -12,7 +14,7 @@ The home page is now a persistent 2D pixel-art world. Every eligible existing ci
 | Food, wood, stone, tools | Simulated counts from 0 to 400 in the Storehouse. Not tokens, not balances. |
 | Construction of houses 13 to 15 | Simulated. Builders consume simulated wood and stone. |
 | Membership history from Phase 1 | Real, relabeled `source = system`, `category = membership`. |
-| AI events | None on the hosted world until Phase 4 is applied, the runner is enabled, and a model-backed intent executes. Rule-based activity stays `simulation`. See [phase-4.md](phase-4.md). |
+| AI events | The hosted world now stores `source=ai` decisions. This journal was written before that. Rule-based activity stays `simulation`. See [README.md](../README.md) and [phase-4.md](phase-4.md). |
 | Onchain events | Confirmed Chog Genesis transfers recorded by the watcher. The simulation itself still sends no transactions. |
 | Scheduler | Needs the migration. `pg_cron` runs `world_tick()` every 5 seconds, or every minute if sub-minute schedules are unsupported. |
 | Browser realtime | Needs `SUPABASE_ANON_KEY`. Without it the browser polls every 4 seconds. |

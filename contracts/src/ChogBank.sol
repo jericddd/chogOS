@@ -25,7 +25,8 @@ interface ICitizenWalletFactory {
 /// The wallet does not have to hold the NFT. NFT ownership is not an authorization.
 /// A leaked authorizer key can spend only inside these caps, and only to those wallets.
 /// It cannot change this contract or withdraw to an arbitrary address.
-/// This contract is not deployed. Deploying it does not deploy citizen wallets.
+/// Deployed on Monad mainnet at 0xB2494538433B2FA3167A723d32329cc22c3A59C1.
+/// A new deployment of this file is a different address. This constructor does not deploy citizen wallets.
 contract ChogBank {
     error WrongChain();
     error ZeroAddress();

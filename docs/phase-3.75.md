@@ -1,3 +1,5 @@
+> **Not the live record.** Deployed addresses and what the app does today are in [README.md](../README.md). This file is a phase journal. A present-tense sentence about deployment describes the day it was written.
+
 # Phase 3.75: verifiable civilization foundation
 
 This phase adds a public verification layer on the existing world. It does not implement the AI mind, move the map, reset citizens, or broadcast chain transactions.

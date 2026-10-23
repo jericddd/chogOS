@@ -1,6 +1,8 @@
+> **Not the live record.** Deployed addresses and what the app does today are in [README.md](../README.md). This file is a phase journal. A present-tense sentence about deployment describes the day it was written.
+
 # Permanent citizen wallets
 
-**Current design: `CitizenAccountV3`.** A citizen is the enrolled token id and does not need a wallet. The AI proposes issuance. The factory binds one CREATE2 address to chain 143, Genesis `0xc96d31F8626c6D03Fae5dCD3d61e3FB9F4a73763`, and that token id. The only signer is the agent key fixed in the implementation. The NFT holder is not an owner. The wallet does not have to hold the NFT. Nothing in this design is deployed, and no V3 address is published here because the address depends on the agent public key, which has not been chosen.
+**Current design: `CitizenAccountV3`.** A citizen is the enrolled token id and does not need a wallet. The AI proposes issuance. The factory binds one CREATE2 address to chain 143, Genesis `0xc96d31F8626c6D03Fae5dCD3d61e3FB9F4a73763`, and that token id. The only signer is the agent key fixed in the implementation. The NFT holder is not an owner. The wallet does not have to hold the NFT. The factory and the agent address are deployed and listed in [README.md](../README.md). The agent key is not in this repository.
 
 The V2 addresses below are void for the product. Do not fund them and do not deploy `CitizenAccountV2`. They still match that contract's bytecode, which is kept so the custody analysis can be checked. The rest of this file keeps that analysis: Genesis `transferFrom` does not notify the recipient, so a wallet whose authority depended on custody could freeze funds with no honest recovery.
 

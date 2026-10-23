@@ -1,8 +1,16 @@
 # Wallet system
 
-The current citizen wallet is `CitizenAccountV3`. A citizen does not need a wallet to exist. When the AI issues one, the signer is an immutable agent key, not `ownerOf`. NFT custody is not required. The notes below keep the older Phase 6a and V2 designs as history. Do not deploy them.
+The live record is [README.md](../README.md).
 
-Phase 6a selected an NFT-bound `CitizenAccount` whose root authority is `ownerOf` at execution time. The V1 contract **does not** grant delegated executors: an `ownerAtGrant` snapshot is only invalid while another address owns the NFT, and it becomes executable again after A→B→A. See [phase-6a-wallet-architecture.md](phase-6a-wallet-architecture.md). Production registry rows remain `unassigned` and `not_configured` until a verified Mainnet factory deployment is separately authorized. The factory has not been broadcast.
+The citizen wallet in production is `CitizenAccountV3`. The factory with code on Monad mainnet is `0xE1236D88f64206555c7E9FCfC3c742B2BAa2fc6A`. Its `agent()` is `0x18229E45A24FB96f3c2d551adb406Db2F7d14358`. A citizen can exist in the world before a wallet is created. The NFT holder does not control the wallet. The agent key is a GitHub Actions secret and is not in this repository. That key can authorize a call from the citizen wallet.
+
+V1, V1.1, and V2 factories listed later in this file have no code. Do not deploy them.
+
+Everything under "Historical design notes" is the older journal. Where it says a factory has not been broadcast, or that no citizen wallet exists, that sentence describes the design phase, not the factory above.
+
+## Historical design notes
+
+Phase 6a selected an NFT-bound `CitizenAccount` whose root authority is `ownerOf` at execution time. The V1 contract **does not** grant delegated executors: an `ownerAtGrant` snapshot is only invalid while another address owns the NFT, and it becomes executable again after A→B→A. See [phase-6a-wallet-architecture.md](phase-6a-wallet-architecture.md). That V1 factory was not the one that was broadcast.
 
 Phase 6b keeps that account design and adds owner-opened executor sessions plus ChogBank activation policy. V1.1 bytecode is a **new** factory address (`0xA2edAC99…`). Do not deploy the unused V1 prediction `0x2d8c32…`. See [phase-6b-chogbank.md](phase-6b-chogbank.md). Enrollment still does not create wallets. The relayer is disabled.
 
@@ -18,7 +26,7 @@ V1 guarantees (once a factory is authorized and an account is later created):
 - `grantDelegation` / `executeDelegated` revert `DelegationDisabled`.
 - The AI model never holds a private key and has no unrestricted account access.
 
-The permanent-wallet design is now implemented and tested, and it is not deployed. One Chog NFT maps to one permanent proxy whose implementation is immutable. An AI session exists only while that proxy holds the NFT, and an unseen ownership round trip cannot revive it. A former owner cannot leave an upgrade behind. See [permanent-wallet-auth.md](permanent-wallet-auth.md). Production signing, sponsorship, and `/api/transactions` stay closed. Phase 7 is not started.
+The V2 design in [permanent-wallet-auth.md](permanent-wallet-auth.md) is source only. It is not the deployed wallet. The deployed wallet is `CitizenAccountV3`. `/api/transactions` stays closed. The website does not sign.
 
 ## Phase 2 decision
 
@@ -26,7 +34,7 @@ Hash-checked Safe 1.3.0, 1.4.1, and 1.5.0 singletons and proxy factories are pre
 
 A normal Safe keeps the owners it was created with. Predicting a Safe whose owner is today's NFT holder would leave the previous owner in control after a transfer. No hash-matched account implementation reads `ownerOf`. Phase 2 therefore does not predict or deploy citizen wallets. Each persisted citizen can have one `unassigned` registry row with status `not_configured` and no address.
 
-`walletControlFollowsNftOwner()` returns false. NFT ownership still authorizes the citizen record through a fresh `ownerOf` read. It does not authorize a smart wallet, because no such wallet exists.
+`walletControlFollowsNftOwner()` returns false. NFT ownership still authorizes the citizen record through a fresh `ownerOf` read. It does not authorize the citizen wallet. The deployed wallet is `CitizenAccountV3`, and the NFT holder is not its signer.
 
 The Civilization Treasury is a separate configuration row. No address is seeded. If an administrator later sets one, the server reads code and `masterCopy()` before storing an observed status. An observed Safe is not a wallet chogOS deployed, and the AI cannot spend from it.
 

@@ -2,7 +2,7 @@
 
 Date: 17 October 2026.
 Base: production `cursor/phase-1-genesis-world-155c`.
-Status: **implementation and review only**. No Mainnet broadcast, no factory deploy, no citizen `create`, no hosted SQL apply, no live relayer, no world reset.
+Status on 17 October 2026: **implementation and review only**. That day's note recorded no Mainnet broadcast and no factory deploy. `CitizenAccountFactoryV3` and ChogBank were deployed later. The live record is [README.md](../README.md). The V1 factory prediction in this file is still empty and stays unused.
 
 ## What already existed (Phase 6a)
 
@@ -27,7 +27,7 @@ ChogBank (TypeScript policy + additive, unapplied SQL):
 
 - AI action `request_wallet_activation` is optional. Ordinary citizens keep living without a wallet.
 - The bank approves, rejects, or defers. It reserves deployment gas and sponsored tx gas separately from business capital.
-- Production runtime is fail-closed: treasury source `unset`, factory not deployed, relayer disabled, no signer backend.
+- On 17 October 2026 the Next.js runtime was fail-closed: treasury source `unset`, factory flag unset, relayer disabled, no signer in the web process. The website still does not sign. The factory on Monad is the one in the README.
 - Jobs are persisted intents. Nothing in this PR broadcasts.
 
 ## AI-driven activation
