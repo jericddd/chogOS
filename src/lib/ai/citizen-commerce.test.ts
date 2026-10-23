@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { considerCitizenCommerce, settleCommerceText, type CommerceCitizen } from "@/lib/ai/citizen-commerce";
+import { AiProviderError } from "@/lib/ai/types";
 
 const citizens: CommerceCitizen[] = [
   {
@@ -105,6 +106,27 @@ describe("citizen commerce", () => {
     expect(result.status).toBe("proposed");
     expect(rows[0]).toMatch(/does not broadcast/i);
     expect(rows[1]).toMatch(/does not broadcast/i);
+  });
+
+  it("does not store a trade when the Lite slot is closed", async () => {
+    let recorded = false;
+    const result = await considerCitizenCommerce({
+      citizens: citizens.slice(0, 1),
+      timeoutMs: 1000,
+      maxOutputTokens: 200,
+      provider: "gemini",
+      model: "gemini-3.5-flash-lite",
+      complete: async () => {
+        throw new AiProviderError("The shared model slot is not open.", "rate_limit", false);
+      },
+      record: async () => {
+        recorded = true;
+        return true;
+      },
+    });
+    expect(result.status).toBe("skipped");
+    expect(recorded).toBe(false);
+    expect(result.detail).toMatch(/No transaction was broadcast/);
   });
 
   it("leaves the growth prompt unchanged and keeps signing out of the runner", () => {

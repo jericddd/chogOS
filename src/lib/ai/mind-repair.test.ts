@@ -164,6 +164,7 @@ describe("mind repair", () => {
     await expect(
       createGeminiProvider(config).complete({
         purpose: "citizen_turn",
+        reserveAttempt: async () => {},
         messages: [{ role: "user", content: "choose" }],
         timeoutMs: 40,
       }),

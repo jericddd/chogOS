@@ -1,11 +1,9 @@
 import type { AppConfig } from "@/lib/config/env";
+import { geminiModelForRequest, modelCallTimeoutMs } from "@/lib/ai/model-route";
 import { AiProviderError, type AiCompletion, type AiCompletionRequest, type AiProvider } from "@/lib/ai/types";
 
 export const GEMINI_DEFAULT_MODEL = "gemini-3.8-flash";
-/**
- * This AI Studio key has `gemini-3.8-flash` (LOW thinking timed out on Hobby).
- * 2.5/2.0 404'd and wrongly halted the mind. Try 3.x lite/MINIMAL first, then 3.8.
- */
+/** Kept so older checks can name the Lite model. Completions do not walk this list. */
 export const GEMINI_HOBBY_MODELS = [
   "gemini-3.5-flash-lite",
   "gemini-3.6-flash",
@@ -20,20 +18,9 @@ export const GEMINI_HOBBY_FALLBACK_MODEL = GEMINI_HOBBY_MODELS[1];
 export const GEMINI_THINKING_LEVEL = "LOW";
 const DEFAULT_HOST = "https://generativelanguage.googleapis.com/v1beta";
 
-export function geminiModelsToTry(configured: string): string[] {
-  const model = configured.trim();
-  if (model === "gemini-3.8-flash" || model.startsWith("gemini-3.8-flash")) {
-    return [...GEMINI_HOBBY_MODELS];
-  }
-  return [model];
-}
-
-/** Try the model that already answered in this process before the 404 ladder. */
-export function withRememberedModel(models: readonly string[], remembered: string | undefined): string[] {
-  if (!remembered || models[0] === remembered || !models.includes(remembered)) {
-    return [...models];
-  }
-  return [remembered, ...models.filter((model) => model !== remembered)];
+/** One model for this purpose. Routine work does not fall through to Flash. */
+export function geminiModelsToTry(configured: string, purpose = ""): string[] {
+  return [geminiModelForRequest(configured, purpose)];
 }
 
 export function geminiThinkingConfig(model: string): Record<string, unknown> {
@@ -48,10 +35,6 @@ export function geminiThinkingConfig(model: string): Record<string, unknown> {
 
 function isMissingModel(status: number, bodyText: string): boolean {
   return status === 404 || /not found|is not found|unknown model/.test(bodyText.toLowerCase());
-}
-
-function isThinkingRejected(status: number, bodyText: string): boolean {
-  return status === 400 && /thinking|minimal|thinking_budget|thinkingbudget/.test(bodyText.toLowerCase());
 }
 
 export function geminiEndpoint(model: string, baseUrl?: string): string {
@@ -76,10 +59,10 @@ function classifyGeminiFailure(status: number, bodyText: string): AiProviderErro
     const quota = /quota|daily|per day|rpd/.test(lower);
     return new AiProviderError(
       quota
-        ? "Gemini free-tier quota is exhausted. New inference is halted."
-        : "Gemini rate-limited the request. New inference is deferred.",
+        ? "Gemini free-tier quota is exhausted for this model."
+        : "Gemini rate-limited the request. This model is deferred.",
       quota ? "quota" : "rate_limit",
-      true,
+      false,
     );
   }
   if (isMissingModel(status, bodyText)) {
@@ -138,9 +121,20 @@ function readOutputTokens(body: unknown): number | undefined {
   return total > 0 ? total : typeof record.totalTokenCount === "number" ? record.totalTokenCount : undefined;
 }
 
+async function reserveOutbound(request: AiCompletionRequest, model: string): Promise<void> {
+  if (!request.reserveAttempt) {
+    throw new AiProviderError("A shared model slot was not reserved, so this request was not sent.", "unavailable", false);
+  }
+  try {
+    await request.reserveAttempt(model);
+  } catch (error) {
+    if (error instanceof AiProviderError) throw error;
+    throw new AiProviderError("The shared model ledger is unavailable, so this request was not sent.", "unavailable", false);
+  }
+}
+
 export function createGeminiProvider(config: AppConfig): AiProvider {
   const configured = config.aiModel ?? GEMINI_DEFAULT_MODEL;
-  let rememberedModel: string | undefined;
   return {
     id: "gemini",
     async complete(request: AiCompletionRequest): Promise<AiCompletion> {
@@ -161,106 +155,98 @@ export function createGeminiProvider(config: AppConfig): AiProvider {
         throw new AiProviderError("Gemini completions require a user message.", "invalid", false);
       }
 
-      const timeoutMs = request.timeoutMs ?? config.aiRequestTimeoutMs;
+      const model = geminiModelForRequest(configured, request.purpose);
+      const timeoutMs = modelCallTimeoutMs(model, request.timeoutMs ?? config.aiRequestTimeoutMs);
       const budgetEndsAt = Date.now() + timeoutMs;
       const headers = {
         "x-goog-api-key": apiKey,
         "Content-Type": "application/json",
       };
-      const models = withRememberedModel(geminiModelsToTry(configured), rememberedModel);
-      let lastFailure: AiProviderError | undefined;
+      const generationConfig: Record<string, unknown> = {
+        temperature: 0.3,
+        maxOutputTokens: request.maxOutputTokens ?? config.aiMaxOutputTokens,
+        thinkingConfig: geminiThinkingConfig(model),
+      };
+      if (request.responseSchema) {
+        generationConfig.responseMimeType = "application/json";
+        generationConfig.responseSchema = request.responseSchema;
+      }
+      const payload = {
+        systemInstruction: system ? { parts: [{ text: system }] } : undefined,
+        contents: [{ role: "user", parts: [{ text: user }] }],
+        generationConfig,
+      };
+      const endpoint = geminiEndpoint(model, config.aiBaseUrl);
+      const maxAttempts = 2;
+      let skipReserve = request.attemptAlreadyReserved === true;
 
-      for (const model of models) {
-        const budgetLeft = budgetEndsAt - Date.now();
-        if (budgetLeft < 1_500) {
+      for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+        const slice = budgetEndsAt - Date.now();
+        if (slice < 1_500) {
           throw new AiProviderError("Gemini request timed out.", "timeout", false);
         }
-        const generationConfig: Record<string, unknown> = {
-          temperature: 0.3,
-          maxOutputTokens: request.maxOutputTokens ?? config.aiMaxOutputTokens,
-          thinkingConfig: geminiThinkingConfig(model),
-        };
-        if (request.responseSchema) {
-          generationConfig.responseMimeType = "application/json";
-          generationConfig.responseSchema = request.responseSchema;
+        if (skipReserve) {
+          skipReserve = false;
+        } else {
+          await reserveOutbound(request, model);
         }
-        const payload = {
-          systemInstruction: system ? { parts: [{ text: system }] } : undefined,
-          contents: [{ role: "user", parts: [{ text: user }] }],
-          generationConfig,
-        };
-        const endpoint = geminiEndpoint(model, config.aiBaseUrl);
-        const maxAttempts = 2;
-        let bodyText = "";
-        let response: Response | undefined;
-
-        for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
-          const slice = budgetEndsAt - Date.now();
-          if (slice < 1_500) {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), slice);
+        let response: Response;
+        try {
+          response = await fetch(endpoint, {
+            method: "POST",
+            headers,
+            body: JSON.stringify(payload),
+            signal: controller.signal,
+          });
+        } catch (error) {
+          if (error instanceof Error && error.name === "AbortError") {
             throw new AiProviderError("Gemini request timed out.", "timeout", false);
           }
-          const controller = new AbortController();
-          const timeout = setTimeout(() => controller.abort(), slice);
-          try {
-            response = await fetch(endpoint, {
-              method: "POST",
-              headers,
-              body: JSON.stringify(payload),
-              signal: controller.signal,
-            });
-          } catch (error) {
-            if (error instanceof Error && error.name === "AbortError") {
-              throw new AiProviderError("Gemini request timed out.", "timeout", false);
-            }
-            if (attempt < maxAttempts) {
-              await new Promise((resolve) => setTimeout(resolve, 800));
-              continue;
-            }
-            throw new AiProviderError("Gemini request failed to reach the API.", "unavailable", false);
-          } finally {
-            clearTimeout(timeout);
-          }
-
-          bodyText = await response.text();
-          if (response.ok) {
-            let body: unknown;
-            try {
-              body = JSON.parse(bodyText) as unknown;
-            } catch {
-              throw new AiProviderError("Gemini returned a non-JSON body.", "invalid", false);
-            }
-            const text = readGeminiText(body);
-            if (!text) {
-              throw new AiProviderError("Gemini returned an empty completion.", "invalid", false);
-            }
-            rememberedModel = model;
-            return {
-              provider: "gemini",
-              model,
-              text,
-              promptChars: system.length + user.length,
-              outputTokens: readOutputTokens(body),
-            };
-          }
-
-          const failure = classifyGeminiFailure(response.status, bodyText);
-          lastFailure = failure;
-          const skipModel =
-            (isMissingModel(response.status, bodyText) || isThinkingRejected(response.status, bodyText)) &&
-            model !== models[models.length - 1];
-          if (skipModel) {
-            break;
-          }
-          const retryable = !failure.halt && failure.code === "unavailable" && response.status >= 500;
-          if (retryable && attempt < maxAttempts) {
+          if (attempt < maxAttempts) {
             await new Promise((resolve) => setTimeout(resolve, 800));
             continue;
           }
+          throw new AiProviderError("Gemini request failed to reach the API.", "unavailable", false);
+        } finally {
+          clearTimeout(timeout);
+        }
+
+        const bodyText = await response.text();
+        if (response.ok) {
+          let body: unknown;
+          try {
+            body = JSON.parse(bodyText) as unknown;
+          } catch {
+            throw new AiProviderError("Gemini returned a non-JSON body.", "invalid", false);
+          }
+          const text = readGeminiText(body);
+          if (!text) {
+            throw new AiProviderError("Gemini returned an empty completion.", "invalid", false);
+          }
+          return {
+            provider: "gemini",
+            model,
+            text,
+            promptChars: system.length + user.length,
+            outputTokens: readOutputTokens(body),
+          };
+        }
+
+        const failure = classifyGeminiFailure(response.status, bodyText);
+        if (response.status === 429 || failure.code === "quota" || failure.code === "rate_limit") {
           throw failure;
         }
+        const retryable = failure.code === "unavailable" && response.status >= 500;
+        if (retryable && attempt < maxAttempts) {
+          await new Promise((resolve) => setTimeout(resolve, 800));
+          continue;
+        }
+        throw failure;
       }
 
-      throw lastFailure ?? new AiProviderError("Gemini request failed to reach the API.", "unavailable", false);
+      throw new AiProviderError("Gemini request failed to reach the API.", "unavailable", false);
     },
   };
 }

@@ -33,7 +33,9 @@ import { productionBankRuntime } from "@/lib/chogbank/runtime";
 import { readEconomyLedger, saveEconomyDecision } from "@/lib/economy/db";
 import { evaluateProductionEconomy } from "@/lib/economy/production";
 import { proposalFromDraft } from "@/lib/economy/proposal";
-import { publishStoredAiActivity } from "@/lib/ai/activity-event";
+import { publishDecisionActivity, publishStoredAiActivity } from "@/lib/ai/activity-event";
+import { geminiModelForRequest, modelTier, purposeCallTimeoutMs } from "@/lib/ai/model-route";
+import { closeModelDay, reserveModelAttempt } from "@/lib/ai/model-quota";
 import { storeCitizenCommerce } from "@/lib/ai/citizen-commerce-db";
 import { observeCitizenWallets, readCitizenMonSpent, readTreasuryChain } from "@/lib/ai/treasury-chain";
 import { rosterFromDeployedWallets, selectRotatedRoster } from "@/lib/ai/treasury-roster";
@@ -550,9 +552,80 @@ async function runAiMindWork(config: AppConfig, deadlineMs: number, report: Mind
     const startedAt = Date.now();
     let lastModelStartedAt = 0;
     let endRun = false;
+    let flashClosed = false;
+    let liteClosed = false;
     let treasuryConsidered = false;
     let walletIssuanceConsidered = false;
     let commerceConsidered = false;
+    const reserveAttempt = (model: string) => reserveModelAttempt(client, model);
+
+    function routedModel(purpose: string): string {
+      if (config.aiProvider === "gemini") return geminiModelForRequest(config.aiModel ?? "", purpose);
+      return config.aiModel ?? "";
+    }
+
+    async function noteModelAdmissionFailure(error: AiProviderError, model: string): Promise<void> {
+      const tier = modelTier(model);
+      if (error.code === "quota") await closeModelDay(client, tier);
+      if (error.code === "quota" || error.code === "rate_limit") {
+        if (tier === "flash") flashClosed = true;
+        else {
+          liteClosed = true;
+          endRun = true;
+        }
+      }
+      if (error.halt) endRun = true;
+      if (error.code === "unavailable" && /ledger|not sent/i.test(error.message)) {
+        endRun = true;
+        flashClosed = true;
+        liteClosed = true;
+        report.reason = report.reason ?? error.message;
+      }
+    }
+
+    async function admitModel(purpose: string): Promise<boolean> {
+      try {
+        await reserveModelAttempt(client, routedModel(purpose));
+        return true;
+      } catch (error) {
+        const providerError =
+          error instanceof AiProviderError
+            ? error
+            : new AiProviderError(
+                error instanceof Error ? error.message : "The shared model ledger is unavailable, so this request was not sent.",
+                "unavailable",
+                false,
+              );
+        await noteModelAdmissionFailure(providerError, routedModel(purpose));
+        report.reason = report.reason ?? providerError.message;
+        return false;
+      }
+    }
+
+    async function guardedComplete(
+      purpose: string,
+      request: { system: string; user: string; timeoutMs: number; maxOutputTokens: number },
+    ): Promise<AiCompletion> {
+      try {
+        return await provider.complete({
+          purpose,
+          messages: [
+            { role: "system", content: request.system },
+            { role: "user", content: request.user },
+          ],
+          timeoutMs: purposeCallTimeoutMs(purpose, request.timeoutMs),
+          maxOutputTokens: request.maxOutputTokens,
+          reserveAttempt,
+        });
+      } catch (error) {
+        const providerError =
+          error instanceof AiProviderError
+            ? error
+            : new AiProviderError(error instanceof Error ? error.message : "provider failed", "unavailable", false);
+        await noteModelAdmissionFailure(providerError, routedModel(purpose));
+        throw providerError;
+      }
+    }
 
     async function attachWalletIssuance(): Promise<void> {
       if (walletIssuanceConsidered) return;
@@ -561,6 +634,13 @@ async function runAiMindWork(config: AppConfig, deadlineMs: number, report: Mind
         report.walletIssuance = {
           status: "skipped",
           detail: "The mind run is halted or out of budget, so no wallet was requested.",
+        };
+        return;
+      }
+      if (liteClosed) {
+        report.walletIssuance = {
+          status: "skipped",
+          detail: "The Lite model slot is closed for this quota window. No wallet was requested.",
         };
         return;
       }
@@ -596,20 +676,11 @@ async function runAiMindWork(config: AppConfig, deadlineMs: number, report: Mind
           roster: context.roster,
           admittedDecisionIds: context.admittedDecisionIds,
           deploymentPathReady: false,
-          timeoutMs: slot.timeoutMs,
+          timeoutMs: purposeCallTimeoutMs("wallet_issuance", slot.timeoutMs),
           maxOutputTokens: config.aiMaxOutputTokens,
           provider: config.aiProvider,
-          model: config.aiModel ?? "",
-          complete: async (request) =>
-            provider.complete({
-              purpose: "wallet_issuance",
-              messages: [
-                { role: "system", content: request.system },
-                { role: "user", content: request.user },
-              ],
-              timeoutMs: request.timeoutMs,
-              maxOutputTokens: request.maxOutputTokens,
-            }),
+          model: routedModel("wallet_issuance"),
+          complete: (request) => guardedComplete("wallet_issuance", request),
           record: (row) => recordWalletIssuance(client, row),
         });
         if (result.promptChars > 0) {
@@ -640,7 +711,7 @@ async function runAiMindWork(config: AppConfig, deadlineMs: number, report: Mind
         client,
         treasuryReviewInsert({
           provider: config.aiProvider,
-          model: config.aiModel ?? "",
+          model: routedModel("treasury_allocation"),
           status: stored,
           stage: stored,
           rationale: detail,
@@ -654,6 +725,13 @@ async function runAiMindWork(config: AppConfig, deadlineMs: number, report: Mind
     async function attachTreasury(): Promise<void> {
       if (treasuryConsidered) return;
       treasuryConsidered = true;
+      if (flashClosed) {
+        report.treasury = {
+          status: "skipped",
+          detail: "The Flash model slot is closed for this quota window. No allocation was requested.",
+        };
+        return;
+      }
       if (report.status === "halted" || report.status === "budget") {
         await noteTreasury(
           "skipped",
@@ -750,20 +828,11 @@ async function runAiMindWork(config: AppConfig, deadlineMs: number, report: Mind
           chogCap: chain.facts.maxPerTxChog,
           walletDeployed: true,
           citizenSpentMon: citizenSpent.spent,
-          timeoutMs: slot.timeoutMs,
+          timeoutMs: purposeCallTimeoutMs("treasury_allocation", slot.timeoutMs),
           maxOutputTokens: config.aiMaxOutputTokens,
           provider: config.aiProvider,
-          model: config.aiModel ?? "",
-          complete: async (request) =>
-            provider.complete({
-              purpose: "treasury_allocation",
-              messages: [
-                { role: "system", content: request.system },
-                { role: "user", content: request.user },
-              ],
-              timeoutMs: request.timeoutMs,
-              maxOutputTokens: request.maxOutputTokens,
-            }),
+          model: routedModel("treasury_allocation"),
+          complete: (request) => guardedComplete("treasury_allocation", request),
           record: (row) => recordTreasuryDecision(client, row),
         });
         if (result.promptChars > 0) {
@@ -790,6 +859,13 @@ async function runAiMindWork(config: AppConfig, deadlineMs: number, report: Mind
         report.commerce = { status: "skipped", detail: "The mind run is halted or out of budget, so no trade or return was requested." };
         return;
       }
+      if (liteClosed) {
+        report.commerce = {
+          status: "skipped",
+          detail: "The Lite model slot is closed for this quota window. No trade or return was requested. No transaction was broadcast.",
+        };
+        return;
+      }
       const slot = await takeModelSlot();
       if (!slot) {
         report.commerce = { status: "skipped", detail: "No model time remained for a trade or return decision. No transaction was broadcast." };
@@ -798,19 +874,10 @@ async function runAiMindWork(config: AppConfig, deadlineMs: number, report: Mind
       try {
         const result = await storeCitizenCommerce(client, {
           provider: config.aiProvider,
-          model: config.aiModel ?? "",
-          timeoutMs: slot.timeoutMs,
+          model: routedModel("citizen_trade"),
+          timeoutMs: purposeCallTimeoutMs("citizen_trade", slot.timeoutMs),
           maxOutputTokens: config.aiMaxOutputTokens,
-          complete: async (request) =>
-            provider.complete({
-              purpose: "citizen_trade",
-              messages: [
-                { role: "system", content: request.system },
-                { role: "user", content: request.user },
-              ],
-              timeoutMs: request.timeoutMs,
-              maxOutputTokens: request.maxOutputTokens,
-            }),
+          complete: (request) => guardedComplete("citizen_trade", request),
         });
         if (result.promptChars > 0) await bumpUsage(client, result.promptChars, result.outputTokens);
         report.commerce = { status: result.status, detail: result.detail };
@@ -856,7 +923,7 @@ async function runAiMindWork(config: AppConfig, deadlineMs: number, report: Mind
     // Treasury review runs before citizen decisions, so a full citizen queue cannot exhaust the deadline first.
     await attachTreasury();
 
-    while (!endRun) {
+    while (!endRun && !liteClosed) {
       if (timeoutWithinDeadline(startedAt, config.aiRequestTimeoutMs, Date.now(), citizenDeadline) === null) {
         report.reason = report.reason ?? "Stopped remaining citizens so treasury and wallet review keep their time.";
         break;
@@ -904,8 +971,10 @@ async function runAiMindWork(config: AppConfig, deadlineMs: number, report: Mind
 
       for (const row of queue) {
       let decided = false;
+      let decisionId: string | null = null;
       try {
         if (endRun) {
+          report.decisions.push({ tokenId: row.token_id, status: "deferred", detail: "left for a later run" });
           continue;
         }
         const providerTimeoutMs = timeoutWithinDeadline(startedAt, config.aiRequestTimeoutMs, Date.now(), citizenDeadline);
@@ -925,6 +994,7 @@ async function runAiMindWork(config: AppConfig, deadlineMs: number, report: Mind
 
         const bundle = await loadCitizenBundle(client, row.claimed_citizen_id);
         if (!bundle || bundle.citizen.activity === "unavailable") {
+          decided = true;
           report.decisions.push({ tokenId: row.token_id, status: "skipped", detail: "citizen context unavailable" });
           continue;
         }
@@ -983,19 +1053,24 @@ async function runAiMindWork(config: AppConfig, deadlineMs: number, report: Mind
 
         if (!menuHasUsefulChoice(menu) && !landCanGrow(context)) {
           const reason = growthBlocker(context);
-          const { error: blockedError } = await client.from("ai_decisions").insert({
-            citizen_id: row.claimed_citizen_id,
-            purpose: "citizen_turn",
-            status: "rejected",
-            provider: config.aiProvider,
-            model: config.aiModel,
-            input_commitment: commitment,
-            validation_result: reason,
-          });
-          if (blockedError) {
+          const { data: blockedRow, error: blockedError } = await client
+            .from("ai_decisions")
+            .insert({
+              citizen_id: row.claimed_citizen_id,
+              purpose: "citizen_turn",
+              status: "rejected",
+              provider: config.aiProvider,
+              model: routedModel("citizen_turn"),
+              input_commitment: commitment,
+              validation_result: reason,
+            })
+            .select("id")
+            .single();
+          if (blockedError || !blockedRow) {
             report.decisions.push({ tokenId: row.token_id, status: "failed", detail: "could not persist the decision row" });
             continue;
           }
+          decisionId = blockedRow.id as string;
           decided = true;
           report.rejected += 1;
           report.decisions.push({ tokenId: row.token_id, status: "blocked", detail: reason });
@@ -1007,6 +1082,15 @@ async function runAiMindWork(config: AppConfig, deadlineMs: number, report: Mind
           deferForDeadline(row.token_id);
           continue;
         }
+        const admitted = await admitModel("citizen_turn");
+        if (!admitted) {
+          report.decisions.push({
+            tokenId: row.token_id,
+            status: "deferred",
+            detail: "left for a later run because the model slot is closed",
+          });
+          continue;
+        }
 
         const { data: inserted, error: insertError } = await client
           .from("ai_decisions")
@@ -1015,7 +1099,7 @@ async function runAiMindWork(config: AppConfig, deadlineMs: number, report: Mind
             purpose: "citizen_turn",
             status: "draft",
             provider: config.aiProvider,
-            model: config.aiModel,
+            model: routedModel("citizen_turn"),
             input_commitment: commitment,
           })
           .select("id")
@@ -1024,7 +1108,8 @@ async function runAiMindWork(config: AppConfig, deadlineMs: number, report: Mind
           report.decisions.push({ tokenId: row.token_id, status: "failed", detail: "could not persist the decision row" });
           continue;
         }
-        const decisionId = inserted.id as string;
+        decisionId = inserted.id as string;
+        decided = true;
 
         let completion;
         try {
@@ -1035,14 +1120,17 @@ async function runAiMindWork(config: AppConfig, deadlineMs: number, report: Mind
               { role: "user", content: messages.user },
             ],
             responseSchema: mindResponseSchema(menu),
-            timeoutMs: slot.timeoutMs,
+            timeoutMs: purposeCallTimeoutMs("citizen_turn", slot.timeoutMs),
             maxOutputTokens: config.aiMaxOutputTokens,
+            reserveAttempt,
+            attemptAlreadyReserved: true,
           });
         } catch (error) {
           const providerError =
             error instanceof AiProviderError
               ? error
               : new AiProviderError(error instanceof Error ? error.message : "provider failed", "unavailable", false);
+          await noteModelAdmissionFailure(providerError, routedModel("citizen_turn"));
           await client
             .from("ai_decisions")
             .update({ status: "failed", last_error: providerError.message })
@@ -1083,14 +1171,16 @@ async function runAiMindWork(config: AppConfig, deadlineMs: number, report: Mind
                   },
                 ],
                 responseSchema: mindResponseSchema(menu),
-                timeoutMs: retrySlot.timeoutMs,
+                timeoutMs: purposeCallTimeoutMs("citizen_turn", retrySlot.timeoutMs),
                 maxOutputTokens: config.aiMaxOutputTokens,
+                reserveAttempt,
               });
             } catch (error) {
               const providerError =
                 error instanceof AiProviderError
                   ? error
                   : new AiProviderError(error instanceof Error ? error.message : "provider failed", "unavailable", false);
+              await noteModelAdmissionFailure(providerError, routedModel("citizen_turn"));
               await client
                 .from("ai_decisions")
                 .update({ status: "failed", last_error: providerError.message })
@@ -1589,6 +1679,40 @@ async function runAiMindWork(config: AppConfig, deadlineMs: number, report: Mind
           detail: `${proposal.action} at ${proposal.buildingId}`,
         });
       } finally {
+        if (decisionId) {
+          try {
+            const stored = await client
+              .from("ai_decisions")
+              .select("id, citizen_id, purpose, status, rationale, output")
+              .eq("id", decisionId)
+              .maybeSingle();
+            if (stored.data) {
+              const body = stored.data as {
+                id?: string;
+                citizen_id?: string | null;
+                purpose?: string;
+                status?: string;
+                rationale?: string | null;
+                output?: unknown;
+              };
+              const output =
+                body.output && typeof body.output === "object" && !Array.isArray(body.output)
+                  ? { ...(body.output as Record<string, unknown>), tokenId: row.token_id }
+                  : { tokenId: row.token_id };
+              await publishDecisionActivity(client, {
+                id: String(body.id ?? decisionId),
+                citizenId: typeof body.citizen_id === "string" ? body.citizen_id : row.claimed_citizen_id,
+                purpose: String(body.purpose ?? "citizen_turn"),
+                status: String(body.status ?? ""),
+                rationale: typeof body.rationale === "string" ? body.rationale : null,
+                output,
+                tokenId: row.token_id,
+              });
+            }
+          } catch {
+            // Publication cannot change the stored decision or the claim release.
+          }
+        }
         await client.rpc("world_release_claim", {
           p_citizen: row.claimed_citizen_id,
           p_run: runId,

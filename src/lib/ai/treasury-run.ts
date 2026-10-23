@@ -104,6 +104,9 @@ export async function considerTreasuryAllocation(input: {
         ? error
         : new AiProviderError(error instanceof Error ? error.message : "The treasury model call failed.", "unavailable", false);
     const detail = providerError.message.replace(/https?:\/\/\S+/gi, "[redacted-url]").slice(0, 240);
+    if (!providerError.halt && (providerError.code === "quota" || providerError.code === "rate_limit" || /not sent/i.test(detail))) {
+      return skipped("skipped", detail, 0, 0);
+    }
     if (providerError.halt) {
       const halt = haltFromError(providerError);
       await input.record(row({

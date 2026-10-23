@@ -16,13 +16,10 @@ import {
 } from "@/lib/ai/invocation";
 import {
   createGeminiProvider,
-  GEMINI_HOBBY_FALLBACK_MODEL,
   GEMINI_HOBBY_MODEL,
-  GEMINI_HOBBY_MODELS,
   geminiEndpoint,
   geminiModelsToTry,
   geminiThinkingConfig,
-  withRememberedModel,
 } from "@/lib/ai/providers/gemini";
 import { createProviderFromConfig } from "@/lib/ai/resolve";
 import { parseDecisionOutput } from "@/lib/ai/schema";
@@ -240,12 +237,15 @@ describe("Gemini adapter", () => {
     } as unknown as NodeJS.ProcessEnv);
     const completion = await createGeminiProvider(config).complete({
       purpose: "citizen_turn",
+      reserveAttempt: async () => {},
       messages: [{ role: "user", content: "choose" }],
       responseSchema: { type: "object" },
     });
     expect(completion.provider).toBe("gemini");
     expect(completion.model).toBe(GEMINI_HOBBY_MODEL);
-    expect(geminiModelsToTry("gemini-3.8-flash")).toEqual([...GEMINI_HOBBY_MODELS]);
+    expect(geminiModelsToTry("gemini-3.8-flash", "citizen_turn")).toEqual([GEMINI_HOBBY_MODEL]);
+    expect(geminiModelsToTry("gemini-3.8-flash", "treasury_allocation")).toEqual(["gemini-3.8-flash"]);
+    expect(geminiModelsToTry("gemini-3.8-flash")).toEqual(["gemini-3.8-flash"]);
     expect(geminiThinkingConfig(GEMINI_HOBBY_MODEL)).toEqual({ thinkingLevel: "MINIMAL" });
     expect(geminiThinkingConfig("gemini-3.8-flash")).toEqual({ thinkingLevel: "LOW" });
     const firstCall = fetchSpy.mock.calls[0] as unknown as [string, RequestInit];
@@ -267,15 +267,19 @@ describe("Gemini adapter", () => {
       AI_PROVIDER: "gemini",
       AI_API_KEY: "test-key",
     } as unknown as NodeJS.ProcessEnv);
-    await expect(createGeminiProvider(config).complete({ purpose: "x", messages: [{ role: "user", content: "x" }] })).rejects.toMatchObject({
+    await expect(
+      createGeminiProvider(config).complete({ purpose: "x", reserveAttempt: async () => {}, messages: [{ role: "user", content: "x" }] }),
+    ).rejects.toMatchObject({
       code: "quota",
-      halt: true,
+      halt: false,
     });
     expect(fetchSpy).toHaveBeenCalledTimes(1);
     fetchSpy.mockResolvedValueOnce(
       new Response(JSON.stringify({ error: { message: "Please enable billing to continue" } }), { status: 403 }),
     );
-    await expect(createGeminiProvider(config).complete({ purpose: "x", messages: [{ role: "user", content: "x" }] })).rejects.toMatchObject({
+    await expect(
+      createGeminiProvider(config).complete({ purpose: "x", reserveAttempt: async () => {}, messages: [{ role: "user", content: "x" }] }),
+    ).rejects.toMatchObject({
       code: "billing",
       halt: true,
     });
@@ -283,7 +287,7 @@ describe("Gemini adapter", () => {
     expect(fetchSpy).toHaveBeenCalledTimes(2);
   });
 
-  it("retries a single Gemini 503", async () => {
+  it("retries a single Gemini 503 and reserves both attempts", async () => {
     const fetchSpy = vi.fn()
       .mockResolvedValueOnce(new Response("unavailable", { status: 503 }))
       .mockResolvedValueOnce(
@@ -295,58 +299,58 @@ describe("Gemini adapter", () => {
         ),
       );
     vi.stubGlobal("fetch", fetchSpy);
+    let reserved = 0;
     const config = readAppConfig({
       AI_PROVIDER: "gemini",
       AI_API_KEY: "test-key",
     } as unknown as NodeJS.ProcessEnv);
     const completion = await createGeminiProvider(config).complete({
       purpose: "x",
+      reserveAttempt: async () => {
+        reserved += 1;
+      },
       messages: [{ role: "user", content: "x" }],
     });
     expect(completion.text).toContain("rest");
+    expect(completion.model).toBe("gemini-3.8-flash");
+    expect(reserved).toBe(2);
     expect(fetchSpy).toHaveBeenCalledTimes(2);
+    expect(String(fetchSpy.mock.calls[0]?.[0])).toContain("gemini-3.8-flash");
+    expect(String(fetchSpy.mock.calls[1]?.[0])).toContain("gemini-3.8-flash");
+    expect(String(fetchSpy.mock.calls[0]?.[0])).not.toContain("flash-lite");
   });
 
-  it("falls back to the next Hobby model when the first is missing", async () => {
-    const fetchSpy = vi.fn()
-      .mockResolvedValueOnce(new Response(JSON.stringify({ error: { message: "model is not found" } }), { status: 404 }))
-      .mockResolvedValueOnce(
-        new Response(
-          JSON.stringify({
-            candidates: [{ content: { parts: [{ text: '{"action":"rest","summary":"Rest.","rationale":"Night."}' }] } }],
-          }),
-          { status: 200 },
-        ),
-      );
+  it("does not call Flash when a routine Lite model is missing", async () => {
+    const fetchSpy = vi.fn(
+      async () => new Response(JSON.stringify({ error: { message: "model is not found" } }), { status: 404 }),
+    );
     vi.stubGlobal("fetch", fetchSpy);
     const config = readAppConfig({
       AI_PROVIDER: "gemini",
       AI_API_KEY: "test-key",
       AI_MODEL: "gemini-3.8-flash",
     } as unknown as NodeJS.ProcessEnv);
-    const completion = await createGeminiProvider(config).complete({
-      purpose: "x",
-      messages: [{ role: "user", content: "x" }],
-    });
-    expect(completion.model).toBe(GEMINI_HOBBY_FALLBACK_MODEL);
-    const first = fetchSpy.mock.calls[0] as unknown as [string, RequestInit];
-    const second = fetchSpy.mock.calls[1] as unknown as [string, RequestInit];
-    expect(first[0]).toContain(GEMINI_HOBBY_MODEL);
-    expect(second[0]).toContain(GEMINI_HOBBY_FALLBACK_MODEL);
+    await expect(
+      createGeminiProvider(config).complete({
+        purpose: "citizen_turn",
+        reserveAttempt: async () => {},
+        messages: [{ role: "user", content: "x" }],
+      }),
+    ).rejects.toMatchObject({ code: "unavailable", halt: false });
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    expect(String((fetchSpy.mock.calls as unknown[][])[0]?.[0])).toContain(GEMINI_HOBBY_MODEL);
+    expect(String((fetchSpy.mock.calls as unknown[][])[0]?.[0])).not.toContain("gemini-3.8-flash");
   });
 
-  it("asks the model that already answered before walking the missing-model list again", async () => {
-    const fetchSpy = vi.fn(async (url: string) => {
-      if (String(url).includes(GEMINI_HOBBY_FALLBACK_MODEL)) {
-        return new Response(
-          JSON.stringify({
-            candidates: [{ content: { parts: [{ text: '{"action":"build","summary":"Grow.","rationale":"Land."}' }] } }],
-          }),
-          { status: 200 },
-        );
-      }
-      return new Response(JSON.stringify({ error: { message: "model is not found" } }), { status: 404 });
-    });
+  it("keeps a later routine turn on Lite and sends treasury only to Flash", async () => {
+    const fetchSpy = vi.fn(async () =>
+      new Response(
+        JSON.stringify({
+          candidates: [{ content: { parts: [{ text: '{"action":"rest","summary":"Rest.","rationale":"Night."}' }] } }],
+        }),
+        { status: 200 },
+      ),
+    );
     vi.stubGlobal("fetch", fetchSpy);
     const config = readAppConfig({
       AI_PROVIDER: "gemini",
@@ -354,15 +358,28 @@ describe("Gemini adapter", () => {
       AI_MODEL: "gemini-3.8-flash",
     } as unknown as NodeJS.ProcessEnv);
     const provider = createGeminiProvider(config);
-    await provider.complete({ purpose: "x", messages: [{ role: "user", content: "x" }] });
-    fetchSpy.mockClear();
-    const again = await provider.complete({ purpose: "x", messages: [{ role: "user", content: "y" }] });
-    expect(again.model).toBe(GEMINI_HOBBY_FALLBACK_MODEL);
-    expect(fetchSpy).toHaveBeenCalledTimes(1);
-    expect(String((fetchSpy.mock.calls[0] as unknown[])[0])).toContain(GEMINI_HOBBY_FALLBACK_MODEL);
-    expect(withRememberedModel([...GEMINI_HOBBY_MODELS], GEMINI_HOBBY_FALLBACK_MODEL)[0]).toBe(
-      GEMINI_HOBBY_FALLBACK_MODEL,
-    );
+    const first = await provider.complete({
+      purpose: "citizen_turn",
+      reserveAttempt: async () => {},
+      messages: [{ role: "user", content: "x" }],
+    });
+    const second = await provider.complete({
+      purpose: "citizen_turn",
+      reserveAttempt: async () => {},
+      messages: [{ role: "user", content: "y" }],
+    });
+    const treasury = await provider.complete({
+      purpose: "treasury_allocation",
+      reserveAttempt: async () => {},
+      messages: [{ role: "user", content: "allocate" }],
+    });
+    expect(first.model).toBe(GEMINI_HOBBY_MODEL);
+    expect(second.model).toBe(GEMINI_HOBBY_MODEL);
+    expect(treasury.model).toBe("gemini-3.8-flash");
+    expect(fetchSpy).toHaveBeenCalledTimes(3);
+    expect(String((fetchSpy.mock.calls as unknown[][])[0]?.[0])).toContain(GEMINI_HOBBY_MODEL);
+    expect(String((fetchSpy.mock.calls as unknown[][])[1]?.[0])).toContain(GEMINI_HOBBY_MODEL);
+    expect(String((fetchSpy.mock.calls as unknown[][])[2]?.[0])).toContain("gemini-3.8-flash");
   });
 
   it("surfaces Gemini HTTP 400 body text and does not halt", async () => {
@@ -376,7 +393,7 @@ describe("Gemini adapter", () => {
       AI_API_KEY: "test-key",
     } as unknown as NodeJS.ProcessEnv);
     const error = await createGeminiProvider(config)
-      .complete({ purpose: "x", messages: [{ role: "user", content: "x" }] })
+      .complete({ purpose: "x", reserveAttempt: async () => {}, messages: [{ role: "user", content: "x" }] })
       .then(
         () => null,
         (caught: unknown) => caught,
@@ -397,7 +414,7 @@ describe("Gemini adapter", () => {
       AI_MODEL: "gemini-2.5-flash",
     } as unknown as NodeJS.ProcessEnv);
     await expect(
-      createGeminiProvider(config).complete({ purpose: "x", messages: [{ role: "user", content: "x" }] }),
+      createGeminiProvider(config).complete({ purpose: "x", reserveAttempt: async () => {}, messages: [{ role: "user", content: "x" }] }),
     ).rejects.toMatchObject({ code: "unavailable", halt: false });
     expect(isRetriableHaltReason("The configured Gemini model is not available to this account.")).toBe(true);
     expect(isRetriableHaltReason("Gemini free-tier quota is exhausted. New inference is halted.")).toBe(false);
@@ -415,7 +432,7 @@ describe("Gemini adapter", () => {
       AI_API_KEY: "test-key",
     } as unknown as NodeJS.ProcessEnv);
     await expect(
-      createGeminiProvider(config).complete({ purpose: "x", messages: [{ role: "user", content: "x" }] }),
+      createGeminiProvider(config).complete({ purpose: "x", reserveAttempt: async () => {}, messages: [{ role: "user", content: "x" }] }),
     ).rejects.toMatchObject({ code: "timeout", halt: false });
     expect(fetchSpy).toHaveBeenCalledTimes(1);
   });
