@@ -106,6 +106,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  window.location.hash = "";
   cleanup();
   vi.unstubAllGlobals();
 });
@@ -500,6 +501,97 @@ describe("activity feed", () => {
     expect(enrolled?.querySelector('a[href="/verify/events/enrolled-1547"]')?.textContent).toBe("Verify");
     expect(enrolled?.querySelector(`a[href="${genesis}"]`)?.textContent).toBe("Genesis token");
     expect(screen.queryByRole("link", { name: "All joined" })).toBeNull();
+    expect(Element.prototype.scrollIntoView).not.toHaveBeenCalled();
+  });
+
+  it("keeps newest world activity above a collapsed Joined section in the world panel", async () => {
+    const genesis = "https://monadscan.com/nft/0xc96d31f8626c6d03fae5dcd3d61e3fb9f4a73763/1547";
+    const enrolled = event(9, {
+      id: "enrolled-1547",
+      kind: "citizen_enrolled",
+      category: "membership",
+      source: "system",
+      tokenId: "1547",
+      summary: "Chog Genesis #1547 enrolled by its verified owner.",
+      onchain: {
+        title: "Chog joined the civilization",
+        note: "ownerOf",
+        links: [{ label: "Genesis token", href: genesis, value: "1547" }],
+      },
+    });
+    const olderRoster = event(4, {
+      id: "roster-52",
+      kind: "genesis_joined",
+      category: "membership",
+      source: "system",
+      tokenId: "52",
+      summary: "Chog Genesis #52 verified in the ChogTreasury founding roster.",
+    });
+    const latest = event(30, { summary: "A citizen gathered food." });
+    const fetcher = vi.fn(async (url: string) => {
+      if (!String(url).includes("category=membership")) {
+        return new Response(JSON.stringify({ status: "ok", events: [], nextBefore: null }));
+      }
+      return new Response(JSON.stringify({ status: "ok", nextBefore: null, events: [enrolled] }));
+    });
+    vi.stubGlobal("fetch", fetcher);
+    window.location.hash = "#joined-civilization";
+    const store = createLiveStore(snapshot([latest, enrolled, olderRoster]), { fetcher: vi.fn() as unknown as typeof fetch });
+    render(<ActivityFeed store={store} dock />);
+
+    const activity = await screen.findByText("A citizen gathered food.");
+    const summary = await screen.findByText("Joined the civilization · 1 Chog");
+    expect(activity.compareDocumentPosition(summary) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    const details = summary.closest("details");
+    expect(details?.open).toBe(false);
+    expect(screen.getAllByText("Chog Genesis #1547 enrolled by its verified owner.")).toHaveLength(1);
+    expect(screen.getByText("Chog Genesis #1547 enrolled by its verified owner.").closest("details")).toBe(details);
+    expect(screen.getByText("Chog Genesis #52 verified in the ChogTreasury founding roster.").closest("details")).toBeNull();
+    expect(screen.getByText("Chog Genesis #52 verified in the ChogTreasury founding roster.").compareDocumentPosition(summary) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(Element.prototype.scrollIntoView).not.toHaveBeenCalled();
+
+    fireEvent.click(summary);
+    expect(details?.open).toBe(true);
+    const row = screen.getByText("Chog Genesis #1547 enrolled by its verified owner.").closest("li");
+    expect(row?.querySelector('a[href="/verify/events/enrolled-1547"]')?.textContent).toBe("Verify");
+    expect(row?.querySelector(`a[href="${genesis}"]`)?.textContent).toBe("Genesis token");
+    expect(screen.getByRole("link", { name: "All joined" }).getAttribute("href")).toBe("/activity#joined-civilization");
+  });
+
+  it("scrolls to Joined only when the history page opens on that link", async () => {
+    const fetcher = vi.fn(async (url: string) => {
+      if (!String(url).includes("category=membership")) {
+        return new Response(JSON.stringify({ status: "ok", events: [event(30, { summary: "A citizen gathered food." })], nextBefore: null }));
+      }
+      return new Response(
+        JSON.stringify({
+          status: "ok",
+          nextBefore: null,
+          events: [
+            event(2, {
+              kind: "genesis_joined",
+              category: "membership",
+              source: "system",
+              tokenId: "7",
+              summary: "Chog Genesis #7 verified in the ChogTreasury founding roster.",
+            }),
+          ],
+        }),
+      );
+    });
+    vi.stubGlobal("fetch", fetcher);
+    const store = createLiveStore(snapshot([]), { fetcher: vi.fn() as unknown as typeof fetch });
+    const view = render(<ActivityFeed store={store} mode="page" />);
+    const activity = await screen.findByText("A citizen gathered food.");
+    const heading = await screen.findByRole("heading", { name: "Joined the civilization" });
+    expect(activity.compareDocumentPosition(heading) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(Element.prototype.scrollIntoView).not.toHaveBeenCalled();
+
+    view.unmount();
+    window.location.hash = "#joined-civilization";
+    render(<ActivityFeed store={store} mode="page" />);
+    await screen.findByRole("heading", { name: "Joined the civilization" });
+    await waitFor(() => expect(document.getElementById("joined-civilization")?.scrollIntoView).toHaveBeenCalled());
   });
 });
 
