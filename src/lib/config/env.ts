@@ -80,7 +80,8 @@ export type AppConfig = {
   /** Public asset-control address. Must differ from the gas-paying address. */
   chogBankAssetAddress?: Address;
   /**
-   * Deployed ownerless ChogBank. Unset means the contract is not deployed.
+   * Deployed ChogBank. The contract has no owner and no proxy.
+   * Unset means this process has no ChogBank address configured.
    * This is not CHOG_BANK_ASSET_ADDRESS and it is not a predicted wallet.
    */
   chogBankContractAddress?: Address;

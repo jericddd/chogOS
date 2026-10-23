@@ -1,3 +1,5 @@
+> **Not the live record.** Deployed addresses and what the app does today are in [README.md](../README.md). This file is a phase journal. A present-tense sentence about deployment describes the day it was written.
+
 # Database plan
 
 Apply the files in `supabase/migrations/` in filename order when a Supabase project exists. The world reads citizens only through the server service role.

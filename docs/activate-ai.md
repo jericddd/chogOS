@@ -1,3 +1,5 @@
+> **Not the live record.** Deployed addresses and what the app does today are in [README.md](../README.md). This file is a phase journal. A present-tense sentence about deployment describes the day it was written.
+
 # Turn the AI mind on (click these)
 
 The civilization **already runs with your PC off**. That is Supabase `pg_cron` calling `world_tick()`.
@@ -8,7 +10,7 @@ After merging the Actions workflow, add the runner secret here (same string as V
 
 [https://github.com/jericddd/chogOS/settings/secrets/actions](https://github.com/jericddd/chogOS/settings/secrets/actions)
 
-Name: `AI_RUNNER_SECRET`. Then **Actions → AI mind → Run workflow** once. GitHub only auto-runs the schedule from **`main`**. If that branch is still the old Phase 0 default, merge the workflow onto `main` or switch the default branch.
+Name: `AI_RUNNER_SECRET`. Then **Actions → AI mind → Run workflow** once. GitHub only auto-runs the schedule from **`main`**. The workflow file on `main` is the schedule. The application source it checks out is `cursor/phase-1-genesis-world-155c`.
 
 The numbered steps below are the original activation recipe. Do not re-run the SQL if `world_ensure_minds()` already inserted 59 personalities.
 

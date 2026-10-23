@@ -95,7 +95,7 @@ async function inspectContract(config: AppConfig): Promise<{ inspection: Ownerle
   inspection.configuredAddress = raw;
   inspection.blockedReason = knownAddressProblem(raw);
   if (config.chogBankGasAddress && raw.toLowerCase() === config.chogBankGasAddress.toLowerCase()) {
-    inspection.blockedReason = "That address is the gas-paying address, not the ownerless treasury.";
+    inspection.blockedReason = "That address is the gas-paying address, not ChogBank.";
   }
   if (inspection.blockedReason || config.chainId !== 143) return { inspection, deploymentBlock: null };
 

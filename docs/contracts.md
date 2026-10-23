@@ -1,3 +1,5 @@
+> **Not the live record.** Deployed addresses and what the app does today are in [README.md](../README.md). This file is a phase journal. A present-tense sentence about deployment describes the day it was written.
+
 # Contract evidence
 
 Checked on 10 October 2026. Repeat the calls with `npm run verify:contracts`. That script uses the public RPCs below, prints pass or fail, and does not request holder balances or print `ownerOf` results.

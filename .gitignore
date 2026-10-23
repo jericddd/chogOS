@@ -46,3 +46,6 @@ next-env.d.ts
 /contracts/cache
 /contracts/broadcast
 /contracts/lib
+
+# local demo captures and retired render scripts
+/demo/

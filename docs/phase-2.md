@@ -1,6 +1,8 @@
+> **Not the live record.** Deployed addresses and what the app does today are in [README.md](../README.md). This file is a phase journal. A present-tense sentence about deployment describes the day it was written.
+
 # Phase 2 — citizen wallets and the Civilization Treasury
 
-Phase 2 adds a wallet registry and a shared treasury record on top of the existing civilization. It does not deploy a smart account, does not configure a treasury address, and does not send a transaction.
+Phase 2 added a wallet registry and a shared treasury record. That phase did not deploy a smart account and did not send a transaction. Citizen wallets were created later from `CitizenAccountFactoryV3`. See [README.md](../README.md).
 
 ## What a citizen is
 
@@ -34,7 +36,7 @@ Safe proxy factories 1.3.0, 1.4.1, and 1.5.0, the matching singletons, EntryPoin
 
 A Safe does not change owners when an NFT moves. Binding today's owner into a Safe would leave the previous owner in control after a transfer. No hash-matched ERC-6551 account implementation was selected, so no citizen address is derived. `walletControlFollowsNftOwner()` is false on purpose.
 
-Creating a wallet safely still needs an account implementation that reads `ownerOf` on each authorization, or another reviewed design that revokes the previous owner. That implementation is not in this repository, and this phase does not deploy one.
+Phase 2 did not choose an `ownerOf` wallet. The wallet that was later deployed is `CitizenAccountV3`. The NFT holder is not its signer. See [README.md](../README.md).
 
 ## Civilization Treasury
 

@@ -1,3 +1,5 @@
+> **Not the live record.** Deployed addresses and what the app does today are in [README.md](../README.md). This file is a phase journal. A present-tense sentence about deployment describes the day it was written.
+
 # Phase 6d — watcher, gas observation, and signer
 
 Phase 6d makes the Phase 6c transfer watcher restart-safe and adds a read-only view of the gas-paying MON balance. It does not deploy contracts, broadcast transactions, create citizen accounts, move assets, apply hosted SQL, or enable a signer.

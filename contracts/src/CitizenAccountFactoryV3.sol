@@ -10,7 +10,8 @@ import {CitizenWalletProxy} from "./CitizenWalletProxy.sol";
 /// Genesis contract, and the token id. The first deployment requires an
 /// agent signature. Anyone can relay that signature. A second call returns
 /// the same wallet and does not create another one.
-/// This factory is not deployed.
+/// Deployed on Monad mainnet at 0xE1236D88f64206555c7E9FCfC3c742B2BAa2fc6A.
+/// The agent key is not in this repository.
 contract CitizenAccountFactoryV3 {
     error ZeroAddress();
     error ZeroChain();

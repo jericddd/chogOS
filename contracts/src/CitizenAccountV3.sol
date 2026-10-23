@@ -8,7 +8,8 @@ pragma solidity ^0.8.28;
 /// One immutable agent key authorizes calls. It cannot upgrade the wallet or
 /// replace itself. A signature authorizes one exact call. It is not a treasury
 /// allocation, and a treasury allocation is not a wallet call.
-/// This contract is not deployed.
+/// Deployed as the implementation behind wallets created by CitizenAccountFactoryV3
+/// at 0xE1236D88f64206555c7E9FCfC3c742B2BAa2fc6A. The proxy is the citizen wallet.
 contract CitizenAccountV3 {
     error DirectCall();
     error AlreadyInitialized();

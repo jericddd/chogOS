@@ -1,8 +1,10 @@
+> **Not the live record.** Deployed addresses and what the app does today are in [README.md](../README.md). This file is a phase journal. A present-tense sentence about deployment describes the day it was written.
+
 # Phase 7 — Treasury, ChogBank, and the citizen economy
 
 Date: 19 October 2026.
 Base: `cursor/phase-1-genesis-world-155c`. PR #34 is already merged there as `f1dc993`.
-Status: **implementation and review only**. No contract deploy, no signed transaction, no broadcast, no hosted SQL, no watcher checkpoint change, no production configuration change.
+Status of this journal on 19 October 2026: implementation and review. That PR did not itself broadcast. ChogBank and citizen wallets were deployed later. See [README.md](../README.md).
 
 ## Architecture
 

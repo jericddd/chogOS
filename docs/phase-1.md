@@ -1,3 +1,5 @@
+> **Not the live record.** Deployed addresses and what the app does today are in [README.md](../README.md). This file is a phase journal. A present-tense sentence about deployment describes the day it was written.
+
 # Phase 1 — Genesis roster and world
 
 chogOS has one civilization. A Chog Genesis NFT is one citizen. Founding citizens are the NFTs held by the existing ChogTreasury wallet. Community citizens are enrolled by wallets that currently own other tokens from the same collection. Phase 1 does not deploy contracts, move NFTs, or spend `$CHOG`.

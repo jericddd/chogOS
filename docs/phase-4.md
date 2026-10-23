@@ -1,3 +1,5 @@
+> **Not the live record.** Deployed addresses and what the app does today are in [README.md](../README.md). This file is a phase journal. A present-tense sentence about deployment describes the day it was written.
+
 # Phase 4 — Autonomous AI civilization mind
 
 Phase 4 adds a hosted, cost-controlled decision loop around the existing simulation. It does not replace `world_tick()`, does not rebuild the map, and does not rerun the Phase 3.75 event cutover.

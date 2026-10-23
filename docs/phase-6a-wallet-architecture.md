@@ -1,12 +1,16 @@
+> **Not the live record.** Deployed addresses and what the app does today are in [README.md](../README.md). This file is a phase journal. A present-tense sentence about deployment describes the day it was written.
+
 # Phase 6a — Citizen wallet architecture (Mainnet-first V1)
 
 Date: 17 October 2026.
 Base: production `cursor/phase-1-genesis-world-155c` @ `7b9f2bf`.
-Status: **stop before the first Mainnet broadcast**. This document is the review package for an authorized signer. A local Foundry fork is not a deployed factory.
+Status on 17 October 2026: **stop before the first Mainnet broadcast**. This document is the V1 review package. A local Foundry fork is not a deployed factory. The factory that later received code is `CitizenAccountFactoryV3` in [README.md](../README.md), not the V1 prediction in this file.
 
-Citizen identity remains `(chain_id, nft_contract, token_id)`. The NFT is the citizen. The current owner's EOA is not. The Civilization Treasury, ChogTreasury NFT holder, AI model, and citizen account are distinct. Production registry rows stay `unassigned` / `not_configured`. No founding-citizen accounts were created. No private keys are in git or Supabase.
+Citizen identity remains `(chain_id, nft_contract, token_id)`. The NFT is the citizen. The current owner's EOA is not the citizen wallet. The Civilization Treasury, ChogTreasury NFT holder, AI model, and citizen account are distinct. No private keys are in git or Supabase.
 
-## Current production state (rechecked)
+## Production state rechecked on 17 October 2026
+
+As of this recheck, founding-citizen wallets had not been created yet. That changed later. See [README.md](../README.md).
 
 - Wallet registry exists (`citizen_wallet_registry`). The only scheme the application writes is `unassigned`. The only application-written status is `not_configured`.
 - `walletControlFollowsNftOwner()` is false for that scheme.
