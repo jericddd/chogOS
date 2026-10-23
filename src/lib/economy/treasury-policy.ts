@@ -52,6 +52,8 @@ export type SpendRecord = {
   asset: TreasuryAsset;
   amountRaw: bigint;
   windowId: string;
+  /** True when this amount is already inside the chain window total. */
+  settled?: boolean;
 };
 
 export type AllocationStatus =
@@ -101,6 +103,9 @@ export function evaluateTreasuryAllocation(input: {
   walletDeployed: boolean;
   executionEnabled: boolean;
   walletObservation?: WalletObservation;
+  /** MON already reserved on the contract in this window. Pending rows are added separately. */
+  observedWindowSpent?: bigint;
+  observedCitizenSpent?: bigint;
 }): AllocationVerdict {
   const draft = input.draft;
   const fail = (status: AllocationStatus, reason: string): AllocationVerdict => ({
@@ -139,6 +144,16 @@ export function evaluateTreasuryAllocation(input: {
     if (input.limits.maxPerTxChog <= 0n || input.limits.maxCitizenWindowChog <= 0n || input.limits.maxAggregateWindowChog <= 0n) {
       return fail("budget_exhausted", "The application cap for $CHOG is closed. No token amount was assumed from a price.");
     }
+    if (
+      input.limits.maxPerTxChog <= MINIMAL_CHOG_CAP &&
+      input.limits.maxCitizenWindowChog <= MINIMAL_CHOG_CAP &&
+      input.limits.maxAggregateWindowChog <= MINIMAL_CHOG_CAP
+    ) {
+      return fail(
+        "rejected",
+        "The deployed $CHOG cap is 1 wei. $CHOG is not available for a payout at that cap. MON is the usable payout asset.",
+      );
+    }
   }
 
   const perTx = draft.asset === "MON" ? input.limits.maxPerTxMon : input.limits.maxPerTxChog;
@@ -163,8 +178,17 @@ export function evaluateTreasuryAllocation(input: {
   if (sameWindow.some((row) => row.decisionId === decisionId || (row.tokenId === draft.tokenId && row.asset === draft.asset))) {
     return fail("duplicate", "This citizen already has an allocation for that asset in the current window.");
   }
-  const citizenSpent = sameWindow.filter((row) => row.tokenId === draft.tokenId).reduce((sum, row) => sum + row.amountRaw, 0n);
-  const windowSpent = sameWindow.reduce((sum, row) => sum + row.amountRaw, 0n);
+  const pending = input.observedWindowSpent == null ? sameWindow : sameWindow.filter((row) => row.settled !== true);
+  const citizenSpent =
+    (input.observedCitizenSpent ?? 0n) +
+    (input.observedWindowSpent == null
+      ? sameWindow.filter((row) => row.tokenId === draft.tokenId).reduce((sum, row) => sum + row.amountRaw, 0n)
+      : pending.filter((row) => row.tokenId === draft.tokenId).reduce((sum, row) => sum + row.amountRaw, 0n));
+  const windowSpent =
+    (input.observedWindowSpent ?? 0n) +
+    (input.observedWindowSpent == null
+      ? sameWindow.reduce((sum, row) => sum + row.amountRaw, 0n)
+      : pending.reduce((sum, row) => sum + row.amountRaw, 0n));
   if (citizenSpent + draft.amountRaw > perCitizen) {
     return fail("budget_exhausted", "The amount is above the per-citizen cap for this window.");
   }
@@ -173,7 +197,10 @@ export function evaluateTreasuryAllocation(input: {
   }
 
   const balance = draft.asset === "MON" ? input.monBalance : input.chogBalance;
-  if (balance != null && balance < draft.amountRaw) {
+  if (balance == null) {
+    return fail("rejected", "The treasury balance was not read, so this allocation was not accepted.");
+  }
+  if (balance < draft.amountRaw) {
     return fail("insufficient_funds", "The observed treasury balance is below the requested amount.");
   }
 
@@ -186,7 +213,7 @@ export function evaluateTreasuryAllocation(input: {
     input.walletDeployed
       ? "A deployed citizen wallet was observed for this token id."
       : "No citizen wallet bytecode was observed, so funds are not sent to a predicted address.",
-    balance == null ? "The treasury balance was not read." : "The observed balance covers this amount.",
+    "The observed balance covers this amount.",
   ];
   return {
     status: input.executionEnabled && input.walletDeployed && balance != null ? "ready_for_signature" : CLOSED,

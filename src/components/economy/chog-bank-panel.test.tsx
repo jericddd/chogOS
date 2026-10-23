@@ -107,4 +107,18 @@ describe("ChogBank panel", () => {
     expect(screen.getByText(/not a claim that no Funded or Distributed event exists/)).toBeTruthy();
     expect(screen.queryByText(/No successful Funded or Distributed event was found/)).toBeNull();
   });
+
+  it("separates application review thresholds from contract-enforced limits", () => {
+    const pending = presentOwnerlessTreasury({ inspection: pendingInspection(143), decisions: [], decisionsLoaded: true });
+    const first = render(<ChogBankPanel view={pending} />);
+    expect(screen.getByRole("heading", { name: "Application review thresholds" })).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "Contract-enforced limits" })).toBeTruthy();
+    expect(screen.getByText(/Contract caps were not read from Monad/)).toBeTruthy();
+    first.unmount();
+
+    const ready = presentOwnerlessTreasury({ inspection: live(), decisions: [], decisionsLoaded: true, fundingScan: "empty" });
+    render(<ChogBankPanel view={ready} />);
+    expect(screen.getByText(/These values were read from the deployed contract/)).toBeTruthy();
+    expect(screen.queryByText(/Contract caps were not read from Monad/)).toBeNull();
+  });
 });

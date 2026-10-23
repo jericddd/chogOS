@@ -25,8 +25,10 @@ import { evaluateProductionEconomy } from "@/lib/economy/production";
 import { proposalFromDraft } from "@/lib/economy/proposal";
 import { publishStoredAiActivity } from "@/lib/ai/activity-event";
 import { storeCitizenCommerce } from "@/lib/ai/citizen-commerce-db";
-import { considerTreasuryAllocation } from "@/lib/ai/treasury-run";
-import { loadTreasuryPrior, loadTreasuryRoster, recordTreasuryDecision } from "@/lib/ai/treasury-db";
+import { observeCitizenWallets, readCitizenMonSpent, readTreasuryChain } from "@/lib/ai/treasury-chain";
+import { rosterFromDeployedWallets } from "@/lib/ai/treasury-roster";
+import { considerTreasuryAllocation, treasuryReviewInsert } from "@/lib/ai/treasury-run";
+import { loadTreasuryCandidates, loadTreasuryPrior, recordTreasuryDecision } from "@/lib/ai/treasury-db";
 import { considerWalletIssuance } from "@/lib/ai/wallet-run";
 import { loadWalletIssuanceContext, recordWalletIssuance } from "@/lib/ai/wallet-db";
 import { AiProviderError, type AiCompletion } from "@/lib/ai/types";
@@ -618,52 +620,112 @@ export async function runAiMind(
       }
     }
 
+    async function noteTreasury(
+      status: "skipped" | "rejected" | "failed",
+      detail: string,
+      stored: "rejected" | "failed",
+    ): Promise<void> {
+      const saved = await recordTreasuryDecision(
+        client,
+        treasuryReviewInsert({
+          provider: config.aiProvider,
+          model: config.aiModel ?? "",
+          status: stored,
+          stage: stored,
+          rationale: detail,
+        }),
+      );
+      report.treasury = saved
+        ? { status, detail }
+        : { status: "failed", detail: `${detail} The review was not stored.` };
+    }
+
     async function attachTreasury(): Promise<void> {
       if (treasuryConsidered) return;
       treasuryConsidered = true;
       if (report.status === "halted" || report.status === "budget") {
-        report.treasury = {
-          status: "skipped",
-          detail: "The mind run is halted or out of budget, so no treasury allocation was requested.",
-        };
+        await noteTreasury(
+          "skipped",
+          "The mind run is halted or out of budget, so no treasury allocation was requested.",
+          "failed",
+        );
         return;
       }
       if (timeoutWithinDeadline(startedAt, config.aiRequestTimeoutMs, Date.now(), deadlineMs) === null) {
-        report.treasury = { status: "skipped", detail: "Stopped before the host timeout. No treasury allocation was requested." };
+        await noteTreasury("skipped", "Stopped before the host timeout. No treasury allocation was requested.", "failed");
         return;
       }
       const gate = evaluateBudget(config, await readUsage(client));
       if (!gate.ok) {
-        report.treasury = { status: "skipped", detail: gate.reason };
+        await noteTreasury("skipped", gate.reason, "failed");
         if (gate.code === "halted") {
           report.status = "halted";
           report.reason = gate.reason;
         }
         return;
       }
-      const roster = await loadTreasuryRoster(client, config);
-      const prior = await loadTreasuryPrior(client);
-      if (roster == null || prior == null) {
-        report.treasury = { status: "failed", detail: "Earlier treasury records could not be read. The model was not called." };
+      const chain = await readTreasuryChain(config);
+      if (!chain.ok) {
+        await noteTreasury("failed", chain.reason, "failed");
         return;
       }
-      if (roster.length === 0) {
-        report.treasury = { status: "skipped", detail: "No enrolled citizen is eligible, so no allocation was requested." };
+      const loaded = await loadTreasuryCandidates(client, config);
+      const prior = await loadTreasuryPrior(client);
+      if (loaded == null || prior == null) {
+        await noteTreasury("failed", "Earlier treasury records could not be read. The model was not called.", "failed");
+        return;
+      }
+      const observed = await observeCitizenWallets(config, loaded.wallets);
+      if (observed == null) {
+        await noteTreasury("failed", "Citizen wallet code was not read, so no allocation was requested.", "failed");
+        return;
+      }
+      const selected = rosterFromDeployedWallets({
+        wallets: loaded.wallets,
+        code: observed,
+        cursor: loaded.cursor,
+      });
+      if (selected.status === "unreadable") {
+        await noteTreasury("failed", "Citizen wallet code was not read, so no allocation was requested.", "failed");
+        return;
+      }
+      if (selected.status === "none") {
+        await noteTreasury(
+          "skipped",
+          "No eligible citizen has a deployed wallet whose stored token id matches, so no allocation was requested.",
+          "rejected",
+        );
+        return;
+      }
+      const citizenSpent = await readCitizenMonSpent(
+        config,
+        selected.roster.map((citizen) => citizen.tokenId),
+        chain.facts.windowId,
+      );
+      if (citizenSpent == null) {
+        await noteTreasury("failed", "Citizen MON spending was not read, so no allocation was requested.", "failed");
         return;
       }
       const slot = await takeModelSlot();
       if (!slot) {
-        report.treasury = { status: "skipped", detail: "No model time remained for a treasury allocation." };
+        await noteTreasury("skipped", "No model time remained for a treasury allocation.", "failed");
         return;
       }
       try {
         const result = await considerTreasuryAllocation({
           nowMs: Date.now(),
-          roster,
+          roster: selected.roster,
           prior,
-          monBalance: null,
-          chogBalance: null,
-          chogDecimals: null,
+          monBalance: chain.facts.monBalance,
+          chogBalance: chain.facts.chogBalance,
+          chogDecimals: chain.facts.chogDecimals,
+          monPerTx: chain.facts.maxPerTxMon,
+          monCitizen: chain.facts.maxCitizenWindowMon,
+          monAggregate: chain.facts.maxAggregateWindowMon,
+          monSpentInWindow: chain.facts.observedWindowSpentMon,
+          chogCap: chain.facts.maxPerTxChog,
+          walletDeployed: true,
+          citizenSpentMon: citizenSpent,
           timeoutMs: slot.timeoutMs,
           maxOutputTokens: config.aiMaxOutputTokens,
           provider: config.aiProvider,
@@ -691,10 +753,7 @@ export async function runAiMind(
         }
       } catch {
         if (report.status !== "halted") {
-          report.treasury = {
-            status: "failed",
-            detail: "The treasury review failed before a payment. No transaction was created.",
-          };
+          await noteTreasury("failed", "The treasury review failed before a payment. No transaction was created.", "failed");
         }
       }
     }
@@ -768,6 +827,9 @@ export async function runAiMind(
         detail: "stopped before the host timeout",
       });
     }
+
+    // Treasury review runs before citizen decisions, so a full citizen queue cannot exhaust the deadline first.
+    await attachTreasury();
 
     while (!endRun) {
       if (timeoutWithinDeadline(startedAt, config.aiRequestTimeoutMs, Date.now(), deadlineMs) === null) {

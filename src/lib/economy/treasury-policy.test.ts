@@ -103,8 +103,8 @@ describe("ownerless treasury policy", () => {
         monBalance: null,
         chogBalance: 10n,
         chogDecimals: 18,
-      }).status,
-    ).toBe("accepted_not_executed");
+      }).reason,
+    ).toContain("not available");
     expect(
       evaluateProductionTreasuryAllocation({
         draft: draft({ asset: "CHOG", amountRaw: 2n }),
@@ -116,7 +116,7 @@ describe("ownerless treasury policy", () => {
         chogBalance: 10n,
         chogDecimals: 18,
       }).reason,
-    ).toContain("per-transaction");
+    ).toContain("not available");
     expect(
       evaluateProductionTreasuryAllocation({
         draft: draft({ asset: "CHOG", amountRaw: 1n }),
@@ -303,5 +303,68 @@ describe("ownerless treasury policy", () => {
     expect(mismatched.status).toBe("rejected");
     expect(mismatched.executed).toBe(false);
     expect(mismatched.reason).toContain("not the wallet");
+  });
+
+  it("rejects a MON allocation when the balance was not read", () => {
+    const verdict = evaluateTreasuryAllocation({
+      draft: draft({ amountRaw: 1n }),
+      limits: limits(),
+      nowMs: NOW,
+      eligibleTokenIds: ELIGIBLE,
+      spent: [],
+      monBalance: null,
+      chogBalance: null,
+      chogDecimals: 18,
+      walletDeployed: true,
+      executionEnabled: false,
+    });
+    expect(verdict.status).toBe("rejected");
+    expect(verdict.reason).toContain("not read");
+    expect(verdict.executed).toBe(false);
+  });
+
+  it("counts chain spending before another allocation in the same window", () => {
+    const windowId = String(Math.floor(NOW / 1000 / limits().windowSeconds));
+    const exhausted = evaluateTreasuryAllocation({
+      draft: draft({ amountRaw: 2n }),
+      limits: limits({ maxPerTxMon: 10n, maxCitizenWindowMon: 10n, maxAggregateWindowMon: 10n }),
+      nowMs: NOW,
+      eligibleTokenIds: ELIGIBLE,
+      spent: [],
+      monBalance: 10n,
+      chogBalance: null,
+      chogDecimals: 18,
+      walletDeployed: true,
+      executionEnabled: false,
+      observedWindowSpent: 9n,
+    });
+    expect(exhausted.status).toBe("budget_exhausted");
+    expect(exhausted.executed).toBe(false);
+
+    const covered = evaluateTreasuryAllocation({
+      draft: draft({ amountRaw: 5n }),
+      limits: limits({ maxPerTxMon: 10n, maxCitizenWindowMon: 10n, maxAggregateWindowMon: 10n }),
+      nowMs: NOW,
+      eligibleTokenIds: ELIGIBLE,
+      spent: [
+        {
+          decisionId: `0x${"11".repeat(32)}`,
+          tokenId: "109",
+          asset: "MON",
+          amountRaw: 5n,
+          windowId,
+          settled: true,
+        },
+      ],
+      monBalance: 10n,
+      chogBalance: null,
+      chogDecimals: 18,
+      walletDeployed: true,
+      executionEnabled: false,
+      observedWindowSpent: 5n,
+      observedCitizenSpent: 0n,
+    });
+    expect(covered.status).toBe("accepted_not_executed");
+    expect(covered.executed).toBe(false);
   });
 });

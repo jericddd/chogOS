@@ -1,5 +1,6 @@
 import { haltFromError } from "@/lib/ai/budget";
-import { settleTreasuryText, treasuryMessages, type TreasuryRosterEntry } from "@/lib/ai/treasury-decision";
+import { CHAIN_CHOG_CAP, CHAIN_MON_AGGREGATE, CHAIN_MON_CITIZEN, CHAIN_MON_PER_TX } from "@/lib/chogbank/bank";
+import { monPayoutRoom, settleTreasuryText, treasuryMessages, type TreasuryRosterEntry } from "@/lib/ai/treasury-decision";
 import { AiProviderError, type AiCompletion } from "@/lib/ai/types";
 import type { SpendRecord } from "@/lib/economy/treasury-policy";
 
@@ -47,6 +48,13 @@ export async function considerTreasuryAllocation(input: {
   monBalance: bigint | null;
   chogBalance: bigint | null;
   chogDecimals: number | null;
+  monPerTx?: bigint;
+  monCitizen?: bigint;
+  monAggregate?: bigint;
+  monSpentInWindow?: bigint;
+  chogCap?: bigint;
+  walletDeployed?: boolean;
+  citizenSpentMon?: ReadonlyMap<string, bigint>;
   timeoutMs: number;
   maxOutputTokens: number;
   provider: string;
@@ -58,9 +66,30 @@ export async function considerTreasuryAllocation(input: {
     return skipped("failed", "Earlier treasury records could not be read. The model was not called.", 0, 0);
   }
   if (input.roster.length === 0) {
-    return skipped("skipped", "No enrolled citizen is eligible, so no allocation was requested.", 0, 0);
+    const detail = "No eligible citizen has a deployed wallet whose stored token id matches, so no allocation was requested.";
+    await input.record(blankReview(input, "rejected", "rejected", detail));
+    return skipped("skipped", detail, 0, 0);
   }
-  const messages = treasuryMessages(input.roster);
+  if (input.monBalance == null || input.chogBalance == null || input.chogDecimals == null) {
+    const detail = "Treasury balances and caps were not read. No allocation was requested.";
+    await input.record(blankReview(input, "failed", "failed", detail));
+    return skipped("failed", detail, 0, 0);
+  }
+  const facts = {
+    monBalance: input.monBalance,
+    monPerTx: input.monPerTx ?? CHAIN_MON_PER_TX,
+    monCitizen: input.monCitizen ?? CHAIN_MON_CITIZEN,
+    monAggregate: input.monAggregate ?? CHAIN_MON_AGGREGATE,
+    monSpentInWindow: input.monSpentInWindow ?? 0n,
+    chogCap: input.chogCap ?? CHAIN_CHOG_CAP,
+    citizenSpentMon: input.citizenSpentMon,
+  };
+  if (monPayoutRoom(facts) === 0n) {
+    const detail = "The MON balance or the remaining contract capacity does not cover a payout. No allocation was requested.";
+    await input.record(blankReview(input, "rejected", "rejected", detail));
+    return skipped("rejected", detail, 0, 0);
+  }
+  const messages = treasuryMessages(input.roster, facts);
   let completion: AiCompletion;
   try {
     completion = await input.complete({
@@ -120,6 +149,9 @@ export async function considerTreasuryAllocation(input: {
     monBalance: input.monBalance,
     chogBalance: input.chogBalance,
     chogDecimals: input.chogDecimals,
+    walletDeployed: input.walletDeployed === true,
+    observedWindowSpent: input.monSpentInWindow,
+    citizenSpentMon: input.citizenSpentMon,
   });
   const admitted = settled.verdict.status === "accepted_not_executed";
   const citizen = input.roster.find((entry) => entry.tokenId === settled.draft?.tokenId);
@@ -148,6 +180,38 @@ export async function considerTreasuryAllocation(input: {
     outputTokens,
     halt: null,
   };
+}
+
+function blankReview(
+  input: { provider: string; model: string },
+  status: TreasuryDecisionInsert["status"],
+  stage: TreasuryDecisionInsert["output"]["stage"],
+  rationale: string,
+): TreasuryDecisionInsert {
+  return row({
+    provider: input.provider,
+    model: input.model,
+    status,
+    stage,
+    rationale,
+    citizenId: null,
+    decisionId: null,
+    tokenId: null,
+    asset: null,
+    amountRaw: null,
+    expectedOutcome: null,
+    windowId: null,
+  });
+}
+
+export function treasuryReviewInsert(input: {
+  provider: string;
+  model: string;
+  status: TreasuryDecisionInsert["status"];
+  stage: TreasuryDecisionInsert["output"]["stage"];
+  rationale: string;
+}): TreasuryDecisionInsert {
+  return blankReview(input, input.status, input.stage, input.rationale);
 }
 
 function skipped(

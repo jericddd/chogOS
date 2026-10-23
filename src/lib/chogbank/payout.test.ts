@@ -260,6 +260,24 @@ describe("ChogBank payout broadcaster", () => {
     expect(wrongCaps.calls).toEqual([]);
   });
 
+  it("does not sign when the balance cannot cover a payout", async () => {
+    const { io, calls } = harness({ snapshot: async () => snapshot({ monBalance: 0n }) });
+    const result = await broadcastPendingPayouts([pending("MON")], io);
+    expect(result).toEqual({ paid: 0, observed: 0, skipped: 1, failed: 0 });
+    expect(calls.some((call) => call.startsWith("sign:"))).toBe(false);
+  });
+
+  it("does not confirm a reverted receipt", async () => {
+    const { io, calls, confirms } = harness({
+      receipt: async () => ({ status: "reverted", logs: [] }),
+    });
+    const result = await broadcastPendingPayouts([pending("MON")], io);
+    expect(result).toEqual({ paid: 0, observed: 0, skipped: 0, failed: 1 });
+    expect(confirms).toEqual([]);
+    expect(calls.filter((call) => call.startsWith("sign:")).length).toBe(1);
+    expect(calls).not.toContain("confirm");
+  });
+
   it("stops the batch after a distribution fails", async () => {
     const { io, calls } = harness({
       send: async () => {

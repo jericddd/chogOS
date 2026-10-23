@@ -28,9 +28,9 @@ The model can propose town growth, one wallet issuance, or one MON allocation re
 
 ChogBank at `0xB2494538433B2FA3167A723d32329cc22c3A59C1` holds MON and `$CHOG`. It has no owner, no administrator, no proxy, and no upgrade. An immutable authorizer signs an EIP-712 allocation. The contract still checks the asset, the caps, the expiry, the nonce, and the recipient. The recipient has to be the deployed citizen wallet for that token id.
 
-The website does not sign. GitHub Actions job `pay` signs with the authorizer and submits `distribute` with the gas key. The agent key is not used for that job. `$CHOG` stays at the contract cap of 1 wei until a confirmed MON distribution receipt is stored.
+The website does not sign. GitHub Actions job `pay` signs with the authorizer and submits `distribute` with the gas key. The agent key is not used for that job. The mind proposes and explains. The contract enforces the caps. A Monad receipt is the execution record.
 
-The Economy page shows application review limits and the lower caps read from the contract. Settlement uses the contract caps.
+The treasury review runs before ordinary citizen decisions, with the live balance, the contract caps, the remaining spending capacity, and the goals of citizens whose wallets are deployed. The roster rotates. If those chain reads fail, the review is stored as failed and the model is not asked to allocate. `$CHOG` is not available for a payout while its contract cap is 1 wei. MON is the payout asset. The Economy page lists application review thresholds separately from the caps read off the contract, and it labels a row as a proposed allocation, a submitted transaction, or a confirmed payout. A confirmed payout links the Monad transaction only after the receipt and the `Distributed` event are stored.
 
 ## Verify
 

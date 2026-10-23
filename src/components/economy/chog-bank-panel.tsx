@@ -49,13 +49,25 @@ export function ChogBankPanel({ view }: { view: ChogBankPublicView }) {
           ))}
         </ul>
       ) : null}
-      <div className="mt-5">
-        <h3 className="font-serif text-xl">Spending policy</h3>
+      <div className="mt-5" data-testid="review-thresholds">
+        <h3 className="font-serif text-xl">Application review thresholds</h3>
         <ul className="mt-3 list-disc space-y-2 pl-5 text-sm leading-6 text-muted">
-          {view.policy.map((line) => (
+          {view.reviewThresholds.map((line) => (
             <li key={line}>{line}</li>
           ))}
         </ul>
+      </div>
+      <div className="mt-5" data-testid="contract-limits">
+        <h3 className="font-serif text-xl">Contract-enforced limits</h3>
+        {view.contractLimits.length > 0 ? (
+          <ul className="mt-3 list-disc space-y-2 pl-5 text-sm leading-6 text-muted">
+            {view.contractLimits.map((line) => (
+              <li key={line}>{line}</li>
+            ))}
+          </ul>
+        ) : (
+          <p className="mt-3 text-sm leading-6 text-muted">Contract caps were not read from Monad.</p>
+        )}
       </div>
       {view.fundingReady ? (
       <div className="mt-5">
