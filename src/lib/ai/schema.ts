@@ -10,6 +10,7 @@ export type CivicAction = (typeof CIVIC_ACTIONS)[number];
 
 export const DECISION_ACTIONS = [
   ...WORLD_ACTIONS,
+  "wait",
   "build",
   ...CIVIC_ACTIONS,
   "request_wallet_activation",
@@ -116,7 +117,7 @@ export function parseDecisionOutput(text: string): { ok: true; decision: ParsedD
     if (buildingId && buildingId !== "none" && !BUILDING_RE.test(buildingId)) {
       return { ok: false, reason: "invalid building id" };
     }
-  } else if (action !== "build") {
+  } else if (action !== "build" && action !== "wait") {
     if (!BUILDING_RE.test(buildingId)) {
       return { ok: false, reason: "invalid building id" };
     }

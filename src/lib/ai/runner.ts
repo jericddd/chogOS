@@ -2,9 +2,19 @@ import "server-only";
 import { randomUUID } from "node:crypto";
 import { getAiProvider } from "@/lib/ai/provider";
 import { evaluateBudget, haltFromError, isRetriableHaltReason, usagePeriods, type UsageSnapshot } from "@/lib/ai/budget";
-import { AI_INVOCATION_DEADLINE_MS, awaitFreeTierSlot, timeoutWithinDeadline } from "@/lib/ai/invocation";
+import {
+  AI_DB_CALL_MS,
+  AI_HOST_GRACE_MS,
+  AI_INVOCATION_DEADLINE_MS,
+  awaitFreeTierSlot,
+  citizenDeadlineMs,
+  finishBeforeDeadline,
+  timeoutWithinDeadline,
+} from "@/lib/ai/invocation";
+import { acceptMindChoice, buildMindMenu, isStickyRejection, menuHasUsefulChoice, mindResponseSchema } from "@/lib/ai/mind-menu";
+import { constructionKindsForShortage, roadsDeferredForShortage } from "@/lib/world/shortage";
 import { buildDecisionContext, contextCommitment, decisionMessages } from "@/lib/ai/context";
-import { acceptGrowth, GROWTH_RESPONSE_SCHEMA, growthBlocker, landCanGrow } from "@/lib/ai/growth";
+import { growthBlocker, landCanGrow } from "@/lib/ai/growth";
 import {
   isActivationAction,
   isCivicAction,
@@ -26,7 +36,7 @@ import { proposalFromDraft } from "@/lib/economy/proposal";
 import { publishStoredAiActivity } from "@/lib/ai/activity-event";
 import { storeCitizenCommerce } from "@/lib/ai/citizen-commerce-db";
 import { observeCitizenWallets, readCitizenMonSpent, readTreasuryChain } from "@/lib/ai/treasury-chain";
-import { rosterFromDeployedWallets } from "@/lib/ai/treasury-roster";
+import { rosterFromDeployedWallets, selectRotatedRoster } from "@/lib/ai/treasury-roster";
 import { considerTreasuryAllocation, treasuryReviewInsert } from "@/lib/ai/treasury-run";
 import { loadTreasuryCandidates, loadTreasuryPrior, recordTreasuryDecision } from "@/lib/ai/treasury-db";
 import { considerWalletIssuance } from "@/lib/ai/wallet-run";
@@ -36,7 +46,7 @@ import type { PersonalityTraits } from "@/lib/ai/personality";
 import { readAppConfig, type AppConfig } from "@/lib/config/env";
 import { createServiceRoleClient } from "@/lib/db/client";
 import { precheckAction, validateProposal, type ActionProposal } from "@/lib/world/actions";
-import { civicMenu, readCivicFacts, type CivicFacts } from "@/lib/world/civic";
+import { readCivicFacts, type CivicFacts } from "@/lib/world/civic";
 import { submitIntent } from "@/lib/world/intents";
 import {
   activeTownNeeds,
@@ -377,26 +387,16 @@ async function loadCivicFacts(client: Client): Promise<CivicFacts | null> {
   return readCivicFacts(data);
 }
 
-async function citizenByToken(client: Client, tokenId: string | null): Promise<string | null> {
-  if (!tokenId) {
-    return null;
-  }
-  const { data } = await client.from("citizens").select("id").eq("token_id", tokenId).limit(1).maybeSingle();
-  const id = data && typeof data === "object" && "id" in data ? data.id : null;
-  return typeof id === "string" ? id : null;
-}
-
-async function latestBreachCitizen(client: Client): Promise<string | null> {
-  const { data } = await client
-    .from("civilization_events")
-    .select("actor_citizen_id")
-    .eq("kind", "civic.breach")
-    .not("actor_citizen_id", "is", null)
-    .order("seq", { ascending: false })
-    .limit(1);
-  const row = Array.isArray(data) ? data[0] : null;
-  const id = row && typeof row === "object" && "actor_citizen_id" in row ? row.actor_citizen_id : null;
-  return typeof id === "string" ? id : null;
+async function rememberRejection(client: Client, citizenId: string, reason: string): Promise<void> {
+  const { error } = await client.from("ai_memories").insert({
+    scope: "citizen",
+    citizen_id: citizenId,
+    content: reason.slice(0, 240),
+    importance: 3,
+    category: "rejected_proposal",
+    outcome: "rejected",
+  });
+  void error;
 }
 
 type CivicApply =
@@ -416,7 +416,11 @@ async function applyCivicDecision(
     stock: { wood: number; stone: number };
   },
 ): Promise<CivicApply> {
-  if (decision.action === "visit" || decision.action === "watch") {
+  if (decision.action === "detain" || decision.action === "levy" || decision.action === "watch") {
+    return { ok: false, detail: "jail, detention, fines, and watch are disabled" };
+  }
+
+  if (decision.action === "visit") {
     const building = bundle.buildings.find((item) => item.id === decision.buildingId);
     const proposal: ActionProposal = {
       tokenId,
@@ -438,7 +442,12 @@ async function applyCivicDecision(
     if (!submitted.ok) {
       return { ok: false, detail: submitted.detail };
     }
-    return { ok: true, detail: `${decision.action} at ${decision.buildingId}`, queued: true, intentId: submitted.intentId };
+    return {
+      ok: true,
+      detail: `Simulated visit at ${decision.buildingId}. This did not move MON or $CHOG and it is not a transaction.`,
+      queued: true,
+      intentId: submitted.intentId,
+    };
   }
 
   if (decision.action === "proclaim" || decision.action === "amend" || decision.action === "pardon") {
@@ -462,18 +471,6 @@ async function applyCivicDecision(
             p_pardon: decision.action === "pardon",
           });
     return civicRpcResult(data, error, decision.action === "proclaim" ? `Proclaimed ${decision.lawCode}` : `${decision.action} ${decision.lawCode}`);
-  }
-
-  if (decision.action === "levy" || decision.action === "detain") {
-    const subject = (await citizenByToken(client, decision.subjectTokenId)) ?? (await latestBreachCitizen(client));
-    if (!subject) {
-      return { ok: false, detail: "no breach is stored" };
-    }
-    const { data, error } =
-      decision.action === "levy"
-        ? await client.rpc("world_levy_fine", { p_citizen: subject, p_decision: decisionId })
-        : await client.rpc("world_detain_citizen", { p_citizen: subject, p_decision: decisionId });
-    return civicRpcResult(data, error, decision.action === "levy" ? "Levied the ration fine" : "Sentenced a citizen to the jail");
   }
 
   return { ok: false, detail: "unsupported action" };
@@ -511,9 +508,23 @@ export async function runAiMind(
     return emptyReport("disabled", config, "AI_API_KEY and AI_MODEL must be set.");
   }
 
-  const client = createServiceRoleClient();
-  const report: MindRunReport = emptyReport("ran", config);
+  const report = emptyReport("ran", config);
+  return finishBeforeDeadline(
+    runAiMindWork(config, deadlineMs, report),
+    () => {
+      report.reason = report.reason ?? "Returned before the host timeout. Work still in flight was not waited on.";
+      return report;
+    },
+    deadlineMs + AI_HOST_GRACE_MS,
+  );
+}
+
+async function runAiMindWork(config: AppConfig, deadlineMs: number, report: MindRunReport): Promise<MindRunReport> {
+  const client = createServiceRoleClient({ timeoutMs: AI_DB_CALL_MS });
   const runId = randomUUID();
+  const citizenDeadline = citizenDeadlineMs(deadlineMs);
+  const blockedKinds = new Set<string>();
+  const recentRejections: string[] = [];
 
   try {
     await client.rpc("world_ensure_minds");
@@ -675,24 +686,34 @@ export async function runAiMind(
         await noteTreasury("failed", "Earlier treasury records could not be read. The model was not called.", "failed");
         return;
       }
-      const observed = await observeCitizenWallets(config, loaded.wallets);
-      if (observed == null) {
-        await noteTreasury("failed", "Citizen wallet code was not read, so no allocation was requested.", "failed");
+      const window = selectRotatedRoster(loaded.wallets, loaded.cursor, 12);
+      const observed = await observeCitizenWallets(config, window);
+      if (observed.code.size === 0 && observed.unread.length > 0) {
+        await noteTreasury(
+          "failed",
+          `Citizen wallet code was not read (${observed.unread[0]?.reason ?? "rpc failed"}), so no allocation was requested.`,
+          "failed",
+        );
         return;
       }
       const selected = rosterFromDeployedWallets({
-        wallets: loaded.wallets,
-        code: observed,
-        cursor: loaded.cursor,
+        wallets: window,
+        code: observed.code,
+        cursor: 0,
       });
       if (selected.status === "unreadable") {
-        await noteTreasury("failed", "Citizen wallet code was not read, so no allocation was requested.", "failed");
+        await noteTreasury(
+          "failed",
+          `Citizen wallet code was not read (${selected.unread[0] ? `token ${selected.unread[0]}` : "rpc failed"}), so no allocation was requested.`,
+          "failed",
+        );
         return;
       }
       if (selected.status === "none") {
+        const unreadNote = selected.unread.length > 0 ? ` Unread token ids were left out: ${selected.unread.slice(0, 6).join(", ")}.` : "";
         await noteTreasury(
           "skipped",
-          "No eligible citizen has a deployed wallet whose stored token id matches, so no allocation was requested.",
+          `No eligible citizen in this review window has a deployed wallet whose stored token id matches, so no allocation was requested.${unreadNote}`,
           "rejected",
         );
         return;
@@ -702,10 +723,13 @@ export async function runAiMind(
         selected.roster.map((citizen) => citizen.tokenId),
         chain.facts.windowId,
       );
-      if (citizenSpent == null) {
-        await noteTreasury("failed", "Citizen MON spending was not read, so no allocation was requested.", "failed");
+      const payable = selected.roster.filter((citizen) => citizenSpent.spent.has(citizen.tokenId));
+      if (payable.length === 0) {
+        const reason = citizenSpent.unread[0]?.reason ?? "rpc failed";
+        await noteTreasury("failed", `Citizen MON spending was not read (${reason}), so no allocation was requested.`, "failed");
         return;
       }
+      const unreadSpend = citizenSpent.unread.map((gap) => gap.tokenId);
       const slot = await takeModelSlot();
       if (!slot) {
         await noteTreasury("skipped", "No model time remained for a treasury allocation.", "failed");
@@ -714,7 +738,7 @@ export async function runAiMind(
       try {
         const result = await considerTreasuryAllocation({
           nowMs: Date.now(),
-          roster: selected.roster,
+          roster: payable,
           prior,
           monBalance: chain.facts.monBalance,
           chogBalance: chain.facts.chogBalance,
@@ -725,7 +749,7 @@ export async function runAiMind(
           monSpentInWindow: chain.facts.observedWindowSpentMon,
           chogCap: chain.facts.maxPerTxChog,
           walletDeployed: true,
-          citizenSpentMon: citizenSpent,
+          citizenSpentMon: citizenSpent.spent,
           timeoutMs: slot.timeoutMs,
           maxOutputTokens: config.aiMaxOutputTokens,
           provider: config.aiProvider,
@@ -745,7 +769,8 @@ export async function runAiMind(
         if (result.promptChars > 0) {
           await bumpUsage(client, result.promptChars, result.outputTokens);
         }
-        report.treasury = { status: result.status, detail: result.detail };
+        const leftOut = unreadSpend.length > 0 ? ` Token ids left unread this round: ${unreadSpend.slice(0, 6).join(", ")}.` : "";
+        report.treasury = { status: result.status, detail: `${result.detail}${leftOut}` };
         if (result.halt) {
           await haltScheduler(client, result.halt.until, result.halt.reason);
           report.status = "halted";
@@ -802,14 +827,14 @@ export async function runAiMind(
       }
     }
 
-    async function takeModelSlot(): Promise<{ timeoutMs: number } | null> {
+    async function takeModelSlot(limitMs: number = deadlineMs): Promise<{ timeoutMs: number } | null> {
       const slot = await awaitFreeTierSlot(
         lastModelStartedAt,
         startedAt,
         config.aiRequestTimeoutMs,
         Date.now(),
         (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
-        deadlineMs,
+        limitMs,
       );
       if (!slot) {
         return null;
@@ -832,7 +857,8 @@ export async function runAiMind(
     await attachTreasury();
 
     while (!endRun) {
-      if (timeoutWithinDeadline(startedAt, config.aiRequestTimeoutMs, Date.now(), deadlineMs) === null) {
+      if (timeoutWithinDeadline(startedAt, config.aiRequestTimeoutMs, Date.now(), citizenDeadline) === null) {
+        report.reason = report.reason ?? "Stopped remaining citizens so treasury and wallet review keep their time.";
         break;
       }
       const gate = evaluateBudget(config, await readUsage(client));
@@ -849,8 +875,12 @@ export async function runAiMind(
       });
       if (claimError) {
         if (report.claimed === 0) {
+          report.status = "error";
+          report.reason = "The decision claim failed.";
+          await attachTreasury();
+          await attachWalletIssuance();
           await attachCitizenCommerce();
-          return emptyReport("error", config, "The decision claim failed.");
+          return report;
         }
         report.reason = report.reason ?? "The decision claim failed.";
         break;
@@ -878,7 +908,7 @@ export async function runAiMind(
         if (endRun) {
           continue;
         }
-        const providerTimeoutMs = timeoutWithinDeadline(startedAt, config.aiRequestTimeoutMs, Date.now(), deadlineMs);
+        const providerTimeoutMs = timeoutWithinDeadline(startedAt, config.aiRequestTimeoutMs, Date.now(), citizenDeadline);
         if (providerTimeoutMs === null) {
           deferForDeadline(row.token_id);
           continue;
@@ -910,19 +940,12 @@ export async function runAiMind(
         const townNeeds = await loadTownNeeds(client, bundle.buildings, bundle.stock, bundle.occupiedPlots, overlay);
         const townProjects = await loadTownProjects(client);
         const civic = await loadCivicFacts(client);
-        let canBuildKinds = feasibleConstructKinds(bundle.buildings, bundle.occupiedPlots, bundle.stock, overlay);
-        if (
-          civic &&
-          civicMenu(civic).raiseJail &&
-          materialsAllowBuilderShift(bundle.stock) &&
-          !bundle.buildings.some((building) => building.kind === "jail")
-        ) {
-          const jailPlan = planConstruction(bundle.buildings, bundle.occupiedPlots, "jail", overlay);
-          if (jailPlan.ok) {
-            canBuildKinds = [...canBuildKinds, "jail"];
-          }
-        }
-        const eligibleStubs = bundle.roadsReady
+        const canBuildKinds = constructionKindsForShortage(
+          feasibleConstructKinds(bundle.buildings, bundle.occupiedPlots, bundle.stock, overlay),
+          bundle.stock,
+        ).filter((kind) => !blockedKinds.has(kind));
+        const deferRoads = roadsDeferredForShortage(bundle.stock) || blockedKinds.has("road");
+        const eligibleStubs = bundle.roadsReady && !deferRoads
           ? eligibleRoadStubs({
               placedStubIds: bundle.placedStubIds,
               overlayTiles: overlay,
@@ -955,9 +978,10 @@ export async function runAiMind(
           civic: civic ?? undefined,
         });
         const commitment = contextCommitment(context);
-        const messages = decisionMessages(context, config.aiMaxPromptChars);
+        const menu = buildMindMenu(context, { blockedKinds: [...blockedKinds], rejections: recentRejections });
+        const messages = decisionMessages(context, config.aiMaxPromptChars, menu);
 
-        if (!landCanGrow(context)) {
+        if (!menuHasUsefulChoice(menu) && !landCanGrow(context)) {
           const reason = growthBlocker(context);
           const { error: blockedError } = await client.from("ai_decisions").insert({
             citizen_id: row.claimed_citizen_id,
@@ -978,7 +1002,7 @@ export async function runAiMind(
           continue;
         }
 
-        const slot = await takeModelSlot();
+        const slot = await takeModelSlot(citizenDeadline);
         if (!slot) {
           deferForDeadline(row.token_id);
           continue;
@@ -1010,7 +1034,7 @@ export async function runAiMind(
               { role: "system", content: messages.system },
               { role: "user", content: messages.user },
             ],
-            responseSchema: GROWTH_RESPONSE_SCHEMA,
+            responseSchema: mindResponseSchema(menu),
             timeoutMs: slot.timeoutMs,
             maxOutputTokens: config.aiMaxOutputTokens,
           });
@@ -1043,9 +1067,9 @@ export async function runAiMind(
         await bumpUsage(client, completion.promptChars ?? messages.system.length + messages.user.length, completion.outputTokens);
 
         let parsed: { ok: true; decision: ParsedDecision } | { ok: false; reason: string } = parseDecisionOutput(completion.text);
-        let accepted = parsed.ok ? acceptGrowth(parsed.decision, context) : parsed;
-        if (!accepted.ok) {
-          const retrySlot = await takeModelSlot();
+        let accepted = parsed.ok ? acceptMindChoice(parsed.decision, context, menu) : parsed;
+        if (!accepted.ok && !isStickyRejection(accepted.reason)) {
+          const retrySlot = await takeModelSlot(citizenDeadline);
           if (retrySlot) {
             let retry: AiCompletion;
             try {
@@ -1058,7 +1082,7 @@ export async function runAiMind(
                     content: `${messages.user}\n\nThe land did not accept the last answer (${accepted.reason}). Read the description again and decide how this town grows. Daily life is already simulated.`,
                   },
                 ],
-                responseSchema: GROWTH_RESPONSE_SCHEMA,
+                responseSchema: mindResponseSchema(menu),
                 timeoutMs: retrySlot.timeoutMs,
                 maxOutputTokens: config.aiMaxOutputTokens,
               });
@@ -1089,15 +1113,21 @@ export async function runAiMind(
             completion = retry;
             await bumpUsage(client, retry.promptChars ?? messages.system.length + messages.user.length, retry.outputTokens);
             parsed = parseDecisionOutput(retry.text);
-            accepted = parsed.ok ? acceptGrowth(parsed.decision, context) : parsed;
+            accepted = parsed.ok ? acceptMindChoice(parsed.decision, context, menu) : parsed;
           }
         }
         if (!accepted.ok) {
+          await rememberRejection(client, row.claimed_citizen_id, accepted.reason);
+          recentRejections.push(`${row.token_id}: ${accepted.reason}`);
+          if (/unsupported construction kind|cannot be started/.test(accepted.reason)) {
+            const named = /a ([a-z]+) cannot be started/.exec(accepted.reason);
+            if (named?.[1]) blockedKinds.add(named[1]);
+          }
           await client
             .from("ai_decisions")
             .update({
               status: "rejected",
-              rationale: null,
+              rationale: accepted.reason,
               output: { raw: completion.text.slice(0, 500) },
               validation_result: accepted.reason,
               model: completion.model,
@@ -1105,6 +1135,20 @@ export async function runAiMind(
             .eq("id", decisionId);
           report.rejected += 1;
           report.decisions.push({ tokenId: row.token_id, status: "rejected", detail: accepted.reason });
+          continue;
+        }
+        if (accepted.decision.action === "wait") {
+          await client
+            .from("ai_decisions")
+            .update({
+              status: "accepted",
+              rationale: accepted.decision.rationale,
+              output: jsonSafeDecision(accepted.decision),
+              validation_result: accepted.decision.rationale,
+              model: completion.model,
+            })
+            .eq("id", decisionId);
+          report.decisions.push({ tokenId: row.token_id, status: "waited", detail: accepted.decision.rationale });
           continue;
         }
         parsed = { ok: true, decision: accepted.decision };
@@ -1298,6 +1342,7 @@ export async function runAiMind(
             continue;
           }
           if (!canBuildKinds.includes(buildKind as ConstructKind)) {
+            blockedKinds.add(String(buildKind));
             await client
               .from("ai_decisions")
               .update({ status: "rejected", validation_result: "construction is not available for that kind" })
@@ -1312,6 +1357,7 @@ export async function runAiMind(
           }
           const plan = planConstruction(bundle.buildings, bundle.occupiedPlots, buildKind as ConstructKind, overlay);
           if (!plan.ok) {
+            if (plan.reason === "unsupported construction kind") blockedKinds.add(String(buildKind));
             await client
               .from("ai_decisions")
               .update({ status: "rejected", validation_result: plan.reason })
@@ -1334,6 +1380,9 @@ export async function runAiMind(
           });
           const result = placed as { ok?: boolean; reason?: string; buildingId?: string } | null;
           if (placeError || !result?.ok) {
+            if ((result?.reason ?? "").includes("unsupported construction kind") || (result?.reason ?? "").includes("jail")) {
+              blockedKinds.add(String(buildKind));
+            }
             await client
               .from("ai_decisions")
               .update({ status: "rejected", validation_result: result?.reason ?? "placement rejected" })
@@ -1564,11 +1613,13 @@ export async function runAiMind(
     return report;
   } catch (error) {
     const message = error instanceof Error ? error.message : "The AI runner failed.";
+    report.status = report.inferred > 0 || report.claimed > 0 ? report.status : "error";
+    report.reason = message;
     await client
       .from("ai_scheduler_state")
       .update({ last_run_at: new Date().toISOString(), last_error: message })
       .eq("singleton", true);
-    return emptyReport("error", config, message);
+    return report;
   }
 }
 

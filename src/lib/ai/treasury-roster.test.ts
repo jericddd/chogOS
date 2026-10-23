@@ -37,7 +37,7 @@ describe("treasury roster", () => {
     expect(result.roster.map((row) => row.tokenId)).toEqual(["7"]);
   });
 
-  it("fails closed when any wallet code cannot be read", () => {
+  it("leaves an unread wallet out and fails closed only when every read failed", () => {
     const missing = rosterFromDeployedWallets({
       wallets: [wallet("7")],
       code: new Map(),
@@ -49,7 +49,10 @@ describe("treasury roster", () => {
       code: new Map([["7", { codeBytes: 100, identityMatches: true }]]),
       cursor: 0,
     });
-    expect(partial.status).toBe("unreadable");
+    expect(partial.status).toBe("ready");
+    if (partial.status !== "ready") return;
+    expect(partial.roster.map((row) => row.tokenId)).toEqual(["7"]);
+    expect(partial.unread).toEqual(["9"]);
   });
 
   it("returns an empty roster when every wallet was read and none is deployed", () => {
@@ -61,6 +64,6 @@ describe("treasury roster", () => {
       ]),
       cursor: 0,
     });
-    expect(result).toEqual({ status: "none" });
+    expect(result).toEqual({ status: "none", unread: [] });
   });
 });

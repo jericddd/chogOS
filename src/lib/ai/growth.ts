@@ -11,8 +11,8 @@ import { OPEN_CONSTRUCT_KINDS, type ConstructKind } from "@/lib/world/layout";
 export const GROWTH_RESPONSE_SCHEMA: Record<string, unknown> = {
   type: "object",
   properties: {
-    action: { type: "string", enum: ["build", "visit", "proclaim", "levy", "detain", "watch", "amend", "pardon"] },
-    buildKind: { type: "string", enum: [...OPEN_CONSTRUCT_KINDS, "jail", "road", "none"] },
+    action: { type: "string", enum: ["build", "visit", "proclaim", "amend", "pardon", "wait", "work", "socialize", "rest"] },
+    buildKind: { type: "string", enum: [...OPEN_CONSTRUCT_KINDS, "road", "none"] },
     roadStubId: { type: "string" },
     projectId: { type: "string" },
     placeName: { type: "string" },
@@ -169,13 +169,13 @@ export function acceptGrowth(
   decision: ParsedDecision,
   context: DecisionContext,
 ): { ok: true; decision: ParsedDecision } | { ok: false; reason: string } {
+  if (decision.buildKind === "jail" || decision.action === "detain" || decision.action === "levy" || decision.action === "watch") {
+    return { ok: false, reason: "jail, detention, fines, and watch are disabled" };
+  }
   if (decision.action !== "build") {
     if (
       decision.action === "visit" ||
       decision.action === "proclaim" ||
-      decision.action === "levy" ||
-      decision.action === "detain" ||
-      decision.action === "watch" ||
       decision.action === "amend" ||
       decision.action === "pardon"
     ) {

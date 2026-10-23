@@ -44,7 +44,7 @@ export type SkillSnippet = {
 };
 
 export type FeasibleOption = {
-  action: WorldAction;
+  action: WorldAction | "visit";
   buildingId: string;
   name: string;
 };
@@ -133,6 +133,9 @@ export function listFeasibleActions(
     if (building.status === "under_construction") {
       targets.add(building.id);
     }
+    if (building.status === "active" && (building.kind === "park" || building.kind === "amusement" || building.kind === "bank")) {
+      targets.add(building.id);
+    }
   }
 
   for (const action of WORLD_ACTIONS) {
@@ -142,6 +145,13 @@ export function listFeasibleActions(
       if (check.ok && building) {
         options.push({ action, buildingId, name: building.name });
       }
+    }
+  }
+  for (const building of buildings) {
+    if (building.kind !== "bank" || building.status !== "active") continue;
+    const check = precheckAction({ action: "visit", buildingId: building.id }, citizen, building, worldS, stock);
+    if (check.ok) {
+      options.push({ action: "visit", buildingId: building.id, name: building.name });
     }
   }
   return options;
@@ -243,7 +253,9 @@ export function buildDecisionContext(input: {
       buildings: input.buildings,
     });
   const rankedSeed: RankedAction[] = [
-    ...new Set(feasible.map((option) => option.action)),
+    ...new Set(
+      feasible.flatMap((option) => (option.action === "visit" ? [] : [option.action])),
+    ),
     ...(canBuild ? (["build"] as const) : []),
   ];
   const townProjects = input.townProjects ?? [];
@@ -380,19 +392,27 @@ export function contextCommitment(context: DecisionContext): string {
   return `0x${createHash("sha256").update(JSON.stringify(body)).digest("hex")}`;
 }
 
-export function decisionMessages(context: DecisionContext, maxChars: number): { system: string; user: string } {
+export function decisionMessages(
+  context: DecisionContext,
+  maxChars: number,
+  allowed?: {
+    actions: readonly string[];
+    buildKinds: readonly string[];
+    places: readonly { action: string; buildingId: string; name: string }[];
+    rejections: readonly string[];
+  },
+): { system: string; user: string } {
   const system = [
-    "You decide how this town grows.",
-    "Read the description of the land: what already stands, what each place is for, the named country, the water, and what the storehouse holds. Judge the growth from that place.",
-    "Daily life is already simulated: sleep, work, shopping, rest, and visiting the square. Do not spend this decision on those.",
+    "You decide how this town grows and what this citizen should do from the allowed list.",
+    "Read the description of the land, the storehouse counts, and any shortage line. Answer a critical shortage when this citizen can gather or tend that resource. Optional construction waits while wood or stone is short, and it can return after the storehouse recovers.",
     "Return JSON only. Do not write SQL, code, URLs, or contract calls.",
-    "This ground can stand a house, a farm, a workshop, a park, an amusement, a bank, or a surveyed road the description says is not built yet. A park and an amusement are leisure, not jobs. People gather there after 07:00. The bank is a door onto the public books. A jail can be named only when the description says a sentence needs a room. You do not choose the lot, the door, or any coordinate.",
-    "action is build, visit, proclaim, levy, detain, watch, amend, or pardon. buildKind is the structure when action is build, and none otherwise.",
-    "When you raise a house, farm, workshop, park, amusement, bank, or jail, placeName is the name you give it from the land you read. That name is what gets built and what people will see. A road already has a survey name: set roadStubId to that label from the description, and set placeName to none.",
-    "A visit uses buildingId of the bank named in the description. Proclaim, levy, amend, and pardon use lawCode from the catalog the description says is open. Levy and detain use subjectTokenId when the description names the citizen. A freeform rule does not change the town.",
-    "When food is under 40, a farm comes before a park. summary is the decision in one sentence, in your own words. rationale is why this place needs it, and it is the reason stored with the record.",
-    "You cannot finish a building, invent a shortage, invent a breach, or complete a project by saying so. Each of visit, proclaim, levy, detain, watch, amend, and pardon stays closed until the description says the record supports it.",
-    "Do not return propose_economy or request_wallet_activation. This decision cannot move money, approve funding, or deploy a wallet. A visit to the bank does not move MON or $CHOG.",
+    "Choose action from allowed.actions. buildKind is one of allowed.buildKinds when action is build, and none otherwise. buildingId is one of allowed.places for work, socialize, rest, or visit.",
+    "A house, farm, workshop, park, amusement, or bank can be raised only when that kind is in allowed.buildKinds. A park is leisure after 07:00, not a job. The bank is a door onto the public books. You do not choose the lot, the door, or any coordinate. Jail, detention, fines, and watch are closed.",
+    "When you raise a building, placeName is a short title from the land you read. A road already has a survey name: set roadStubId to that label, and set placeName to none.",
+    "A visit uses the bank in allowed.places. It does not move MON or $CHOG and it is not a transaction. Proclaim, amend, and pardon use lawCode only when that action is allowed.",
+    "summary is the decision in one sentence. rationale is why, and it is stored with the record. If nothing useful is open, action is wait and rationale says why.",
+    "You cannot finish a building, invent a shortage, or complete a project by saying so. Do not repeat a rejection listed in allowed.rejections.",
+    "Do not return propose_economy or request_wallet_activation. This decision cannot move money, approve funding, or deploy a wallet.",
     "The free Gemini tier may use this prompt to improve Google products. Do not include secrets. None are provided.",
   ].join(" ");
 
@@ -404,6 +424,12 @@ export function decisionMessages(context: DecisionContext, maxChars: number): { 
       name: context.name,
       role: context.role,
       locationId: context.locationId,
+    },
+    allowed: allowed ?? {
+      actions: ["wait"],
+      buildKinds: ["none"],
+      places: [],
+      rejections: [],
     },
   });
 

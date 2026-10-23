@@ -448,7 +448,7 @@ describe("budgets", () => {
     expect(config.aiMinDecisionIntervalSeconds).toBe(300);
     expect(config.aiRequestTimeoutMs).toBe(40_000);
     expect(config.aiMaxOutputTokens).toBe(2048);
-    expect(AI_INVOCATION_DEADLINE_MS).toBe(240_000);
+    expect(AI_INVOCATION_DEADLINE_MS).toBe(200_000);
     expect(AI_INVOCATION_DEADLINE_SHORT_MS).toBe(80_000);
     expect(deadlineForRequest(new Request("http://x"))).toBe(AI_INVOCATION_DEADLINE_SHORT_MS);
     expect(deadlineForRequest(new Request("http://x", { headers: { "x-chog-ai-wait": "long" } }))).toBe(

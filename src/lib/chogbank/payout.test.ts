@@ -209,6 +209,17 @@ describe("ChogBank payout broadcaster", () => {
     expect(open.signed[0]?.asset).toBe(addresses.chogToken);
   });
 
+  it("does not sign a decision the contract already used when no receipt is available", async () => {
+    const { io, calls } = harness({
+      usedDecision: async () => true,
+      existing: async () => null,
+    });
+    const result = await broadcastPendingPayouts([pending("MON")], io);
+    expect(result.paid).toBe(0);
+    expect(result.skipped).toBe(1);
+    expect(calls.some((call) => call.startsWith("sign:") || call.startsWith("send:"))).toBe(false);
+  });
+
   it("links an existing distribution without signing again", async () => {
     const row = pending("MON");
     const message: AllocationMessage = {

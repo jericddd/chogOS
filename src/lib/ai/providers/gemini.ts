@@ -162,6 +162,7 @@ export function createGeminiProvider(config: AppConfig): AiProvider {
       }
 
       const timeoutMs = request.timeoutMs ?? config.aiRequestTimeoutMs;
+      const budgetEndsAt = Date.now() + timeoutMs;
       const headers = {
         "x-goog-api-key": apiKey,
         "Content-Type": "application/json",
@@ -170,6 +171,10 @@ export function createGeminiProvider(config: AppConfig): AiProvider {
       let lastFailure: AiProviderError | undefined;
 
       for (const model of models) {
+        const budgetLeft = budgetEndsAt - Date.now();
+        if (budgetLeft < 1_500) {
+          throw new AiProviderError("Gemini request timed out.", "timeout", false);
+        }
         const generationConfig: Record<string, unknown> = {
           temperature: 0.3,
           maxOutputTokens: request.maxOutputTokens ?? config.aiMaxOutputTokens,
@@ -190,8 +195,12 @@ export function createGeminiProvider(config: AppConfig): AiProvider {
         let response: Response | undefined;
 
         for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+          const slice = budgetEndsAt - Date.now();
+          if (slice < 1_500) {
+            throw new AiProviderError("Gemini request timed out.", "timeout", false);
+          }
           const controller = new AbortController();
-          const timeout = setTimeout(() => controller.abort(), timeoutMs);
+          const timeout = setTimeout(() => controller.abort(), slice);
           try {
             response = await fetch(endpoint, {
               method: "POST",

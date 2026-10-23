@@ -160,9 +160,9 @@ describe("treasury consideration", () => {
     expect(runner).toContain("considerTreasuryAllocation");
     expect(runner.indexOf("await attachTreasury()")).toBeLessThan(runner.indexOf("while (!endRun)"));
     expect(runner).toContain("Stopped before the host timeout. No treasury allocation was requested.");
-    expect(runner).toContain("Citizen wallet code was not read, so no allocation was requested.");
-    expect(runner).toContain("No eligible citizen has a deployed wallet whose stored token id matches, so no allocation was requested.");
-    expect(runner).toContain("Citizen MON spending was not read, so no allocation was requested.");
+    expect(runner).toContain("Citizen wallet code was not read (");
+    expect(runner).toContain("No eligible citizen in this review window has a deployed wallet whose stored token id matches, so no allocation was requested.");
+    expect(runner).toContain("Citizen MON spending was not read (");
     expect(runner).not.toMatch(/sendTransaction|signTypedData|walletClient|eth_sendRawTransaction/);
     expect(readFileSync("src/lib/ai/context.ts", "utf8")).toContain("Do not return propose_economy or request_wallet_activation");
     expect(readFileSync("src/lib/economy/treasury-load.ts", "utf8")).not.toMatch(/sendTransaction|writeContract|signTypedData/);
