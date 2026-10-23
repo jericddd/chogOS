@@ -287,6 +287,83 @@ describe("Gemini adapter", () => {
     expect(fetchSpy).toHaveBeenCalledTimes(2);
   });
 
+  it("closes the day only for an explicit daily 429 and backs off on minute, token, and unclear 429s", async () => {
+    const config = readAppConfig({
+      AI_PROVIDER: "gemini",
+      AI_API_KEY: "test-key",
+    } as unknown as NodeJS.ProcessEnv);
+
+    async function refusal(body: unknown, status = 429) {
+      const fetchSpy = vi.fn(async () => new Response(JSON.stringify(body), { status }));
+      vi.stubGlobal("fetch", fetchSpy);
+      const settled = await createGeminiProvider(config)
+        .complete({ purpose: "x", reserveAttempt: async () => {}, messages: [{ role: "user", content: "x" }] })
+        .then(
+          () => ({ code: "ok", halt: false }),
+          (error: unknown) =>
+            error instanceof AiProviderError
+              ? { code: error.code, halt: error.halt }
+              : { code: "other", halt: false },
+        );
+      return { ...settled, fetches: fetchSpy.mock.calls.length };
+    }
+
+    const stock = "You exceeded your current quota, please check your plan and billing details.";
+    await expect(
+      refusal({
+        error: {
+          status: "RESOURCE_EXHAUSTED",
+          message: stock,
+          details: [{ violations: [{ quotaId: "GenerateRequestsPerDayPerProjectPerModel-FreeTier" }] }],
+        },
+      }),
+    ).resolves.toEqual({ code: "quota", halt: false, fetches: 1 });
+
+    await expect(
+      refusal({
+        error: {
+          status: "RESOURCE_EXHAUSTED",
+          message: stock,
+          details: [{ violations: [{ quotaId: "GenerateRequestsPerMinutePerProjectPerModel-FreeTier" }] }],
+        },
+      }),
+    ).resolves.toEqual({ code: "rate_limit", halt: false, fetches: 1 });
+
+    await expect(
+      refusal({
+        error: {
+          status: "RESOURCE_EXHAUSTED",
+          message: stock,
+          details: [{ violations: [{ quotaId: "GenerateContentInputTokensPerModelPerMinute-FreeTier" }] }],
+        },
+      }),
+    ).resolves.toEqual({ code: "rate_limit", halt: false, fetches: 1 });
+
+    await expect(
+      refusal({ error: { status: "RESOURCE_EXHAUSTED", message: "quota exceeded" } }),
+    ).resolves.toEqual({ code: "rate_limit", halt: false, fetches: 1 });
+
+    await expect(
+      refusal({
+        error: {
+          message: stock,
+          details: [
+            {
+              violations: [
+                { quotaId: "GenerateRequestsPerDayPerProjectPerModel-FreeTier" },
+                { quotaId: "GenerateRequestsPerMinutePerProjectPerModel-FreeTier" },
+              ],
+            },
+          ],
+        },
+      }),
+    ).resolves.toEqual({ code: "rate_limit", halt: false, fetches: 1 });
+
+    await expect(
+      refusal({ error: { message: "Please enable billing to continue" } }, 429),
+    ).resolves.toEqual({ code: "billing", halt: true, fetches: 1 });
+  });
+
   it("retries a single Gemini 503 and reserves both attempts", async () => {
     const fetchSpy = vi.fn()
       .mockResolvedValueOnce(new Response("unavailable", { status: 503 }))

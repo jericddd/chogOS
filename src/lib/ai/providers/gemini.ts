@@ -44,11 +44,37 @@ export function geminiEndpoint(model: string, baseUrl?: string): string {
   return `${DEFAULT_HOST}/models/${encodeURIComponent(model)}:generateContent`;
 }
 
+/**
+ * Google's stock 429 says "check your plan and billing details" on ordinary quota errors.
+ * That sentence is not a request to turn on paid inference.
+ */
+function isBillingRefusal(lower: string): boolean {
+  const asksToPay =
+    /enable billing|upgrade to (a )?paid|paid tier|credit card|payment required|billing account|set up billing|activate billing/.test(
+      lower,
+    );
+  if (asksToPay) return true;
+  if (/billing details/.test(lower)) return false;
+  return /\bbilling\b|\bpayment\b/.test(lower);
+}
+
+/**
+ * A daily close needs an explicit per-day signal and no per-minute or token signal.
+ * "quota" and RESOURCE_EXHAUSTED appear on RPM, TPM, and daily 429s, so they are not proof.
+ * A body that mentions both day and minute limits is ambiguous and stays a temporary limit.
+ */
+function isDailyQuotaExhausted(lower: string): boolean {
+  const daily = /per[\s_-]?day|\bdaily\b|\brpd\b|requestsperday/.test(lower);
+  const burst =
+    /per[\s_-]?minute|\brpm\b|\btpm\b|requestsperminute|tokensperminute|input_token|output_token|token_count/.test(
+      lower,
+    );
+  return daily && !burst;
+}
+
 function classifyGeminiFailure(status: number, bodyText: string): AiProviderError {
   const lower = bodyText.toLowerCase();
-  const billing =
-    /billing|payment|enable billing|upgrade to (a )?paid|paid tier|credit card/.test(lower);
-  if (billing) {
+  if (isBillingRefusal(lower)) {
     return new AiProviderError(
       "Gemini refused the request for a billing-related reason. chogOS will not enable paid inference.",
       "billing",
@@ -56,12 +82,12 @@ function classifyGeminiFailure(status: number, bodyText: string): AiProviderErro
     );
   }
   if (status === 429 || /resource_exhausted|quota|rate.?limit/.test(lower)) {
-    const quota = /quota|daily|per day|rpd/.test(lower);
+    const daily = isDailyQuotaExhausted(lower);
     return new AiProviderError(
-      quota
+      daily
         ? "Gemini free-tier quota is exhausted for this model."
         : "Gemini rate-limited the request. This model is deferred.",
-      quota ? "quota" : "rate_limit",
+      daily ? "quota" : "rate_limit",
       false,
     );
   }

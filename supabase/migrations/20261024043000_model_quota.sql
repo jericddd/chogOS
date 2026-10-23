@@ -7,6 +7,9 @@
 --   Lite minute:  bucket hour, UTC minute + 2 milliseconds
 -- Flash stores its last attempt in halted_reason on the Flash day row only.
 -- This file is the schema change. Applying it to production is a separate operator step.
+-- A new ledger starts at zero. If Google already counted requests earlier today, an operator
+-- passes that model's current-day request count to ai_seed_model_day. The number comes from
+-- today's counter for that model. The 28-day chart peak is not today's count.
 
 create or replace function ai_reserve_model_attempt(p_tier text, p_now timestamptz default now())
 returns jsonb
@@ -187,9 +190,82 @@ begin
 end;
 $$;
 
+-- Records requests Google already counted today. p_used is the operator's explicit count.
+-- Null and negative counts are refused. The stored count never goes down and never passes the cap.
+-- A positive Flash count starts the 72-minute wait. A zero count does not invent a last attempt.
+create or replace function ai_seed_model_day(p_tier text, p_used integer, p_now timestamptz default now())
+returns jsonb
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_tier text := lower(btrim(coalesce(p_tier, '')));
+  v_now timestamptz := coalesce(p_now, now());
+  v_day timestamptz := (date_trunc('day', v_now at time zone 'America/Los_Angeles') at time zone 'America/Los_Angeles');
+  v_at timestamptz;
+  v_cap integer;
+  v_used integer;
+  v_current integer;
+  v_next integer;
+begin
+  if p_used is null or p_used < 0 then
+    return jsonb_build_object('ok', false, 'code', 'invalid');
+  end if;
+
+  if v_tier = 'flash' then
+    v_at := v_day;
+    v_cap := 20;
+  elsif v_tier = 'lite' then
+    v_at := v_day + interval '1 second';
+    v_cap := 500;
+  else
+    return jsonb_build_object('ok', false, 'code', 'invalid');
+  end if;
+
+  v_used := least(p_used, v_cap);
+
+  insert into ai_usage_counters (bucket, period_start, invocations)
+  values ('day', v_at, 0)
+  on conflict (bucket, period_start) do nothing;
+
+  select invocations
+    into v_current
+  from ai_usage_counters
+  where bucket = 'day' and period_start = v_at
+  for update;
+
+  if v_current is null then
+    return jsonb_build_object('ok', false, 'code', 'invalid');
+  end if;
+
+  v_next := greatest(v_current, v_used);
+
+  update ai_usage_counters
+  set
+    invocations = v_next,
+    halted_reason = case
+      when v_tier = 'flash' and p_used > 0 then to_char(v_now at time zone 'UTC', 'YYYY-MM-DD HH24:MI:SS.MS')
+      else halted_reason
+    end
+  where bucket = 'day' and period_start = v_at;
+
+  return jsonb_build_object(
+    'ok', true,
+    'tier', v_tier,
+    'attempts', v_next,
+    'capped', v_next >= v_cap,
+    'requested', p_used
+  );
+end;
+$$;
+
 revoke all on function ai_reserve_model_attempt(text, timestamptz) from public;
 revoke all on function ai_close_model_day(text, timestamptz) from public;
+revoke all on function ai_seed_model_day(text, integer, timestamptz) from public;
 revoke all on function ai_reserve_model_attempt(text, timestamptz) from anon, authenticated;
 revoke all on function ai_close_model_day(text, timestamptz) from anon, authenticated;
+revoke all on function ai_seed_model_day(text, integer, timestamptz) from anon, authenticated;
 grant execute on function ai_reserve_model_attempt(text, timestamptz) to service_role;
 grant execute on function ai_close_model_day(text, timestamptz) to service_role;
+grant execute on function ai_seed_model_day(text, integer, timestamptz) to service_role;

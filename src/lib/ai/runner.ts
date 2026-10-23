@@ -566,6 +566,7 @@ async function runAiMindWork(config: AppConfig, deadlineMs: number, report: Mind
 
     async function noteModelAdmissionFailure(error: AiProviderError, model: string): Promise<void> {
       const tier = modelTier(model);
+      // Only an explicit daily-quota error closes the Pacific day. RPM, TPM, and ambiguous 429s wait.
       if (error.code === "quota") await closeModelDay(client, tier);
       if (error.code === "quota" || error.code === "rate_limit") {
         if (tier === "flash") flashClosed = true;

@@ -170,6 +170,7 @@ describe("durable model ledger", () => {
     expect(migration).toContain("interval '72 minutes'");
     expect(migration).toContain("interval '4 minutes'");
     expect(migration).toContain("America/Los_Angeles");
+    expect(migration).toContain("ai_seed_model_day");
 
     const call = async (tier: string, at: string) =>
       (
@@ -248,6 +249,91 @@ describe("durable model ledger", () => {
     expect(definitions[0]?.reserve.toLowerCase()).toContain("for update");
   }, 120_000);
 
+  it("records today's real usage without lowering the ledger or guessing a count", async () => {
+    const seed = async (tier: string, used: number | null, at: string) =>
+      (
+        await rows<{ r: { ok?: boolean; code?: string; attempts?: number; capped?: boolean } }>(
+          db,
+          "select ai_seed_model_day($1, $2::integer, $3::timestamptz) as r",
+          [tier, used, at],
+        )
+      )[0]!.r;
+
+    const flashDay = "2026-10-25T07:00:00Z";
+    const seeded = await seed("flash", 8, flashDay);
+    expect(seeded).toMatchObject({ ok: true, attempts: 8, capped: false });
+    const tooSoon = (
+      await rows<{ r: { ok?: boolean; code?: string; attempts?: number } }>(
+        db,
+        "select ai_reserve_model_attempt('flash', $1::timestamptz) as r",
+        ["2026-10-25T07:30:00Z"],
+      )
+    )[0]!.r;
+    expect(tooSoon).toMatchObject({ ok: false, code: "spacing", attempts: 8 });
+    const next = (
+      await rows<{ r: { ok?: boolean; attempts?: number } }>(
+        db,
+        "select ai_reserve_model_attempt('flash', $1::timestamptz) as r",
+        ["2026-10-25T08:12:00Z"],
+      )
+    )[0]!.r;
+    expect(next).toMatchObject({ ok: true, attempts: 9 });
+
+    expect(await seed("flash", 4, "2026-10-25T08:12:00Z")).toMatchObject({ ok: true, attempts: 9 });
+    expect(await seed("flash", 20, "2026-10-25T09:00:00Z")).toMatchObject({ ok: true, attempts: 20, capped: true });
+    const closed = (
+      await rows<{ r: { ok?: boolean; code?: string } }>(
+        db,
+        "select ai_reserve_model_attempt('flash', $1::timestamptz) as r",
+        ["2026-10-25T11:00:00Z"],
+      )
+    )[0]!.r;
+    expect(closed).toMatchObject({ ok: false, code: "day" });
+
+    const fresh = "2026-10-26T07:00:00Z";
+    expect(await seed("flash", 0, fresh)).toMatchObject({ ok: true, attempts: 0, capped: false });
+    const reason = await rows<{ halted_reason: string | null }>(
+      db,
+      "select halted_reason from ai_usage_counters where bucket = 'day' and period_start = $1::timestamptz",
+      [fresh],
+    );
+    expect(reason[0]?.halted_reason ?? null).toBeNull();
+    const open = (
+      await rows<{ r: { ok?: boolean; attempts?: number } }>(
+        db,
+        "select ai_reserve_model_attempt('flash', $1::timestamptz) as r",
+        [fresh],
+      )
+    )[0]!.r;
+    expect(open).toMatchObject({ ok: true, attempts: 1 });
+
+    const liteAt = "2026-10-25T07:00:00Z";
+    expect(await seed("lite", 501, liteAt)).toMatchObject({ ok: true, attempts: 500, capped: true });
+    const liteRow = await rows<{ invocations: number }>(
+      db,
+      "select invocations from ai_usage_counters where bucket = 'day' and period_start = $1::timestamptz + interval '1 second'",
+      [liteAt],
+    );
+    expect(liteRow[0]?.invocations).toBe(500);
+    const flashUntouched = await rows<{ invocations: number }>(
+      db,
+      "select invocations from ai_usage_counters where bucket = 'day' and period_start = $1::timestamptz",
+      [flashDay],
+    );
+    expect(flashUntouched[0]?.invocations).toBe(20);
+
+    expect(await seed("nope", 1, flashDay)).toMatchObject({ ok: false, code: "invalid" });
+    expect(await seed("flash", -1, flashDay)).toMatchObject({ ok: false, code: "invalid" });
+    expect(await seed("flash", null, flashDay)).toMatchObject({ ok: false, code: "invalid" });
+
+    const privileges = await rows<{ anon: boolean; service: boolean }>(
+      db,
+      `select has_function_privilege('anon', 'ai_seed_model_day(text,integer,timestamptz)', 'execute') as anon,
+              has_function_privilege('service_role', 'ai_seed_model_day(text,integer,timestamptz)', 'execute') as service`,
+    );
+    expect(privileges[0]).toEqual({ anon: false, service: true });
+  }, 120_000);
+
   it("releases a deferred citizen and reclaims an expired lease without repeating a finished decision", async () => {
     await seedCitizens(db, 4);
     await initialize(db, 60);
@@ -313,6 +399,8 @@ describe("runner admission", () => {
   it("reserves the first citizen attempt before the call and still releases the claim", () => {
     const runner = readFileSync("src/lib/ai/runner.ts", "utf8");
     expect(runner).toContain("attemptAlreadyReserved: true");
+    expect(runner).toContain('if (error.code === "quota") await closeModelDay(client, tier);');
+    expect(runner).not.toContain('if (error.code === "rate_limit") await closeModelDay');
     expect(runner).toContain("reserveAttempt");
     expect(runner).toContain("world_release_claim");
     expect(runner).toContain("publishDecisionActivity");
