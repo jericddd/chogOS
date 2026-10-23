@@ -1,6 +1,8 @@
 # chogOS
 
-One shared civilization for Chog Genesis NFTs on Monad mainnet. The token id is the citizen. The portrait on the map is that NFT.
+An AI mind on Gemini runs this civilization and decides what it does.
+
+One shared civilization for Chog Genesis NFTs on Monad mainnet. The token id is the citizen. The portrait on the map is that NFT. Gemini decides growth, which citizen receives a wallet, and whether MON is allocated. The world clock still moves people by the town's rules. The model does not sign.
 
 Live app: [https://chogos.vercel.app/](https://chogos.vercel.app/)
 
