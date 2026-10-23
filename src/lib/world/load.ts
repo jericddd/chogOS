@@ -25,6 +25,7 @@ import {
   type TownProjectRow,
   type WorldStateRow,
 } from "@/lib/world/rows";
+import { resolveEventWorldSecond, type WorldSecondSample } from "@/lib/world/clock";
 import { ONCHAIN_CATEGORY_FILTER, resolveEventFilter } from "@/lib/world/sync";
 import type {
   CitizenView,
@@ -183,7 +184,88 @@ async function readEvents(
     fail(result.error, "history");
   }
   const events = ((result.data ?? []) as unknown as EventRow[]).filter((row) => row.canonical !== false).map(toEvent);
-  return attachMind(client, events);
+  return attachWorldSeconds(client, await attachMind(client, events));
+}
+
+function worldSample(row: { occurred_at?: unknown; world_s?: unknown }): WorldSecondSample | null {
+  const atMs = Date.parse(String(row.occurred_at ?? ""));
+  const worldS = Number(row.world_s);
+  if (!Number.isFinite(atMs) || !Number.isFinite(worldS) || worldS < 0) {
+    return null;
+  }
+  return { atMs, worldS };
+}
+
+async function nearestWorldSample(
+  client: SupabaseClient,
+  occurredAt: string,
+  direction: "prev" | "next",
+): Promise<WorldSecondSample | null> {
+  const ordered =
+    direction === "prev"
+      ? client
+          .from("civilization_events")
+          .select("occurred_at, world_s")
+          .not("world_s", "is", null)
+          .lte("occurred_at", occurredAt)
+          .order("occurred_at", { ascending: false })
+      : client
+          .from("civilization_events")
+          .select("occurred_at, world_s")
+          .not("world_s", "is", null)
+          .gte("occurred_at", occurredAt)
+          .order("occurred_at", { ascending: true });
+  const { data, error } = await ordered.limit(1);
+  if (error || !Array.isArray(data) || data.length === 0) {
+    return null;
+  }
+  return worldSample(data[0] as { occurred_at?: unknown; world_s?: unknown });
+}
+
+/**
+ * Membership rows are often stored without a world second. A nearby simulation
+ * row, or the current anchor when the event is on that segment, supplies one.
+ * A failed lookup leaves the second empty.
+ */
+async function attachWorldSeconds(client: SupabaseClient, events: WorldEventView[]): Promise<WorldEventView[]> {
+  const missing = [...new Set(events.filter((event) => event.worldS == null).map((event) => event.occurredAt))];
+  if (missing.length === 0) {
+    return events;
+  }
+  const { data, error } = await client
+    .from("world_state")
+    .select("speed, max_lag_seconds, anchor_real, anchor_world_s")
+    .maybeSingle();
+  if (error || !data) {
+    return events;
+  }
+  const row = data as { speed?: unknown; max_lag_seconds?: unknown; anchor_real?: unknown; anchor_world_s?: unknown };
+  const clock = {
+    speed: Number(row.speed),
+    maxLagSeconds: Number(row.max_lag_seconds),
+    anchorReal: String(row.anchor_real ?? ""),
+    anchorWorldS: Number(row.anchor_world_s),
+  };
+  if (!(clock.speed > 0) || !Number.isFinite(clock.maxLagSeconds) || !Number.isFinite(clock.anchorWorldS)) {
+    return events;
+  }
+  const samples = new Map<string, WorldSecondSample[]>();
+  await Promise.all(
+    missing.map(async (occurredAt) => {
+      const [prev, next] = await Promise.all([
+        nearestWorldSample(client, occurredAt, "prev"),
+        nearestWorldSample(client, occurredAt, "next"),
+      ]);
+      samples.set(occurredAt, [prev, next].filter((sample): sample is WorldSecondSample => sample !== null));
+    }),
+  );
+  return events.map((event) => {
+    if (event.worldS != null) {
+      return event;
+    }
+    const worldS = resolveEventWorldSecond(event.occurredAt, null, samples.get(event.occurredAt) ?? [], clock);
+    return worldS == null ? event : { ...event, worldS };
+  });
 }
 
 function mindText(value: unknown): string | null {

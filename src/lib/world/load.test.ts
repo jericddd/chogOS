@@ -162,4 +162,61 @@ describe("world loader", () => {
     expect(page.events[1]?.mind).toBeUndefined();
     expect(calls).toContainEqual({ table: "ai_decisions", method: "in", args: ["id", [decisionId]] });
   });
+
+  it("fills a join row from a nearby stored world second", async () => {
+    let eventReads = 0;
+    respond = (table) => {
+      if (table === "world_state:single") {
+        return {
+          data: {
+            speed: 60,
+            max_lag_seconds: 150,
+            anchor_real: "2026-10-20T14:00:42.000Z",
+            anchor_world_s: 34_122_333,
+          },
+          error: null,
+        };
+      }
+      if (table === "civilization_events") {
+        eventReads += 1;
+        if (eventReads === 1) {
+          return {
+            data: [
+              {
+                id: "44444444-4444-4444-8444-444444444444",
+                seq: 181228,
+                kind: "genesis_joined",
+                category: "membership",
+                source: "system",
+                summary: "Chog Genesis #996 verified in the ChogTreasury founding roster.",
+                occurred_at: "2026-10-19T06:04:21.198Z",
+                world_s: null,
+                tick_seq: null,
+                building_id: null,
+                chain_status: "offchain",
+                tx_hash: null,
+                canonical: true,
+                payload: { tokenId: "996" },
+                decision_id: null,
+              },
+            ],
+            error: null,
+          };
+        }
+        return {
+          data: [{ occurred_at: "2026-10-19T06:04:09.910Z", world_s: 28_475_760 }],
+          error: null,
+        };
+      }
+      return { data: [], error: null };
+    };
+    const { loadEventPage } = await import("@/lib/world/load");
+    const page = await loadEventPage({ source: "system", category: "membership" }, null, 10);
+    expect(page.status).toBe("ok");
+    if (page.status !== "ok") {
+      return;
+    }
+    expect(page.events[0]?.worldS).toBe(28_476_437);
+    expect(calls.filter((call) => call.table === "world_state" && call.method === "maybeSingle")).toHaveLength(1);
+  });
 });

@@ -227,7 +227,7 @@ export function LivingWorld({ initial, realtime }: { initial: WorldLoad; realtim
           </div>
         </aside>
         <div className="world-feeds">
-          <GrowthDecisions dock inactive={phonePane !== "growth"} />
+          <GrowthDecisions dock inactive={phonePane !== "growth"} clock={snapshot.clock} />
           <ActivityFeed store={store} initialFilter={feedFilter} dock inactive={phonePane !== "activity"} />
         </div>
       </div>

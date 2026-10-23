@@ -1,10 +1,10 @@
 "use client";
 
 import Link from "next/link";
-import { formatRealAgo, formatWorldTime } from "@/lib/world/clock";
+import { formatEventWhen, formatWorldTime } from "@/lib/world/clock";
 import { CATEGORY_LABEL, SOURCE_DESCRIPTION, SOURCE_LABEL, eventSegments } from "@/lib/world/present";
 import { presentedAsMainnetGenesis, transferPresentationIssues } from "@/lib/world/transfer";
-import type { EventSource, WorldEventView } from "@/lib/world/types";
+import type { ClockView, EventSource, WorldEventView } from "@/lib/world/types";
 
 const SOURCE_TONE: Record<EventSource, string> = {
   simulation: "border-accent/40 text-accent",
@@ -33,14 +33,19 @@ export function EventItem({
   now,
   citizenName = unnamedCitizen,
   compact = false,
+  clock = null,
 }: {
   event: WorldEventView;
   now: number;
   /** Optional. A server page must omit this; a function cannot cross into this client component. */
   citizenName?: (tokenId: string) => string | null;
   compact?: boolean;
+  /** Projects a world day when the event has no stored world second. */
+  clock?: ClockView | null;
 }) {
   const segments = eventSegments(event, citizenName);
+  const when = formatEventWhen(event.occurredAt, now, event.worldS, clock);
+  const storedWorld = event.worldS !== null ? formatWorldTime(event.worldS) : null;
   return (
     <li className={compact ? "py-2" : "py-3"} data-seq={event.seq}>
       <div className="flex items-start gap-3">
@@ -69,9 +74,9 @@ export function EventItem({
             </p>
           ) : null}
           <p className="mt-1 text-xs text-muted">
-            {event.worldS !== null ? <span>{formatWorldTime(event.worldS)} · </span> : null}
+            {storedWorld && storedWorld !== when ? <span>{storedWorld} · </span> : null}
             <time dateTime={event.occurredAt} title={new Date(event.occurredAt).toUTCString()}>
-              {now > 0 ? formatRealAgo(event.occurredAt, now) : event.occurredAt.slice(0, 16).replace("T", " ") + " UTC"}
+              {when}
             </time>
             {compact ? null : <span> · {CATEGORY_LABEL[event.category]}</span>}
             {event.txUrl && event.txHash && (!event.transfer || presentedAsMainnetGenesis(event.transfer)) ? (
