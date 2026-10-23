@@ -386,7 +386,7 @@ export function ActivityFeed({
             )}
             <ul className={dock ? "divide-y divide-line" : "mt-2 divide-y divide-line"}>
               {joins.map((event) => (
-                <EventItem key={event.id} event={event} now={now} citizenName={citizenName} compact={dock} />
+                <EventItem key={event.id} event={event} now={now} citizenName={citizenName} compact={dock} clock={live.snapshot?.clock} />
               ))}
             </ul>
             {dock ? (
@@ -415,7 +415,7 @@ export function ActivityFeed({
 
         <ul className={`divide-y divide-line ${dock ? "" : "mt-3 border-y border-line"} ${shown.length === 0 ? "hidden" : ""}`}>
           {shown.map((event) => (
-            <EventItem key={event.id} event={event} now={now} citizenName={citizenName} compact={dock} />
+            <EventItem key={event.id} event={event} now={now} citizenName={citizenName} compact={dock} clock={live.snapshot?.clock} />
           ))}
         </ul>
         <div ref={bottomRef} className="h-px" />

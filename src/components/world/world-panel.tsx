@@ -12,7 +12,7 @@ import type { Selection } from "@/components/world/world-canvas";
 import { useNow } from "@/components/world/use-now";
 import {
   dayPhase,
-  formatRealAgo,
+  formatTickAge,
   formatWorldDuration,
   formatWorldTime,
   runnerHealth,
@@ -94,7 +94,7 @@ export function WorldStatus({
       </p>
       <p className="mt-1 text-xs text-muted">
         Tick {clock.tickSeq.toLocaleString("en-US")}
-        {now > 0 ? ` · ${formatRealAgo(clock.lastTickAt, serverNow)}` : ""} · {LINK_TEXT[link]}
+        {now > 0 ? ` · ${formatTickAge(clock, serverNow)}` : ""} · {LINK_TEXT[link]}
         {realtime === "error" ? " · realtime unavailable, polling instead" : ""}
       </p>
       {health !== "live" ? <p className="mt-2 text-xs leading-5 text-warning">{info.detail}</p> : null}
@@ -231,11 +231,13 @@ function EntityHistory({
   recent,
   citizenName,
   allHref,
+  clock,
 }: {
   filter: EventFilter;
   recent: readonly WorldEventView[];
   citizenName: (tokenId: string) => string | null;
   allHref?: string;
+  clock: WorldSnapshot["clock"];
 }) {
   const now = useNow(15_000);
   const { events, loading, error } = useEntityEvents(filter, recent);
@@ -255,7 +257,7 @@ function EntityHistory({
       ) : null}
       <ul className="mt-1 divide-y divide-line">
         {events.map((event) => (
-          <EventItem key={event.id} event={event} now={now} citizenName={citizenName} compact />
+          <EventItem key={event.id} event={event} now={now} citizenName={citizenName} compact clock={clock} />
         ))}
       </ul>
     </section>
@@ -373,7 +375,7 @@ function CitizenInspector({
         </Link>
       </div>
       <CitizenMindFacts tokenId={citizen.tokenId} />
-      <EntityHistory filter={{ tokenId: citizen.tokenId }} recent={recent} citizenName={citizenName} allHref={`/activity?citizen=${citizen.tokenId}`} />
+      <EntityHistory filter={{ tokenId: citizen.tokenId }} recent={recent} citizenName={citizenName} allHref={`/activity?citizen=${citizen.tokenId}`} clock={snapshot.clock} />
     </article>
   );
 }
@@ -661,7 +663,7 @@ function BuildingInspector({
           </ul>
         </div>
       ) : null}
-      <EntityHistory filter={{ buildingId: building.id }} recent={recent} citizenName={citizenName} allHref={`/activity?building=${building.id}`} />
+      <EntityHistory filter={{ buildingId: building.id }} recent={recent} citizenName={citizenName} allHref={`/activity?building=${building.id}`} clock={snapshot.clock} />
     </article>
   );
 }
@@ -813,7 +815,7 @@ function ProjectInspector({
         {history.length === 0 ? <p className="mt-2 text-xs text-muted">No project events in this tab yet.</p> : null}
         <ul className="mt-1 divide-y divide-line">
           {history.slice(0, 8).map((event) => (
-            <EventItem key={event.id} event={event} now={now} citizenName={citizenName} compact />
+            <EventItem key={event.id} event={event} now={now} citizenName={citizenName} compact clock={snapshot.clock} />
           ))}
         </ul>
       </section>
@@ -825,11 +827,13 @@ function RoadInspector({
   road,
   recent,
   citizenName,
+  clock,
   onClose,
 }: {
   road: RoadOverlayView;
   recent: readonly WorldEventView[];
   citizenName: (tokenId: string) => string | null;
+  clock: WorldSnapshot["clock"];
   onClose: () => void;
 }) {
   const now = useNow(15_000);
@@ -876,7 +880,7 @@ function RoadInspector({
         {history.length === 0 ? <p className="mt-2 text-xs text-muted">No road events in this tab yet.</p> : null}
         <ul className="mt-1 divide-y divide-line">
           {history.slice(0, 8).map((event) => (
-            <EventItem key={event.id} event={event} now={now} citizenName={citizenName} compact />
+            <EventItem key={event.id} event={event} now={now} citizenName={citizenName} compact clock={clock} />
           ))}
         </ul>
       </section>
@@ -1040,7 +1044,7 @@ export function WorldPanel({
   if (selection?.type === "road") {
     const road = (snapshot.roads ?? []).find((item) => item.id === selection.id);
     if (road) {
-      return <RoadInspector key={road.id} road={road} recent={recent} citizenName={citizenName} onClose={close} />;
+      return <RoadInspector key={road.id} road={road} recent={recent} citizenName={citizenName} clock={snapshot.clock} onClose={close} />;
     }
   }
   if (selection?.type === "project") {

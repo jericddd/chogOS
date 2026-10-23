@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { EventItem } from "@/components/world/event-item";
 import { useNow } from "@/components/world/use-now";
 import { townGrowthEvents } from "@/lib/world/sync";
-import type { EventPage, WorldEventView } from "@/lib/world/types";
+import type { ClockView, EventPage, WorldEventView } from "@/lib/world/types";
 
 const CONSTRUCTION_URL = "/api/world/events?source=ai&category=construction&limit=5";
 const DECISIONS_URL = "/api/world/events?source=ai&limit=50";
@@ -18,7 +18,15 @@ async function readPage(url: string): Promise<EventPage> {
  * Recorded AI construction and citizen-wallet decisions, including the model's
  * own reason when the event points at a decision. Does not invent a row.
  */
-export function GrowthDecisions({ dock = false, inactive = false }: { dock?: boolean; inactive?: boolean }) {
+export function GrowthDecisions({
+  dock = false,
+  inactive = false,
+  clock = null,
+}: {
+  dock?: boolean;
+  inactive?: boolean;
+  clock?: ClockView | null;
+}) {
   const now = useNow(15_000);
   const [events, setEvents] = useState<WorldEventView[] | null>(null);
   const [detail, setDetail] = useState("");
@@ -81,7 +89,7 @@ export function GrowthDecisions({ dock = false, inactive = false }: { dock?: boo
         {events && events.length > 0 ? (
           <ul className={dock ? "divide-y divide-line" : "mt-3 divide-y divide-line border-y border-line"}>
             {events.map((event) => (
-              <EventItem key={event.id} event={event} now={now} citizenName={() => null} compact={dock} />
+              <EventItem key={event.id} event={event} now={now} citizenName={() => null} compact={dock} clock={clock} />
             ))}
           </ul>
         ) : null}

@@ -2,9 +2,14 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import {
   darkness,
+  formatEventWhen,
+  formatRealAgo,
+  formatTickAge,
   formatWorldTime,
+  resolveEventWorldSecond,
   runnerHealth,
   worldSecondsAt,
+  worldSecondsFromClock,
 } from "@/lib/world/clock";
 import { BUILDINGS, TILE, pathBetween } from "@/lib/world/layout";
 import { citizenHref, describeCitizenNow, eventSegments } from "@/lib/world/present";
@@ -177,6 +182,49 @@ describe("world clock", () => {
     expect(runnerHealth(c, T0 + 50_000 + 151_000)).toBe("stalled");
     expect(runnerHealth(clock({ status: "paused" }), T0 + 55_000)).toBe("paused");
     expect(runnerHealth(clock({ lastTickGapS: 60 }), T0 + 50_000 + 120_000)).toBe("live");
+  });
+
+  it("labels a long real span with the world day and clock", () => {
+    const occurred = "2026-10-16T00:15:00.000Z";
+    const day445 = (445 - 1) * 86_400 + 8 * 3600 + 15 * 60;
+    const now = Date.parse(occurred) + 7 * 24 * 60 * 60 * 1000;
+    expect(formatWorldTime(day445)).toBe("Day 445 · 08:15");
+    expect(formatEventWhen(occurred, now, day445)).toBe("Day 445 · 08:15");
+    expect(formatEventWhen(occurred, Date.parse(occurred) + 3 * 24 * 60 * 60 * 1000, day445)).toBe("Day 445 · 08:15");
+    expect(formatEventWhen(occurred, Date.parse(occurred) + 4 * 24 * 60 * 60 * 1000, day445)).toBe("Day 445 · 08:15");
+    expect(formatRealAgo(occurred, now)).toBe("2026-10-16 00:15 UTC");
+    expect(formatRealAgo(occurred, Date.parse(occurred) + 3 * 24 * 60 * 60 * 1000)).not.toMatch(/\d+d ago/);
+    expect(formatRealAgo(occurred, Date.parse(occurred) + 4 * 24 * 60 * 60 * 1000)).not.toMatch(/\d+d ago/);
+    expect(formatEventWhen(occurred, Date.parse(occurred) + 5 * 60 * 1000, day445)).toBe("5m ago");
+    expect(formatEventWhen(occurred, Date.parse(occurred) + 3 * 60 * 60 * 1000, day445)).toBe("3h ago");
+  });
+
+  it("projects a join onto the anchor segment and refuses a time before that anchor", () => {
+    const c = clock({
+      anchorReal: "2026-10-20T14:00:42.000Z",
+      anchorWorldS: 34_122_333,
+      speed: 60,
+      maxLagSeconds: 150,
+    });
+    const enrolled = Date.parse("2026-10-22T22:36:47.000Z");
+    expect(formatWorldTime(worldSecondsFromClock(c, enrolled)!)).toBe("Day 537 · 10:30");
+    expect(worldSecondsFromClock(c, Date.parse("2026-10-19T06:04:21.000Z"))).toBeNull();
+    const beside = resolveEventWorldSecond("2026-10-19T06:04:21.198Z", null, [
+      { atMs: Date.parse("2026-10-19T06:04:09.910Z"), worldS: 28_475_760 },
+    ], c);
+    expect(formatWorldTime(beside!)).toBe("Day 330 · 14:07");
+    expect(
+      resolveEventWorldSecond("2026-10-12T21:38:13.230Z", null, [
+        { atMs: Date.parse("2026-10-13T18:24:49.410Z"), worldS: 38_130 },
+      ], c),
+    ).toBeNull();
+  });
+
+  it("shows a stalled tick as its world time", () => {
+    const c = clock({ lastTickWorldS: (445 - 1) * 86_400 + 8 * 3600 + 15 * 60 });
+    const now = Date.parse(c.lastTickAt) + 7 * 24 * 60 * 60 * 1000;
+    expect(formatTickAge(c, now)).toBe("Day 445 · 08:15");
+    expect(formatTickAge(c, Date.parse(c.lastTickAt) + 10 * 60 * 1000)).toBe("10m ago");
   });
 
   it("darkens the map at night and not at noon", () => {

@@ -121,5 +121,125 @@ export function formatRealAgo(iso: string, nowMs: number): string {
   if (hours < 48) {
     return `${hours}h ago`;
   }
-  return `${Math.floor(hours / 24)}d ago`;
+  return utcStamp(iso);
+}
+
+/** Real ages at or above this span use `Day N · HH:MM`. */
+const LONG_REAL_SPAN_MS = 48 * 60 * 60 * 1000;
+
+function utcStamp(iso: string): string {
+  return iso.slice(0, 16).replace("T", " ") + " UTC";
+}
+
+export type WorldSecondSample = { atMs: number; worldS: number };
+
+/**
+ * World seconds on the current anchor segment. `world_s_at` uses this same
+ * formula. A real time before `anchorReal` is an earlier segment, so this
+ * returns null instead of skipping a paused gap. It does not clamp to the last tick.
+ */
+export function worldSecondsFromClock(
+  clock: Pick<ClockView, "anchorReal" | "anchorWorldS" | "speed">,
+  realMs: number,
+): number | null {
+  const anchor = ms(clock.anchorReal);
+  if (!Number.isFinite(anchor) || !Number.isFinite(realMs) || !(clock.speed > 0) || realMs < anchor) {
+    return null;
+  }
+  const projected = clock.anchorWorldS + Math.floor(((realMs - anchor) / 1000) * clock.speed);
+  if (!Number.isFinite(projected) || projected < 0) {
+    return null;
+  }
+  return projected;
+}
+
+/**
+ * Project from a stored world second when the real gap is inside one runner
+ * interval. A wider gap can hide a pause, so the caller keeps the row unset.
+ */
+export function worldSecondBesideSample(
+  occurredMs: number,
+  samples: readonly WorldSecondSample[],
+  speed: number,
+  maxGapSeconds: number,
+): number | null {
+  if (!Number.isFinite(occurredMs) || !(speed > 0) || !(maxGapSeconds >= 0)) {
+    return null;
+  }
+  let best: WorldSecondSample | null = null;
+  let bestGap = Infinity;
+  for (const sample of samples) {
+    if (!Number.isFinite(sample.atMs) || !Number.isFinite(sample.worldS)) {
+      continue;
+    }
+    const gap = Math.abs(occurredMs - sample.atMs) / 1000;
+    if (gap < bestGap) {
+      best = sample;
+      bestGap = gap;
+    }
+  }
+  if (!best || bestGap > maxGapSeconds) {
+    return null;
+  }
+  const projected = best.worldS + Math.floor(((occurredMs - best.atMs) / 1000) * speed);
+  if (!Number.isFinite(projected) || projected < 0) {
+    return null;
+  }
+  return projected;
+}
+
+export function resolveEventWorldSecond(
+  occurredAt: string,
+  storedWorldS: number | null,
+  samples: readonly WorldSecondSample[],
+  clock: Pick<ClockView, "anchorReal" | "anchorWorldS" | "speed" | "maxLagSeconds"> | null,
+): number | null {
+  if (storedWorldS != null && Number.isFinite(storedWorldS) && storedWorldS >= 0) {
+    return storedWorldS;
+  }
+  const occurredMs = ms(occurredAt);
+  if (!Number.isFinite(occurredMs) || !clock || !(clock.speed > 0)) {
+    return null;
+  }
+  const near = worldSecondBesideSample(occurredMs, samples, clock.speed, clock.maxLagSeconds);
+  if (near != null) {
+    return near;
+  }
+  return worldSecondsFromClock(clock, occurredMs);
+}
+
+/**
+ * A short real age stays relative. A span of two days or more uses
+ * `Day N · HH:MM` from the stored world second, then from the current anchor.
+ */
+export function formatEventWhen(
+  occurredAt: string,
+  nowMs: number,
+  worldS: number | null,
+  clock?: ClockView | null,
+): string {
+  const parsed = ms(occurredAt);
+  if (!(nowMs > 0) || !Number.isFinite(parsed)) {
+    return utcStamp(occurredAt);
+  }
+  if (nowMs - parsed < LONG_REAL_SPAN_MS) {
+    return formatRealAgo(occurredAt, nowMs);
+  }
+  const seconds = worldS ?? (clock ? worldSecondsFromClock(clock, parsed) : null);
+  if (seconds == null) {
+    return utcStamp(occurredAt);
+  }
+  return formatWorldTime(seconds);
+}
+
+/** Tick age. A stall of two real days or more shows the world time of that tick. */
+export function formatTickAge(clock: ClockView, nowMs: number): string {
+  const parsed = ms(clock.lastTickAt);
+  if (!(nowMs > 0) || !Number.isFinite(parsed)) {
+    return utcStamp(clock.lastTickAt);
+  }
+  if (nowMs - parsed < LONG_REAL_SPAN_MS) {
+    return formatRealAgo(clock.lastTickAt, nowMs);
+  }
+  return formatWorldTime(clock.lastTickWorldS);
 }
