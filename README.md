@@ -24,9 +24,9 @@ The model does not hold a key and does not sign. A review is not a transfer. The
 
 The workflow on this branch is scheduled `*/10 * * * *`, and it can be started by hand. GitHub may start that schedule later than the expression. It checks out the application branch and has three jobs:
 
-1. `run` calls the production mind.
-2. `issue` uses the wallet agent key to create a citizen wallet. The gas key pays that transaction.
-3. `pay` uses the ChogBank authorizer key to sign an accepted MON allocation, and the gas key to submit `distribute`. The agent key is not used for payouts.
+1. `run` calls the production mind. The poke waits up to 290 seconds and retries once.
+2. `issue` uses the wallet agent key to create a citizen wallet. The gas key pays that transaction. This job still runs when the mind poke fails, so a timeout does not leave an accepted wallet uncreated.
+3. `pay` uses the ChogBank authorizer key to sign an accepted MON allocation, and the gas key to submit `distribute`. The agent key is not used for payouts. This job still runs after a failed poke when wallet issuance succeeds.
 
 Those keys are GitHub Actions secrets. They are not in this repository, and the website does not receive them. The agent key can move MON out of a citizen wallet. The NFT holder does not control the citizen wallet.
 

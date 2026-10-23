@@ -19,7 +19,7 @@ concurrency:
 jobs:
   run:
     runs-on: ubuntu-latest
-    timeout-minutes: 6
+    timeout-minutes: 12
     permissions:
       contents: read
     steps:
@@ -38,15 +38,24 @@ jobs:
             fi
             exit 0
           fi
-          # Vercel allows 300s. The runner stops starting Gemini calls at 240s,
-          # then one call can still finish. Wait 290s so that body comes back.
-          code="$(curl -sS -o /tmp/ai-mind.json -w "%{http_code}" -X POST \
-            -H "Authorization: Bearer ${AI_RUNNER_SECRET}" \
-            -H "Content-Type: application/json" \
-            -H "x-chog-ai-wait: long" \
-            --max-time 290 \
-            "$url")"
-          python3 -c 'from pathlib import Path; print(Path("/tmp/ai-mind.json").read_text()[:2000])'
+          # Vercel allows 300s. Cold start sits inside this curl. The route
+          # returns a body by 250s of function time, then one retry covers a
+          # warm poke if the first connection still closes empty.
+          poke() {
+            curl -sS -o /tmp/ai-mind.json -w "%{http_code}" -X POST \
+              -H "Authorization: Bearer ${AI_RUNNER_SECRET}" \
+              -H "Content-Type: application/json" \
+              -H "x-chog-ai-wait: long" \
+              --max-time 290 \
+              "$url" || true
+          }
+          code="$(poke)"
+          if [ "$code" != "200" ]; then
+            echo "Mind runner returned HTTP ${code:-000}. Retrying once."
+            sleep 5
+            code="$(poke)"
+          fi
+          python3 -c 'from pathlib import Path; p = Path("/tmp/ai-mind.json"); print(p.read_text()[:2000] if p.exists() else "")'
           echo "http $code"
           if [ "$code" = "200" ]; then
             exit 0
@@ -56,7 +65,8 @@ jobs:
 
   issue:
     needs: run
-    if: always() && needs.run.result == 'success'
+    # A failed poke must not freeze a queued wallet or an accepted payout.
+    if: always() && needs.run.result != 'cancelled'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
