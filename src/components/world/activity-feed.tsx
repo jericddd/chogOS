@@ -22,6 +22,7 @@ import {
 import {
   EVENT_CATEGORIES,
   EVENT_SOURCES,
+  type ClockView,
   type EventCategory,
   type EventFilter,
   type EventPage,
@@ -74,6 +75,56 @@ async function fetchPage(filter: EventFilter, before: number | null): Promise<Ev
 
 function isEmptyFilter(filter: EventFilter): boolean {
   return !filter.category && !filter.source && !filter.tokenId && !filter.buildingId;
+}
+
+function joinedLabel(count: number): string {
+  return `Joined the civilization · ${count} ${count === 1 ? "Chog" : "Chogs"}`;
+}
+
+function JoinedCivilization({
+  dock,
+  joins,
+  now,
+  citizenName,
+  clock,
+}: {
+  dock: boolean;
+  joins: WorldEventView[];
+  now: number;
+  citizenName: (tokenId: string) => string | null;
+  clock?: ClockView | null;
+}) {
+  if (joins.length === 0) return null;
+  const records = (
+    <ul className={dock ? "divide-y divide-line" : "mt-2 divide-y divide-line"}>
+      {joins.map((event) => (
+        <EventItem key={event.id} event={event} now={now} citizenName={citizenName} compact={dock} clock={clock} />
+      ))}
+    </ul>
+  );
+  if (dock) {
+    return (
+      <details className="border-b-4 border-line px-2.5">
+        <summary className="cursor-pointer py-2 font-display text-[0.62rem] leading-4 text-accent">{joinedLabel(joins.length)}</summary>
+        <div className="max-h-28 overflow-y-auto">{records}</div>
+        <p className="py-1">
+          <Link href="/activity#joined-civilization" className="text-xs text-accent">
+            All joined
+          </Link>
+        </p>
+      </details>
+    );
+  }
+  return (
+    <div id="joined-civilization" className="mt-4 border-t border-line pt-3">
+      <h3 className="font-serif text-xl tracking-tight">Joined the civilization</h3>
+      <p className="mt-1 text-sm leading-6 text-muted">
+        Each row is a Chog Genesis NFT that entered this civilization. Verify opens the stored record. Genesis
+        token, observed owner, and block open Monadscan.
+      </p>
+      {records}
+    </div>
+  );
 }
 
 function emptyText(filter: EventFilter): string {
@@ -283,10 +334,12 @@ export function ActivityFeed({
 
   const joins = useCivilizationJoins(showJoins(filter), dock ? 5 : 80);
   useEffect(() => {
+    // A normal visit stays on the newest activity. Only /activity#joined-civilization moves to the records.
     if (dock || joins.length === 0 || window.location.hash !== "#joined-civilization") return;
     document.getElementById("joined-civilization")?.scrollIntoView({ block: "start" });
   }, [dock, joins]);
-  const shown = joins.length > 0 ? feed.shown.filter((event) => event.kind !== "genesis_joined" && event.kind !== "citizen_enrolled") : feed.shown;
+  const joinIds = new Set(joins.map((event) => event.id));
+  const shown = joinIds.size > 0 ? feed.shown.filter((event) => !joinIds.has(event.id)) : feed.shown;
   const scoped = filter.tokenId
     ? `Citizen #${filter.tokenId}`
     : filter.buildingId
@@ -373,32 +426,6 @@ export function ActivityFeed({
           {feed.pending.length > 0 ? `${feed.pending.length} new events` : ""}
         </p>
 
-        {joins.length > 0 ? (
-          <div id={dock ? undefined : "joined-civilization"} className={dock ? "border-b-4 border-line pb-1" : "mb-4 border-b border-line pb-3"}>
-            <h3 className={dock ? "pt-2 font-display text-[0.62rem] leading-4 text-accent" : "font-serif text-xl tracking-tight"}>
-              {dock ? "Joined" : "Joined the civilization"}
-            </h3>
-            {dock ? null : (
-              <p className="mt-1 text-sm leading-6 text-muted">
-                Each row is a Chog Genesis NFT that entered this civilization. Verify opens the stored record. Genesis
-                token, observed owner, and block open Monadscan.
-              </p>
-            )}
-            <ul className={dock ? "divide-y divide-line" : "mt-2 divide-y divide-line"}>
-              {joins.map((event) => (
-                <EventItem key={event.id} event={event} now={now} citizenName={citizenName} compact={dock} clock={live.snapshot?.clock} />
-              ))}
-            </ul>
-            {dock ? (
-              <p className="py-1">
-                <Link href="/activity#joined-civilization" className="text-xs text-accent">
-                  All joined
-                </Link>
-              </p>
-            ) : null}
-          </div>
-        ) : null}
-
         {status === "loading" && shown.length === 0 ? <p className="py-3 text-sm text-muted">Reading history…</p> : null}
         {status === "error" ? (
           <p className="py-3 text-sm text-warning">
@@ -418,10 +445,13 @@ export function ActivityFeed({
             <EventItem key={event.id} event={event} now={now} citizenName={citizenName} compact={dock} clock={live.snapshot?.clock} />
           ))}
         </ul>
+        {dock ? null : <JoinedCivilization dock={false} joins={joins} now={now} citizenName={citizenName} clock={live.snapshot?.clock} />}
         <div ref={bottomRef} className="h-px" />
       </div>
 
-      <div className={dock ? "flex shrink-0 flex-wrap items-center justify-between gap-2 border-t-4 border-line px-2.5 py-2" : "mt-4 flex flex-wrap items-center justify-between gap-3"}>
+      <div className={dock ? "shrink-0 border-t-4 border-line" : "mt-4 flex flex-wrap items-center justify-between gap-3"}>
+        {dock ? <JoinedCivilization dock joins={joins} now={now} citizenName={citizenName} clock={live.snapshot?.clock} /> : null}
+        <div className={dock ? "flex flex-wrap items-center justify-between gap-2 px-2.5 py-2" : "contents"}>
         {nextBefore !== null && feed.shown.length > 0 ? (
           <button
             type="button"
@@ -441,6 +471,7 @@ export function ActivityFeed({
             {dock ? "Full history" : "Open full history"}
           </Link>
         ) : null}
+        </div>
       </div>
     </section>
   );
