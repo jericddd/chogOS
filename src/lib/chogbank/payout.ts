@@ -27,6 +27,7 @@ import {
 } from "@/lib/chogbank/bank";
 import { lowestIssuerFees } from "@/lib/wallets/issuer";
 import { treasuryDecisionId, treasuryReasonHash, type TreasuryAsset } from "@/lib/economy/treasury-policy";
+import { economicPayoutReason } from "@/lib/chogbank/payout-reason";
 
 export const DEFAULT_PAYOUT_URL = "https://chogos.vercel.app/api/economy/payouts";
 export { PAYOUT_GAS_RESERVE_WEI };
@@ -272,8 +273,11 @@ export function spendKeys(asset: Address, windowId: bigint, tokenId: bigint): { 
 }
 
 export function payoutReason(output: Record<string, unknown>, rationale: string | null): string | null {
-  const raw = typeof output.reason === "string" && output.reason.trim() ? output.reason.trim() : rationale?.trim() ?? "";
+  const stored = economicPayoutReason(output.reason);
+  if (stored) return stored;
+  const raw = rationale?.trim() ?? "";
   if (!raw || raw.length > 320 || /https?:\/\//i.test(raw)) return null;
+  if (economicPayoutReason(raw) == null) return null;
   return raw;
 }
 
@@ -285,7 +289,7 @@ export function pendingPayoutFromOutput(output: Record<string, unknown>): Pendin
   const amountRaw = typeof output.amountRaw === "string" ? output.amountRaw : "";
   const windowId = typeof output.windowId === "string" ? output.windowId : "";
   const decisionId = typeof output.decisionId === "string" ? output.decisionId.toLowerCase() : "";
-  const reason = payoutReason(output, null);
+  const reason = economicPayoutReason(output.reason);
   if (!asset || !reason || !DECIMAL.test(tokenId) || !DECIMAL.test(amountRaw) || !DECIMAL.test(windowId) || !HASH.test(decisionId)) {
     return null;
   }
@@ -406,6 +410,21 @@ export function parsePayoutList(body: unknown): { bank: Address; monDistributed:
     decisions.push(pending);
   }
   return { bank: MAINNET_CHOG_BANK, monDistributed: record.monDistributed === true, decisions };
+}
+
+/** One named allocation. Any other list is refused before a signature. */
+export function selectManualPayout(decisions: readonly PendingPayout[], decisionId: Hex): PendingPayout {
+  if (decisions.length !== 1) {
+    throw new Error("The payout list did not contain exactly one decision. Nothing was signed.");
+  }
+  const only = decisions[0];
+  if (!only || only.decisionId.toLowerCase() !== decisionId.toLowerCase()) {
+    throw new Error("The payout list was for a different decision. Nothing was signed.");
+  }
+  if (!economicPayoutReason(only.reason)) {
+    throw new Error("The stored world reason cannot be paid. Nothing was signed.");
+  }
+  return only;
 }
 
 /**

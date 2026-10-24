@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { considerCitizenCommerce } from "@/lib/ai/citizen-commerce";
 import { assembleTransferWorld, type TransferCitizen } from "@/lib/ai/transfer-decision";
+import { AiProviderError } from "@/lib/ai/types";
 
 function citizen(tokenId: string, citizenId: string, balance: string | null): TransferCitizen {
   return {
@@ -138,6 +139,27 @@ describe("citizen commerce", () => {
     expect(result.status).toBe("failed");
     expect(rows[0]).toMatch(/technical_failure:model unavailable/);
     expect(rows[0]).not.toMatch(/should trade|should return/i);
+  });
+
+  it("does not store a trade when the Lite slot is closed", async () => {
+    let recorded = false;
+    const result = await considerCitizenCommerce({
+      world,
+      timeoutMs: 1000,
+      maxOutputTokens: 200,
+      provider: "gemini",
+      model: "gemini-3.5-flash-lite",
+      complete: async () => {
+        throw new AiProviderError("The shared model slot is not open.", "rate_limit", false);
+      },
+      record: async () => {
+        recorded = true;
+        return true;
+      },
+    });
+    expect(result.status).toBe("skipped");
+    expect(recorded).toBe(false);
+    expect(result.detail).toMatch(/No transaction was broadcast/);
   });
 
   it("leaves the growth prompt unchanged and keeps signing out of the runner", () => {

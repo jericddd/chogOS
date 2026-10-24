@@ -114,6 +114,48 @@ describe("activity drafts", () => {
     expect(drafts[1]?.summary).toMatch(/cap limited/);
     expect(drafts[1]?.payload.broadcast).toBe(true);
     expect(drafts[1]?.payload.bank).toBe("0xB2494538433B2FA3167A723d32329cc22c3A59C1");
+    expect(drafts[1]?.payload.note).toBe("The east road still needs fare.");
+  });
+
+  it("does not record a successful payout for an unverified transaction", () => {
+    const drafts = activityDrafts(decision({
+      purpose: "treasury_allocation",
+      status: "executed",
+      output: {
+        tokenId: "91",
+        asset: "MON",
+        amountRaw: "10000000000000000",
+        verified: false,
+        onchain: true,
+        txHash: TX,
+        reason: "The east road still needs fare.",
+      },
+    }));
+    expect(drafts.map((draft) => draft.kind)).toEqual(["treasury.allocation"]);
+    expect(drafts[0]?.chainStatus).toBe("offchain");
+    expect(drafts[0]?.txHash).toBeNull();
+    expect(JSON.stringify(drafts)).not.toContain(TX);
+  });
+
+  it("keeps a policy sentence out of the confirmed payout note", () => {
+    const drafts = activityDrafts(decision({
+      purpose: "treasury_allocation",
+      status: "executed",
+      output: {
+        tokenId: "137",
+        asset: "MON",
+        amountRaw: "10000000000000000",
+        verified: true,
+        onchain: true,
+        address: WALLET,
+        txHash: TX,
+        blockNumber: "116176787",
+        reason: "Production signing is disabled. This record is not a signature and not a payment.",
+      },
+    }));
+    expect(drafts[1]?.kind).toBe("treasury.paid");
+    expect(drafts[1]?.payload.note).toBe("The stored world reason could not be shown.");
+    expect(String(drafts[1]?.payload.note)).not.toMatch(/signing is disabled/);
   });
 
   it("inserts one AI activity row and does not duplicate it", async () => {
@@ -145,7 +187,7 @@ describe("activity drafts", () => {
                 : rows.filter((row) => row[column] === value);
             }
             if (state.single) return { data: rows[0] ? { id: rows[0].id } : null, error: null };
-            return { data: rows.map((row) => ({ id: row.id, dedupe_key: row.dedupe_key })), error: null };
+            return { data: rows.map((row) => ({ ...row })), error: null };
           }
           outcomes.push(JSON.stringify(state.values));
           return { data: null, error: null };
@@ -173,6 +215,12 @@ describe("activity drafts", () => {
             return api;
           },
           is() {
+            return api;
+          },
+          limit() {
+            return api;
+          },
+          order() {
             return api;
           },
           maybeSingle() {
@@ -278,6 +326,212 @@ describe("activity drafts", () => {
     expect(confirmed[0]?.summary).toMatch(/Confirmed successful/);
     expect(confirmed[0]?.summary).toMatch(/ChogBank/);
     expect(confirmed[0]).toMatchObject({ chainStatus: "confirmed", chainId: 143, txHash: TX });
+  });
+
+  it("distinguishes a citizen decision from an action the simulation carried out", () => {
+    const proposed = activityDrafts(decision({
+      purpose: "citizen_turn",
+      status: "proposed",
+      output: { action: "work", tokenId: "7" },
+    }));
+    const queued = activityDrafts(decision({
+      purpose: "citizen_turn",
+      status: "queued",
+      output: { action: "work", tokenId: "7" },
+    }));
+    const failed = activityDrafts(decision({
+      purpose: "citizen_turn",
+      status: "failed",
+      output: { tokenId: "7" },
+    }));
+    const unconfirmed = activityDrafts(decision({
+      purpose: "citizen_turn",
+      status: "executed",
+      output: { action: "work", tokenId: "7" },
+    }));
+    const confirmed = activityDrafts(decision({
+      purpose: "citizen_turn",
+      status: "executed",
+      output: { action: "work", tokenId: "7" },
+    }), { worldConfirmed: true });
+    expect(proposed).toHaveLength(1);
+    expect(proposed[0]).toMatchObject({
+      kind: "ai.decision",
+      citizenId: CITIZEN,
+      decisionId: ID,
+      chainStatus: "offchain",
+      txHash: null,
+      chainId: null,
+    });
+    expect(proposed[0]?.summary).toMatch(/Chog #7/);
+    expect(proposed[0]?.summary).toMatch(/proposed/);
+    expect(proposed[0]?.summary).toMatch(/has not carried the action out/);
+    expect(proposed[0]?.payload.executed).toBe(false);
+    expect(proposed[0]?.payload.tokenId).toBe("7");
+    expect(queued[0]?.summary).toMatch(/queued/);
+    expect(queued[0]?.summary).toMatch(/has not carried the action out/);
+    expect(failed[0]?.summary).toMatch(/did not carry out an action/);
+    expect(unconfirmed).toHaveLength(1);
+    expect(unconfirmed[0]?.summary).toMatch(/has not confirmed/);
+    expect(confirmed.map((draft) => draft.kind)).toEqual(["ai.decision", "ai.completed"]);
+    expect(confirmed[1]?.summary).toMatch(/carried out work for Chog #7/);
+    expect(confirmed[1]?.payload.executed).toBe(true);
+    expect(confirmed[1]?.txHash).toBeNull();
+    expect(String(confirmed[1]?.payload.note)).toMatch(/not an onchain transfer/);
+  });
+
+  it("publishes a confirmed citizen action once and ignores a duplicate", async () => {
+    const events: Array<Record<string, unknown>> = [
+      {
+        id: "world-1",
+        dedupe_key: "construction:world-1",
+        kind: "construction.started",
+        decision_id: ID,
+      },
+    ];
+    const client = {
+      from(table: string) {
+        const state: {
+          op: string;
+          values: Record<string, unknown> | null;
+          filters: Array<[string, unknown]>;
+          single: boolean;
+        } = { op: "select", values: null, filters: [], single: false };
+        const run = async () => {
+          if (table === "civilization_events" && state.op === "insert") {
+            const row = state.values ?? {};
+            if (events.some((event) => event.dedupe_key === row.dedupe_key)) {
+              return { data: null, error: { code: "23505", message: "duplicate" } };
+            }
+            events.push({ ...row, id: `evt-${events.length + 1}` });
+            return { data: { id: events.at(-1)?.id }, error: null };
+          }
+          if (table === "civilization_events") {
+            let rows = events;
+            for (const [column, value] of state.filters) {
+              rows = Array.isArray(value) ? rows.filter((row) => value.includes(row[column])) : rows.filter((row) => row[column] === value);
+            }
+            if (state.single) return { data: rows[0] ? { id: rows[0].id } : null, error: null };
+            return { data: rows.map((row) => ({ ...row })), error: null };
+          }
+          return { data: null, error: null };
+        };
+        const api = {
+          insert(values: Record<string, unknown>) {
+            state.op = "insert";
+            state.values = values;
+            return api;
+          },
+          update() {
+            return api;
+          },
+          select() {
+            return api;
+          },
+          eq(column: string, value: unknown) {
+            state.filters.push([column, value]);
+            return api;
+          },
+          in(column: string, value: unknown) {
+            state.filters.push([column, value]);
+            return api;
+          },
+          is() {
+            return api;
+          },
+          limit() {
+            return api;
+          },
+          maybeSingle() {
+            state.single = true;
+            return run();
+          },
+          then(resolve: (value: unknown) => unknown, reject?: (reason: unknown) => unknown) {
+            return run().then(resolve, reject);
+          },
+        };
+        return api;
+      },
+    };
+    const row = decision({
+      purpose: "citizen_turn",
+      status: "executed",
+      output: { action: "build", tokenId: "7" },
+    });
+    await publishDecisionActivity(client as unknown as SupabaseClient, row);
+    await publishDecisionActivity(client as unknown as SupabaseClient, row);
+    const published = events.filter((event) => event.kind === "ai.decision" || event.kind === "ai.completed");
+    expect(published.map((event) => event.kind)).toEqual(["ai.decision", "ai.completed"]);
+    expect(published.every((event) => event.decision_id === ID && event.tx_hash == null)).toBe(true);
+  });
+
+  it("does not publish completion when the world event lookup fails", async () => {
+    const events: Array<Record<string, unknown>> = [];
+    const client = {
+      from(table: string) {
+        const state: { op: string; values: Record<string, unknown> | null; single: boolean } = {
+          op: "select",
+          values: null,
+          single: false,
+        };
+        const run = async () => {
+          if (table === "civilization_events" && state.op === "select") {
+            return { data: null, error: { code: "XX", message: "unavailable" } };
+          }
+          if (table === "civilization_events" && state.op === "insert") {
+            events.push({ ...(state.values ?? {}), id: "evt-1" });
+            return { data: { id: "evt-1" }, error: null };
+          }
+          return { data: null, error: null };
+        };
+        const api = {
+          insert(values: Record<string, unknown>) {
+            state.op = "insert";
+            state.values = values;
+            return api;
+          },
+          update() {
+            return api;
+          },
+          select() {
+            if (state.op !== "insert") state.op = "select";
+            return api;
+          },
+          eq() {
+            return api;
+          },
+          in() {
+            return api;
+          },
+          is() {
+            return api;
+          },
+          limit() {
+            return api;
+          },
+          maybeSingle() {
+            state.single = true;
+            return run();
+          },
+          then(resolve: (value: unknown) => unknown, reject?: (reason: unknown) => unknown) {
+            return run().then(resolve, reject);
+          },
+        };
+        return api;
+      },
+    };
+    await publishDecisionActivity(
+      client as unknown as SupabaseClient,
+      decision({ purpose: "citizen_turn", status: "executed", output: { action: "work", tokenId: "7" } }),
+    );
+    expect(events.map((event) => event.kind)).toEqual(["ai.decision"]);
+  });
+
+  it("keeps the decision unchanged when publication throws", async () => {
+    const row = decision({ purpose: "citizen_turn", status: "queued", output: { action: "work", tokenId: "7" } });
+    const before = JSON.stringify(row);
+    await publishDecisionActivity({ from() { throw new Error("feed down"); } } as unknown as SupabaseClient, row);
+    expect(JSON.stringify(row)).toBe(before);
   });
 
   it("does not give the website a way to spend a citizen wallet", () => {

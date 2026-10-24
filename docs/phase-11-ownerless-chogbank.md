@@ -1,6 +1,6 @@
 # Phase 11 — ChogBank
 
-The live record is [README.md](../README.md). ChogBank is deployed at `0xB2494538433B2FA3167A723d32329cc22c3A59C1`. The contract has no owner, no administrator, no proxy, and no upgrade. The authorizer is still a privileged signer inside the immutable caps. The website does not sign. GitHub Actions job `pay` on `main` broadcasts an accepted MON allocation.
+The live record is [README.md](../README.md). ChogBank is deployed at `0xB2494538433B2FA3167A723d32329cc22c3A59C1`. The contract has no owner, no administrator, no proxy, and no upgrade. The authorizer is still a privileged signer inside the immutable caps. The website does not sign. A person starts one stored payout from `.github/workflows/chogbank-payout.yml`. The scheduled AI mind workflow does not broadcast.
 
 The paragraphs below are the build journal. Where they say the contract is not deployed, or that this server does not broadcast, they describe the Next.js process and the day the journal was written. The Actions workflow is the broadcaster.
 
@@ -21,7 +21,7 @@ The contract is deployed with normal `CREATE` in `contracts/script/DeployChogBan
 | Actor | What they can do | What they cannot do |
 | --- | --- | --- |
 | AI model | Propose one token id, an asset, a base-unit amount, a reason, and an expected outcome. | Choose an address, change a cap, sign, or broadcast. |
-| Application server | Reject a proposal, or record an accepted review. The Next.js process does not sign. | Hold the authorizer key or the agent key. GitHub Actions, not this server, broadcasts an accepted MON allocation. |
+| Application server | Reject a proposal, or record an accepted review. The Next.js process does not sign. | Hold the authorizer key or the agent key. A manual GitHub Actions workflow, not this server, can broadcast one stored MON allocation. |
 | Authorizer key | After deployment, sign an EIP-712 allocation. The contract still enforces the asset, caps, expiry, nonce, and recipient. | Change caps, upgrade the contract, or pay an arbitrary address. |
 | Transaction submitter | Pay gas for a valid signed allocation. | Change policy or bypass `distribute`. |
 | NFT holder | Transfer the NFT. The site updates the displayed owner. | Control the citizen wallet, redirect an allocation, or reset the citizen. The recipient is the wallet for the token id, not `ownerOf`. |
@@ -126,4 +126,4 @@ The cap table above was the pre-broadcast application review, including a `$CHOG
 
 ## Deployment
 
-The broadcast already happened. Addresses, caps, and who signs are in [README.md](../README.md). Do not deploy a second ChogBank. The website still has no switch that signs. GitHub Actions job `pay` broadcasts an accepted MON allocation. The NFT holder does not withdraw. Monadscan source verification was not recorded by the app.
+The broadcast already happened. Addresses, caps, and who signs are in [README.md](../README.md). Do not deploy a second ChogBank. The website still has no switch that signs. A manual GitHub Actions workflow broadcasts one stored MON allocation. The NFT holder does not withdraw. Monadscan source verification was not recorded by the app.

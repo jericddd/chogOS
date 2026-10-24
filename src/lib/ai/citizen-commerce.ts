@@ -63,12 +63,17 @@ export async function considerCitizenCommerce(input: {
       error instanceof AiProviderError
         ? error
         : new AiProviderError(error instanceof Error ? error.message : "The citizen transfer model call failed.", "unavailable", false);
+    if (!providerError.halt && (providerError.code === "quota" || providerError.code === "rate_limit" || /not sent/i.test(providerError.message))) {
+      return skipped(
+        "skipped",
+        "The Lite model slot is not open. No trade or return was requested. No transaction was broadcast.",
+        0,
+        0,
+      );
+    }
     if (providerError.halt) halt = haltFromError(providerError);
     const detail = providerError.message.replace(/https?:\/\/\S+/gi, "[redacted-url]").slice(0, 240);
-    const settled = settleTransferText("", {
-      ...input.world,
-      recordedKeys: input.world.recordedKeys,
-    });
+    const settled = settleTransferText("", input.world);
     const technical = { ...settled, publicState: "technical_failure" as const, rationale: detail, fromModel: false };
     if (technical.record) {
       const recorded = await input.record({ ...technical, provider: input.provider, model: input.model });

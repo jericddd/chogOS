@@ -139,6 +139,36 @@ describe("treasury consideration", () => {
     expect(result.promptChars).toBe(0);
   });
 
+  it("defers a closed Flash slot without storing an allocation or halting other work", async () => {
+    const rows: TreasuryDecisionInsert[] = [];
+    let called = false;
+    const result = await considerTreasuryAllocation({
+      nowMs: Date.UTC(2026, 9, 21),
+      roster,
+      prior: [],
+      monBalance: BALANCE,
+      chogBalance: 1n,
+      chogDecimals: 18,
+      timeoutMs: 1000,
+      maxOutputTokens: 200,
+      provider: "gemini",
+      model: "gemini-3.8-flash",
+      complete: async () => {
+        called = true;
+        throw new AiProviderError("The shared model slot is not open.", "rate_limit", false);
+      },
+      record: async (row) => {
+        rows.push(row);
+        return true;
+      },
+    });
+    expect(called).toBe(true);
+    expect(result.status).toBe("skipped");
+    expect(result.halt).toBeNull();
+    expect(rows).toHaveLength(0);
+    expect(result.detail).toMatch(/slot is not open/);
+  });
+
   it("keeps the prompt characters when the database write fails", async () => {
     const result = await considerTreasuryAllocation({
       nowMs: Date.UTC(2026, 9, 21),
@@ -165,7 +195,7 @@ describe("treasury consideration", () => {
     expect(runner).toContain("considerTreasuryAllocation");
     expect(runner).toContain("responseSchema: request.responseSchema");
     expect(runner).toContain('accepted.reason === "model output was not JSON"');
-    expect(runner.indexOf("await attachTreasury()")).toBeLessThan(runner.indexOf("while (!endRun)"));
+    expect(runner.indexOf("await attachTreasury()")).toBeLessThan(runner.indexOf("while (!endRun && !liteClosed)"));
     expect(runner).toContain("Stopped before the host timeout. No treasury allocation was requested.");
     expect(runner).toContain("Citizen wallet code was not read (");
     expect(runner).toContain("No eligible citizen in this review window has a deployed wallet whose stored token id matches, so no allocation was requested.");

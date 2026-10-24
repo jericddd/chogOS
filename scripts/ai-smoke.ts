@@ -6,7 +6,9 @@
  * Exit 1: the request failed.
  */
 import { createHash } from "node:crypto";
-import { createGeminiProvider, GEMINI_DEFAULT_MODEL } from "../src/lib/ai/providers/gemini";
+import { createClient } from "@supabase/supabase-js";
+import { reserveModelAttempt } from "../src/lib/ai/model-quota";
+import { createGeminiProvider } from "../src/lib/ai/providers/gemini";
 import { DECISION_RESPONSE_SCHEMA } from "../src/lib/ai/schema";
 import { readAppConfig } from "../src/lib/config/env";
 
@@ -23,10 +25,17 @@ async function main(): Promise<void> {
     console.log("SKIP: AI_API_KEY is not set. No request was sent.");
     process.exit(2);
   }
-  const model = config.aiModel ?? GEMINI_DEFAULT_MODEL;
-  const provider = createGeminiProvider({ ...config, aiProvider: "gemini", aiModel: model });
+  if (!config.supabaseUrl || !config.supabaseServiceRoleKey) {
+    console.log("SKIP: Supabase service role is not set. No request was sent.");
+    process.exit(2);
+  }
+  const provider = createGeminiProvider({ ...config, aiProvider: "gemini", aiModel: config.aiModel ?? "gemini-3.5-flash-lite" });
+  const ledger = createClient(config.supabaseUrl, config.supabaseServiceRoleKey, {
+    auth: { persistSession: false, autoRefreshToken: false },
+  });
   const completion = await provider.complete({
     purpose: "smoke",
+    reserveAttempt: (model) => reserveModelAttempt(ledger, model),
     messages: [
       {
         role: "system",

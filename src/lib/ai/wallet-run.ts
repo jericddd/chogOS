@@ -172,6 +172,9 @@ export async function considerWalletIssuance(input: {
         ? error
         : new AiProviderError(error instanceof Error ? error.message : "The wallet model call failed.", "unavailable", false);
     const detail = providerError.message.replace(/https?:\/\/\S+/gi, "[redacted-url]").slice(0, 240);
+    if (!providerError.halt && (providerError.code === "quota" || providerError.code === "rate_limit" || /not sent/i.test(detail))) {
+      return skipped("skipped", `${detail} No wallet was requested.`, 0, 0);
+    }
     if (needing.length === 0) {
       const recorded = await input.record(failureRow(input.provider, input.model, detail));
       if (providerError.halt) {

@@ -2,6 +2,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { getAddress } from "viem";
 import { addresses } from "@/lib/blockchain/addresses";
 import { MAINNET_CHOG_BANK } from "@/lib/chogbank/bank";
+import { economicPayoutReason } from "@/lib/chogbank/payout-reason";
 import { MAINNET_WALLET_FACTORY } from "@/lib/wallets/issuer";
 import { classifyTransferReceipt, PUBLIC_TRANSFER_STATES, type PublicTransferState } from "@/lib/ai/transfer-decision";
 import { formatTokenAmount } from "@/lib/wallets/present";
@@ -19,6 +20,7 @@ export type ActivityDecision = {
   status: string;
   rationale: string | null;
   output: unknown;
+  tokenId?: string | null;
 };
 
 export type AiActivityDraft = {
@@ -42,6 +44,74 @@ function outputOf(value: unknown): Record<string, unknown> {
 function tokenOf(output: Record<string, unknown>): string | null {
   const tokenId = typeof output.tokenId === "string" || typeof output.tokenId === "number" ? String(output.tokenId).split(".")[0] : "";
   return TOKEN.test(tokenId) ? tokenId : null;
+}
+
+function decisionToken(row: ActivityDecision, output: Record<string, unknown>): string | null {
+  return tokenOf(output) ?? (row.tokenId ? tokenOf({ tokenId: row.tokenId }) : null);
+}
+
+function citizenAction(output: Record<string, unknown>): string {
+  const action = typeof output.action === "string" ? output.action.trim() : "";
+  return /^[a-z_]{1,32}$/.test(action) ? action : "";
+}
+
+const CITIZEN_TURN_STATUSES = new Set(["proposed", "queued", "accepted", "rejected", "failed", "executed"]);
+
+function citizenTurnDrafts(row: ActivityDecision, output: Record<string, unknown>, worldConfirmed: boolean): AiActivityDraft[] {
+  if (!CITIZEN_TURN_STATUSES.has(row.status)) return [];
+  const tokenId = decisionToken(row, output);
+  const actor = citizenId(row.citizenId);
+  const action = citizenAction(output);
+  const who = tokenId ? `Chog #${tokenId}` : "a citizen";
+  const choice = action || "an action";
+  const failed = row.status === "rejected" || row.status === "failed";
+  const carriedOut = worldConfirmed && row.status === "executed";
+  const summary = failed
+    ? `The AI mind recorded a ${row.status} choice for ${who}. The simulation did not carry out an action.`
+    : carriedOut
+      ? `The AI mind chose ${choice} for ${who}. Completion is recorded on a separate activity row.`
+      : row.status === "executed"
+        ? `The AI mind chose ${choice} for ${who}. The simulation has not confirmed that this action was carried out.`
+        : `The AI mind chose ${choice} for ${who}. This decision is ${row.status}. The simulation has not carried the action out.`;
+  const drafts: AiActivityDraft[] = [
+    {
+      dedupeKey: `ai:citizen-turn:${row.id}`,
+      kind: "ai.decision",
+      summary,
+      citizenId: actor,
+      decisionId: row.id,
+      chainId: null,
+      txHash: null,
+      chainStatus: "offchain",
+      outcome: "fill",
+      payload: basePayload(tokenId, {
+        action: action || null,
+        stage: row.status,
+        executed: false,
+        note: "This row is the decision. It is not a completed world action and it did not broadcast a transaction.",
+      }),
+    },
+  ];
+  if (carriedOut) {
+    drafts.push({
+      dedupeKey: `ai:citizen-turn-done:${row.id}`,
+      kind: "ai.completed",
+      summary: `The simulation carried out ${choice} for ${who}.`,
+      citizenId: actor,
+      decisionId: row.id,
+      chainId: null,
+      txHash: null,
+      chainStatus: "offchain",
+      outcome: "prefer",
+      payload: basePayload(tokenId, {
+        action: action || null,
+        stage: "executed",
+        executed: true,
+        note: "A world event for this decision confirmed the action. This row is not an onchain transfer.",
+      }),
+    });
+  }
+  return drafts;
 }
 
 function checksum(value: unknown): string | null {
@@ -143,11 +213,14 @@ function basePayload(tokenId: string | null, extra: Record<string, JsonValue>): 
  * A confirmed transaction is copied only after the issuer or the payout route has verified the receipt.
  * Trade and return rows stay offchain. A treasury payout row is inserted only for a verified distribution.
  */
-export function activityDrafts(row: ActivityDecision): AiActivityDraft[] {
+export function activityDrafts(row: ActivityDecision, options?: { worldConfirmed?: boolean }): AiActivityDraft[] {
   if (!UUID.test(row.id)) return [];
   const output = outputOf(row.output);
-  const tokenId = tokenOf(output);
+  const tokenId = decisionToken(row, output);
   const actor = citizenId(row.citizenId);
+  if (row.purpose === "citizen_turn") {
+    return citizenTurnDrafts(row, output, options?.worldConfirmed === true);
+  }
   if (row.purpose === "wallet_issuance" && output.choice === "issue" && tokenId) {
     const drafts: AiActivityDraft[] = [
       {
@@ -269,7 +342,7 @@ export function activityDrafts(row: ActivityDecision): AiActivityDraft[] {
           publicState: "confirmed",
           direction: "chogbank_to_citizen",
           factSummaries: textValue(output.factSummaries),
-          note: typeof output.reason === "string" ? output.reason.slice(0, 320) : "Monad receipt matched Distributed for this decision.",
+          note: economicPayoutReason(output.reason) ?? "The stored world reason could not be shown.",
         }),
       });
     }
@@ -417,19 +490,42 @@ async function persistDrafts(client: SupabaseClient, drafts: AiActivityDraft[]):
   }
 }
 
+async function worldEventConfirms(client: SupabaseClient, decisionId: string): Promise<boolean> {
+  const { data, error } = await client.from("civilization_events").select("kind").eq("decision_id", decisionId).limit(40);
+  if (error || !Array.isArray(data)) return false;
+  return data.some((item) => {
+    const kind = item && typeof item === "object" && "kind" in item ? String((item as { kind?: unknown }).kind ?? "") : "";
+    return kind.length > 0 && kind !== "ai.decision" && kind !== "ai.completed";
+  });
+}
+
 export async function publishDecisionActivity(client: SupabaseClient, row: ActivityDecision): Promise<void> {
   try {
-    await persistDrafts(client, activityDrafts(row));
+    const worldConfirmed = row.purpose === "citizen_turn" && row.status === "executed" ? await worldEventConfirms(client, row.id) : false;
+    await persistDrafts(client, activityDrafts(row, { worldConfirmed }));
   } catch {
     return;
   }
 }
 
+async function tokenIdsFor(client: SupabaseClient, citizenIds: string[]): Promise<Map<string, string>> {
+  const tokens = new Map<string, string>();
+  const ids = [...new Set(citizenIds.filter((id) => UUID.test(id)))];
+  if (ids.length === 0) return tokens;
+  const { data, error } = await client.from("citizens").select("id, token_id").in("id", ids);
+  if (error || !Array.isArray(data)) return tokens;
+  for (const row of data as Array<{ id?: string; token_id?: string | number }>) {
+    if (!row.id || row.token_id == null) continue;
+    const tokenId = String(row.token_id).split(".")[0];
+    if (TOKEN.test(tokenId)) tokens.set(row.id, tokenId);
+  }
+  return tokens;
+}
+
 /** Writes missing AI activity rows for decisions that are already stored. Safe to repeat. */
 export async function publishStoredAiActivity(client: SupabaseClient): Promise<void> {
   try {
-    const purposes = ["wallet_issuance", "treasury_allocation", "citizen_trade", "citizen_return"];
-    const drafts: AiActivityDraft[] = [];
+    const purposes = ["wallet_issuance", "treasury_allocation", "citizen_trade", "citizen_return", "citizen_turn"];
     for (const purpose of purposes) {
       const { data, error } = await client
         .from("ai_decisions")
@@ -438,20 +534,27 @@ export async function publishStoredAiActivity(client: SupabaseClient): Promise<v
         .order("created_at", { ascending: false })
         .limit(400);
       if (error || !data) continue;
-      for (const row of data as Array<Record<string, unknown>>) {
-        drafts.push(
-          ...activityDrafts({
-            id: String(row.id ?? ""),
-            citizenId: typeof row.citizen_id === "string" ? row.citizen_id : null,
-            purpose: String(row.purpose ?? ""),
-            status: String(row.status ?? ""),
-            rationale: typeof row.rationale === "string" ? row.rationale : null,
-            output: row.output,
-          }),
-        );
+      const rows = data as Array<Record<string, unknown>>;
+      const tokens =
+        purpose === "citizen_turn"
+          ? await tokenIdsFor(
+              client,
+              rows.map((row) => (typeof row.citizen_id === "string" ? row.citizen_id : "")),
+            )
+          : new Map<string, string>();
+      for (const row of rows) {
+        const citizen = typeof row.citizen_id === "string" ? row.citizen_id : null;
+        await publishDecisionActivity(client, {
+          id: String(row.id ?? ""),
+          citizenId: citizen,
+          purpose: String(row.purpose ?? ""),
+          status: String(row.status ?? ""),
+          rationale: typeof row.rationale === "string" ? row.rationale : null,
+          output: row.output,
+          tokenId: citizen ? (tokens.get(citizen) ?? null) : null,
+        });
       }
     }
-    await persistDrafts(client, drafts);
   } catch {
     return;
   }
