@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseTreasuryProposal, settleTreasuryText, treasuryMessages, monPayoutRoom } from "@/lib/ai/treasury-decision";
+import { parseTreasuryProposal, settleTreasuryText, treasuryMessages, monPayoutRoom, TREASURY_UNREADABLE } from "@/lib/ai/treasury-decision";
 import { CHAIN_CHOG_CAP, CHAIN_MON_AGGREGATE, CHAIN_MON_CITIZEN, CHAIN_MON_PER_TX } from "@/lib/chogbank/bank";
 
 const roster = [{ tokenId: "104", name: "CHOG #104", goal: "Finish the east road" }];
@@ -196,5 +196,29 @@ describe("treasury proposals from the mind", () => {
     expect(settled.verdict.status).toBe("rejected");
     expect(settled.verdict.reason).toContain("not read");
     expect(settled.verdict.executed).toBe(false);
+  });
+
+  it("reads a fenced or comma-repaired proposal and refuses prose that is not an allocation", () => {
+    const fields = {
+      tokenId: "104",
+      asset: "MON",
+      amountRaw: "1000000000000000",
+      reason: "The east road still needs fare.",
+      expectedOutcome: "One work trip can be paid.",
+    };
+    const fenced = parseTreasuryProposal(`Here is the proposal:\n\`\`\`json\n${JSON.stringify(fields)}\n\`\`\``, new Set(["104"]));
+    expect(fenced.ok && fenced.draft?.tokenId).toBe("104");
+    const comma = parseTreasuryProposal(`{ "tokenId": "104", "asset": "MON", "amountRaw": "1000000000000000", "reason": "The east road still needs fare.", "expectedOutcome": "One work trip can be paid.", }`, new Set(["104"]));
+    expect(comma.ok && comma.draft?.amountRaw).toBe(1000000000000000n);
+    const numeric = parseTreasuryProposal(
+      JSON.stringify({ ...fields, amountRaw: 1000 }),
+      new Set(["104"]),
+    );
+    expect(numeric.ok && numeric.draft?.amountRaw).toBe(1000n);
+    const prose = parseTreasuryProposal("Send some MON to the next citizen.", new Set(["104"]));
+    expect(prose.ok).toBe(false);
+    if (!prose.ok) expect(prose.reason).toBe(TREASURY_UNREADABLE);
+    const quoted = parseTreasuryProposal("{'tokenId': '104', 'asset': 'MON'}", new Set(["104"]));
+    expect(quoted.ok).toBe(false);
   });
 });

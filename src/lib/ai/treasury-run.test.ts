@@ -158,6 +158,8 @@ describe("treasury consideration", () => {
   it("leaves signing and broadcasting out of the mind runner", () => {
     const runner = readFileSync("src/lib/ai/runner.ts", "utf8");
     expect(runner).toContain("considerTreasuryAllocation");
+    expect(runner).toContain("responseSchema: request.responseSchema");
+    expect(runner).toContain('accepted.reason === "model output was not JSON"');
     expect(runner.indexOf("await attachTreasury()")).toBeLessThan(runner.indexOf("while (!endRun)"));
     expect(runner).toContain("Stopped before the host timeout. No treasury allocation was requested.");
     expect(runner).toContain("Citizen wallet code was not read (");
@@ -258,5 +260,150 @@ describe("treasury consideration", () => {
     expect(recorded[0]?.output.executed).toBe(false);
     expect(recorded[0]?.output.onchain).toBe(false);
     expect(recorded[0]?.output.txHash).toBeNull();
+  });
+
+  it("repairs one fenced proposal without a second model call", async () => {
+    const complete = vi.fn(async () =>
+      completion(
+        "```json\n" +
+          JSON.stringify({
+            tokenId: "104",
+            asset: "MON",
+            amountRaw: "1000000000000000",
+            reason: "The east road still needs fare.",
+            expectedOutcome: "One work trip can be paid.",
+          }) +
+          "\n```",
+      ),
+    );
+    const recorded: TreasuryDecisionInsert[] = [];
+    const result = await considerTreasuryAllocation({
+      nowMs: Date.UTC(2026, 9, 21),
+      roster,
+      prior: [],
+      monBalance: BALANCE,
+      chogBalance: 1n,
+      chogDecimals: 18,
+      walletDeployed: true,
+      timeoutMs: 1000,
+      maxOutputTokens: 200,
+      provider: "gemini",
+      model: "test",
+      complete,
+      record: async (row) => {
+        recorded.push(row);
+        return true;
+      },
+    });
+    expect(complete).toHaveBeenCalledTimes(1);
+    const firstCall = (complete.mock.calls as unknown[][])[0]?.[0] as { responseSchema?: { type?: string } };
+    expect(firstCall.responseSchema).toMatchObject({ type: "object" });
+    expect(result.status).toBe("proposed");
+    expect(recorded[0]?.output.tokenId).toBe("104");
+    expect(recorded[0]?.output.executed).toBe(false);
+    expect(recorded[0]?.output.txHash).toBeNull();
+    expect(pendingPayoutFromOutput(recorded[0]?.output ?? {})?.amountRaw).toBe("1000000000000000");
+  });
+
+  it("retries one unreadable proposal and does not pay when the retry is also unreadable", async () => {
+    const complete = vi
+      .fn()
+      .mockResolvedValueOnce(completion("I think Chog 104 should get some money."))
+      .mockResolvedValueOnce(completion("Still not an object."));
+    const recorded: TreasuryDecisionInsert[] = [];
+    const result = await considerTreasuryAllocation({
+      nowMs: Date.UTC(2026, 9, 21),
+      roster,
+      prior: [],
+      monBalance: BALANCE,
+      chogBalance: 1n,
+      chogDecimals: 18,
+      walletDeployed: true,
+      timeoutMs: 5_000,
+      maxOutputTokens: 200,
+      provider: "gemini",
+      model: "test",
+      complete,
+      record: async (row) => {
+        recorded.push(row);
+        return true;
+      },
+    });
+    expect(complete).toHaveBeenCalledTimes(2);
+    expect(result.status).toBe("rejected");
+    expect(result.detail).toBe("The treasury proposal was not JSON.");
+    expect(recorded).toHaveLength(1);
+    expect(recorded[0]).toMatchObject({
+      status: "rejected",
+      citizenId: null,
+      output: { tokenId: null, amountRaw: null, executed: false, onchain: false, txHash: null },
+    });
+    expect(recorded[0]?.output.replyShape).toContain("prefix=prose");
+    expect(pendingPayoutFromOutput(recorded[0]?.output ?? {})).toBeNull();
+    expect(result.modelCalls).toBe(2);
+  });
+
+  it("does not spend a second model call when the slot cannot hold a retry", async () => {
+    const complete = vi.fn(async () => completion("not json"));
+    const result = await considerTreasuryAllocation({
+      nowMs: Date.UTC(2026, 9, 21),
+      roster,
+      prior: [],
+      monBalance: BALANCE,
+      chogBalance: 1n,
+      chogDecimals: 18,
+      walletDeployed: true,
+      timeoutMs: 1_000,
+      maxOutputTokens: 200,
+      provider: "gemini",
+      model: "test",
+      complete,
+      record: async () => true,
+    });
+    expect(complete).toHaveBeenCalledTimes(1);
+    expect(result.modelCalls).toBe(1);
+    expect(result.status).toBe("rejected");
+    expect(result.detail).toBe("The treasury proposal was not JSON.");
+  });
+
+  it("accepts the bounded retry when the second reply is a real proposal", async () => {
+    const complete = vi
+      .fn()
+      .mockResolvedValueOnce(completion("not json"))
+      .mockResolvedValueOnce(
+        completion(
+          JSON.stringify({
+            tokenId: "104",
+            asset: "MON",
+            amountRaw: "1000000000000000",
+            reason: "The east road still needs fare.",
+            expectedOutcome: "One work trip can be paid.",
+          }),
+        ),
+      );
+    const recorded: TreasuryDecisionInsert[] = [];
+    const result = await considerTreasuryAllocation({
+      nowMs: Date.UTC(2026, 9, 21),
+      roster,
+      prior: [],
+      monBalance: BALANCE,
+      chogBalance: 1n,
+      chogDecimals: 18,
+      walletDeployed: true,
+      timeoutMs: 5_000,
+      maxOutputTokens: 200,
+      provider: "gemini",
+      model: "test",
+      complete,
+      record: async (row) => {
+        recorded.push(row);
+        return true;
+      },
+    });
+    expect(complete).toHaveBeenCalledTimes(2);
+    expect(result.status).toBe("proposed");
+    expect(recorded[0]?.citizenId).toBe("citizen-104");
+    expect(recorded[0]?.output.replyShape).toBeNull();
+    expect(recorded[0]?.output.executed).toBe(false);
   });
 });

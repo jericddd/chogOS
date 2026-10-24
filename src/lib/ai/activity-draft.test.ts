@@ -67,6 +67,16 @@ describe("activity drafts", () => {
     expect(funds[0]).toMatchObject({ kind: "treasury.allocation", chainStatus: "offchain", txHash: null });
     expect(funds[0]?.summary).toMatch(/send MON/);
     expect(funds[0]?.summary).toMatch(/No transaction was broadcast/);
+    const unreadable = activityDrafts(decision({
+      purpose: "treasury_allocation",
+      status: "rejected",
+      rationale: "The treasury proposal was not JSON.",
+      output: { tokenId: null, txHash: null, executed: false, onchain: false },
+    }));
+    expect(unreadable[0]?.summary).toMatch(/could not be read/);
+    expect(unreadable[0]?.summary).toMatch(/no citizen was paid/i);
+    expect(unreadable[0]).toMatchObject({ kind: "treasury.allocation", chainStatus: "offchain", txHash: null });
+    expect(unreadable.map((draft) => draft.kind)).toEqual(["treasury.allocation"]);
     expect(trade[0]?.summary).toMatch(/should trade/);
     expect(returning[0]?.summary).toMatch(/return funds to ChogBank/);
     expect(returning[0]?.summary).toMatch(/No transaction was broadcast/);

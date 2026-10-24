@@ -761,6 +761,7 @@ async function runAiMindWork(config: AppConfig, deadlineMs: number, report: Mind
                 { role: "system", content: request.system },
                 { role: "user", content: request.user },
               ],
+              responseSchema: request.responseSchema,
               timeoutMs: request.timeoutMs,
               maxOutputTokens: request.maxOutputTokens,
             }),
@@ -768,6 +769,7 @@ async function runAiMindWork(config: AppConfig, deadlineMs: number, report: Mind
         });
         if (result.promptChars > 0) {
           await bumpUsage(client, result.promptChars, result.outputTokens);
+          if (result.modelCalls > 1) await bumpUsage(client, 0, 0);
         }
         const leftOut = unreadSpend.length > 0 ? ` Token ids left unread this round: ${unreadSpend.slice(0, 6).join(", ")}.` : "";
         report.treasury = { status: result.status, detail: `${result.detail}${leftOut}` };
@@ -1117,6 +1119,7 @@ async function runAiMindWork(config: AppConfig, deadlineMs: number, report: Mind
           }
         }
         if (!accepted.ok) {
+          if (accepted.reason === "model output was not JSON") decided = false;
           await rememberRejection(client, row.claimed_citizen_id, accepted.reason);
           recentRejections.push(`${row.token_id}: ${accepted.reason}`);
           if (/unsupported construction kind|cannot be started/.test(accepted.reason)) {

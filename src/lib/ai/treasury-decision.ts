@@ -1,4 +1,5 @@
 import { CHAIN_CHOG_CAP, CHAIN_MON_AGGREGATE, CHAIN_MON_CITIZEN, CHAIN_MON_PER_TX } from "@/lib/chogbank/bank";
+import { readModelJson } from "@/lib/ai/model-json";
 import { APPLICATION_TREASURY_LIMITS, evaluateTreasuryAllocation, type AllocationDraft, type AllocationVerdict, type SpendRecord } from "@/lib/economy/treasury-policy";
 import { formatTokenAmount } from "@/lib/wallets/present";
 
@@ -11,6 +12,21 @@ export type TreasuryRosterEntry = {
 };
 
 const FORBIDDEN_KEYS = new Set(["recipient", "to", "target", "address", "wallet", "owner"]);
+
+export const TREASURY_RESPONSE_SCHEMA: Record<string, unknown> = {
+  type: "object",
+  properties: {
+    allocate: { type: "boolean" },
+    tokenId: { type: "string" },
+    asset: { type: "string", enum: ["MON"] },
+    amountRaw: { type: "string" },
+    reason: { type: "string" },
+    expectedOutcome: { type: "string" },
+  },
+  required: ["reason"],
+};
+
+export const TREASURY_UNREADABLE = "The treasury proposal was not JSON.";
 
 export type TreasuryPromptFacts = {
   monBalance: bigint;
@@ -72,12 +88,9 @@ export function parseTreasuryProposal(
   text: string,
   eligibleTokenIds: ReadonlySet<string>,
 ): { ok: true; draft: AllocationDraft | null; reason: string } | { ok: false; reason: string } {
-  let raw: unknown;
-  try {
-    raw = JSON.parse(text) as unknown;
-  } catch {
-    return { ok: false, reason: "The treasury proposal was not JSON." };
-  }
+  const parsed = readModelJson(text);
+  if (!parsed.ok) return { ok: false, reason: TREASURY_UNREADABLE };
+  const raw = parsed.value;
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
     return { ok: false, reason: "The treasury proposal was not an object." };
   }
@@ -103,7 +116,8 @@ export function parseTreasuryProposal(
   if (body.asset !== "MON") {
     return { ok: false, reason: "The asset must be MON." };
   }
-  if (typeof body.amountRaw !== "string" || !/^[0-9]+$/.test(body.amountRaw)) {
+  const amountRaw = amountRawText(body.amountRaw);
+  if (!amountRaw) {
     return { ok: false, reason: "amountRaw must be a base-unit integer string." };
   }
   const reason = typeof body.reason === "string" ? body.reason.trim().slice(0, 320) : "";
@@ -113,7 +127,7 @@ export function parseTreasuryProposal(
   }
   return {
     ok: true,
-    draft: { tokenId, asset: body.asset, amountRaw: BigInt(body.amountRaw), reason, expectedOutcome },
+    draft: { tokenId, asset: body.asset, amountRaw: BigInt(amountRaw), reason, expectedOutcome },
     reason,
   };
 }
@@ -217,4 +231,10 @@ export function settleTreasuryText(input: {
     };
   }
   return { draft, verdict };
+}
+
+function amountRawText(value: unknown): string | null {
+  if (typeof value === "string" && /^[0-9]+$/.test(value)) return value;
+  if (typeof value === "number" && Number.isSafeInteger(value) && value > 0) return String(value);
+  return null;
 }

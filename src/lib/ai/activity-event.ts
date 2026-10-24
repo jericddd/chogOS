@@ -144,7 +144,9 @@ export function activityDrafts(row: ActivityDecision): AiActivityDraft[] {
           ? `The AI mind decided to send${assetLabel}${who}. The Monad receipt is stored with this decision.`
           : sending
             ? `The AI mind decided to send${assetLabel}${who}. No transaction was broadcast.`
-            : `The AI mind decided not to send funds${who}. No transaction was broadcast.`,
+            : /not JSON|could not be read/i.test(row.rationale ?? "")
+              ? "The AI mind's payment proposal could not be read, so no citizen was paid. No transaction was sent."
+              : `The AI mind decided not to send funds${who}. No transaction was broadcast.`,
         citizenId: actor,
         decisionId: row.id,
         chainId: null,
@@ -154,7 +156,11 @@ export function activityDrafts(row: ActivityDecision): AiActivityDraft[] {
         payload: basePayload(tokenId, {
           action: "send_funds",
           asset,
-          note: paid ? "The Monad receipt is on the payout row." : "This decision did not broadcast a Monad transaction.",
+          note: paid
+            ? "The Monad receipt is on the payout row."
+            : /not JSON|could not be read/i.test(row.rationale ?? "")
+              ? (row.rationale ?? "The payment proposal could not be read.").slice(0, 320)
+              : "This decision did not broadcast a Monad transaction.",
         }),
       },
     ];

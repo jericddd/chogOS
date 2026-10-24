@@ -1,4 +1,5 @@
 import { haltFromError } from "@/lib/ai/budget";
+import { readModelJson } from "@/lib/ai/model-json";
 import { AiProviderError, type AiCompletion } from "@/lib/ai/types";
 
 export const COMMERCE_BATCH = 5;
@@ -63,21 +64,16 @@ function clip(value: unknown): string {
 /** Model words are kept only for a listed citizen and a URL-free rationale. Everyone else gets the policy sentence. */
 export function settleCommerceText(text: string, citizens: readonly CommerceCitizen[]): Map<string, { trade: SettledReason; returnToBank: SettledReason }> {
   const fromModel = new Map<string, { trade: string; returnToBank: string }>();
-  const start = text.indexOf("{");
-  const end = text.lastIndexOf("}");
-  if (start >= 0 && end > start) {
-    try {
-      const parsed = JSON.parse(text.slice(start, end + 1)) as { citizens?: unknown };
-      const rows = Array.isArray(parsed.citizens) ? parsed.citizens : [];
-      for (const row of rows) {
-        if (!row || typeof row !== "object") continue;
-        const body = row as Record<string, unknown>;
-        const tokenId = typeof body.tokenId === "string" ? body.tokenId.split(".")[0] : "";
-        if (!tokenId) continue;
-        fromModel.set(tokenId, { trade: clip(body.tradeRationale), returnToBank: clip(body.returnRationale) });
-      }
-    } catch {
-      fromModel.clear();
+  const parsed = readModelJson(text);
+  if (parsed.ok && parsed.value && typeof parsed.value === "object" && !Array.isArray(parsed.value)) {
+    const body = parsed.value as { citizens?: unknown };
+    const rows = Array.isArray(body.citizens) ? body.citizens : [];
+    for (const row of rows) {
+      if (!row || typeof row !== "object") continue;
+      const fields = row as Record<string, unknown>;
+      const tokenId = typeof fields.tokenId === "string" ? fields.tokenId.split(".")[0] : "";
+      if (!tokenId) continue;
+      fromModel.set(tokenId, { trade: clip(fields.tradeRationale), returnToBank: clip(fields.returnRationale) });
     }
   }
   const settled = new Map<string, { trade: SettledReason; returnToBank: SettledReason }>();

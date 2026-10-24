@@ -1,6 +1,14 @@
 import { haltFromError } from "@/lib/ai/budget";
+import { modelJsonShape } from "@/lib/ai/model-json";
 import { CHAIN_CHOG_CAP, CHAIN_MON_AGGREGATE, CHAIN_MON_CITIZEN, CHAIN_MON_PER_TX } from "@/lib/chogbank/bank";
-import { monPayoutRoom, settleTreasuryText, treasuryMessages, type TreasuryRosterEntry } from "@/lib/ai/treasury-decision";
+import {
+  monPayoutRoom,
+  settleTreasuryText,
+  TREASURY_RESPONSE_SCHEMA,
+  TREASURY_UNREADABLE,
+  treasuryMessages,
+  type TreasuryRosterEntry,
+} from "@/lib/ai/treasury-decision";
 import { AiProviderError, type AiCompletion } from "@/lib/ai/types";
 import type { SpendRecord } from "@/lib/economy/treasury-policy";
 
@@ -28,6 +36,7 @@ export type TreasuryDecisionInsert = {
     chainId: 143;
     txHash: null;
     blockNumber: null;
+    replyShape: string | null;
   };
 };
 
@@ -36,6 +45,8 @@ export type TreasuryConsideration = {
   detail: string;
   promptChars: number;
   outputTokens: number;
+  /** Outbound model calls, including one repair retry. */
+  modelCalls: number;
   halt: { until: string; reason: string } | null;
 };
 
@@ -59,7 +70,13 @@ export async function considerTreasuryAllocation(input: {
   maxOutputTokens: number;
   provider: string;
   model: string;
-  complete: (request: { system: string; user: string; timeoutMs: number; maxOutputTokens: number }) => Promise<AiCompletion>;
+  complete: (request: {
+    system: string;
+    user: string;
+    timeoutMs: number;
+    maxOutputTokens: number;
+    responseSchema?: Record<string, unknown>;
+  }) => Promise<AiCompletion>;
   record: (row: TreasuryDecisionInsert) => Promise<boolean>;
 }): Promise<TreasuryConsideration> {
   if (input.roster == null || input.prior == null) {
@@ -90,14 +107,18 @@ export async function considerTreasuryAllocation(input: {
     return skipped("rejected", detail, 0, 0);
   }
   const messages = treasuryMessages(input.roster, facts);
-  let completion: AiCompletion;
-  try {
-    completion = await input.complete({
+  const ask = (user: string, timeoutMs: number) =>
+    input.complete({
       system: messages.system,
-      user: messages.user,
-      timeoutMs: input.timeoutMs,
+      user,
+      timeoutMs,
       maxOutputTokens: input.maxOutputTokens,
+      responseSchema: TREASURY_RESPONSE_SCHEMA,
     });
+  let completion: AiCompletion;
+  const started = Date.now();
+  try {
+    completion = await ask(messages.user, input.timeoutMs);
   } catch (error) {
     const providerError =
       error instanceof AiProviderError
@@ -120,7 +141,7 @@ export async function considerTreasuryAllocation(input: {
         expectedOutcome: null,
         windowId: null,
       }));
-      return { status: "halt", detail, promptChars: 0, outputTokens: 0, halt };
+      return { status: "halt", detail, promptChars: 0, outputTokens: 0, modelCalls: 1, halt };
     }
     const recorded = await input.record(row({
       provider: input.provider,
@@ -136,23 +157,78 @@ export async function considerTreasuryAllocation(input: {
       expectedOutcome: null,
       windowId: null,
     }));
-    return skipped("failed", recorded ? detail : "The treasury model call failed and the failure was not recorded.", 0, 0);
+    return skipped("failed", recorded ? detail : "The treasury model call failed and the failure was not recorded.", 0, 0, 1);
   }
 
-  const promptChars = completion.promptChars ?? messages.system.length + messages.user.length;
-  const outputTokens = completion.outputTokens ?? 0;
-  const settled = settleTreasuryText({
-    text: completion.text,
-    roster: input.roster,
-    nowMs: input.nowMs,
-    spent: input.prior,
-    monBalance: input.monBalance,
-    chogBalance: input.chogBalance,
-    chogDecimals: input.chogDecimals,
-    walletDeployed: input.walletDeployed === true,
-    observedWindowSpent: input.monSpentInWindow,
-    citizenSpentMon: input.citizenSpentMon,
-  });
+  let promptChars = completion.promptChars ?? messages.system.length + messages.user.length;
+  let outputTokens = completion.outputTokens ?? 0;
+  let modelCalls = 1;
+  const settle = (text: string) =>
+    settleTreasuryText({
+      text,
+      roster: input.roster ?? [],
+      nowMs: input.nowMs,
+      spent: input.prior ?? [],
+      monBalance: input.monBalance,
+      chogBalance: input.chogBalance,
+      chogDecimals: input.chogDecimals,
+      walletDeployed: input.walletDeployed === true,
+      observedWindowSpent: input.monSpentInWindow,
+      citizenSpentMon: input.citizenSpentMon,
+    });
+  let settled = settle(completion.text);
+  let replyShape: string | null = null;
+  if (settled.verdict.reason === TREASURY_UNREADABLE) {
+    replyShape = modelJsonShape(completion.text);
+    const remaining = input.timeoutMs - (Date.now() - started);
+    if (remaining >= 1_500) {
+      console.info(JSON.stringify({ source: "ai.treasury", event: "unreadable_proposal", retry: true, replyShape }));
+      try {
+        modelCalls = 2;
+        const retry = await ask(
+          `${messages.user}\n\nThe previous reply was not one JSON object. Return one JSON object only. If nobody should be paid, set allocate to false and include a reason.`,
+          remaining,
+        );
+        promptChars += retry.promptChars ?? 0;
+        outputTokens += retry.outputTokens ?? 0;
+        const again = settle(retry.text);
+        if (again.verdict.reason !== TREASURY_UNREADABLE) {
+          settled = again;
+          replyShape = null;
+        } else {
+          replyShape = modelJsonShape(retry.text);
+          console.info(JSON.stringify({ source: "ai.treasury", event: "unreadable_proposal", retry: false, replyShape }));
+        }
+      } catch (error) {
+        const providerError =
+          error instanceof AiProviderError
+            ? error
+            : new AiProviderError(error instanceof Error ? error.message : "The treasury model call failed.", "unavailable", false);
+        if (providerError.halt) {
+          const detail = providerError.message.replace(/https?:\/\/\S+/gi, "[redacted-url]").slice(0, 240);
+          const halt = haltFromError(providerError);
+          await input.record(row({
+            provider: input.provider,
+            model: input.model,
+            status: "failed",
+            stage: "failed",
+            rationale: detail,
+            citizenId: null,
+            decisionId: null,
+            tokenId: null,
+            asset: null,
+            amountRaw: null,
+            expectedOutcome: null,
+            windowId: null,
+            replyShape,
+          }));
+          return { status: "halt", detail, promptChars, outputTokens, modelCalls, halt };
+        }
+      }
+    } else {
+      console.info(JSON.stringify({ source: "ai.treasury", event: "unreadable_proposal", retry: false, replyShape }));
+    }
+  }
   const admitted = settled.verdict.status === "accepted_not_executed";
   const citizen = input.roster.find((entry) => entry.tokenId === settled.draft?.tokenId);
   const recorded = await input.record(row({
@@ -169,15 +245,17 @@ export async function considerTreasuryAllocation(input: {
     expectedOutcome: settled.draft?.expectedOutcome ?? null,
     windowId: settled.verdict.windowId,
     reason: settled.draft?.reason ?? settled.verdict.reason,
+    replyShape,
   }));
   if (!recorded) {
-    return skipped("failed", "The treasury review finished, and the database did not store it. No transaction was created.", promptChars, outputTokens);
+    return skipped("failed", "The treasury review finished, and the database did not store it. No transaction was created.", promptChars, outputTokens, modelCalls);
   }
   return {
     status: admitted ? "proposed" : "rejected",
     detail: settled.verdict.reason,
     promptChars,
     outputTokens,
+    modelCalls,
     halt: null,
   };
 }
@@ -219,8 +297,9 @@ function skipped(
   detail: string,
   promptChars: number,
   outputTokens: number,
+  modelCalls = 0,
 ): TreasuryConsideration {
-  return { status, detail, promptChars, outputTokens, halt: null };
+  return { status, detail, promptChars, outputTokens, modelCalls, halt: null };
 }
 
 function row(input: {
@@ -237,6 +316,7 @@ function row(input: {
   expectedOutcome: string | null;
   windowId: string | null;
   reason?: string;
+  replyShape?: string | null;
 }): TreasuryDecisionInsert {
   const commitment = input.decisionId && COMMITMENT.test(input.decisionId) ? input.decisionId.toLowerCase() : null;
   return {
@@ -263,6 +343,7 @@ function row(input: {
       chainId: 143,
       txHash: null,
       blockNumber: null,
+      replyShape: input.replyShape ?? null,
     },
   };
 }
