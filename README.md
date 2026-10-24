@@ -33,7 +33,7 @@ GitHub Actions on `main` runs `.github/workflows/ai-mind.yml` on the schedule `*
 1. `run` calls the production mind and can store a proposal. It does not pay ChogBank.
 2. `issue` uses the wallet agent key to create a citizen wallet from an accepted issuance decision. The gas key pays that transaction.
 
-`.github/workflows/chogbank-payout.yml` has no schedule. A person starts it and enters one stored decision id. It uses the ChogBank authorizer key to sign that allocation, and the gas key to submit `distribute`. It does not call the mind and does not pay any other decision. The agent key is not used for payouts. A checkout that still lists every allocation refuses to run. Until this file is on `main`, the older scheduled workflow file can still name a `pay` job, and that job checks out this branch. The broadcaster on this branch returns before signing when `CHOG_BANK_DECISION_ID` is unset.
+`.github/workflows/chogbank-payout.yml` has no schedule. The same file is on `main`. A person starts it and enters one stored decision id. It uses the ChogBank authorizer key to sign that allocation, and the gas key to submit `distribute`. It does not call the mind and does not pay any other decision. The agent key is not used for payouts. A checkout that does not contain the decision-id gate refuses to run. The broadcaster returns before signing when `CHOG_BANK_DECISION_ID` is unset. Pull request #77 removed the old scheduled `pay` job from `main`. The scheduled run at 2:17 AM Asia/Manila on 25 October 2026 had jobs `run` and `issue` only.
 
 Those keys are GitHub Actions secrets. They are not in this repository, and the website does not receive them. The agent key can move MON out of a citizen wallet, because `CitizenAccountV3` authorizes calls with that one key. The NFT holder does not control the citizen wallet.
 
@@ -52,13 +52,23 @@ Those keys are GitHub Actions secrets. They are not in this repository, and the 
 
 ChogBank has no `owner`, no administrator, no proxy, and no upgrade function. That describes this contract. The authorizer remains a privileged signer inside the caps below. It cannot change the caps, upgrade the contract, or pay an arbitrary address. The recipient of a payment has to be the deployed citizen wallet for that token id.
 
-At the check above, ChogBank held **30 MON** and **369.97132121875218252 $CHOG**.
+At the check above, ChogBank held **30 MON** and **369.97132121875218252 $CHOG**. A later public read at block `116276410`, 4:16 AM Asia/Manila on 25 October 2026, showed **29.95 MON** and the same `$CHOG` balance. The 0.05 MON difference matches the five receipts below.
 
 The contract caps are immutable: **0.01 MON** per transaction, **0.05 MON** per citizen, **0.05 MON** aggregate, a **86400**-second window, and an authorization lifetime of at most **3600** seconds. The contract cap on **$CHOG is 1 wei** per transaction, per citizen, and for the whole bank in each window. Editing this repository does not raise that cap. The Economy page shows application review limits separately from the caps it reads off the contract. Before a proposal, the mind reads the live balance, those caps, the remaining window capacity, and citizens whose wallet contracts are deployed. It can propose MON only. `$CHOG` is not available for a payout while that cap is 1 wei. A proposal above a contract cap is rejected and is not stored as a smaller payment. A confirmed payout is a stored Monad receipt that includes a ChogBank `Distributed` event. The confirmed amount is the amount in that event. When it differs from the stored request, both amounts are shown. A payout above the contract caps reverts.
 
 Confirmed wallet issuances are Monad transactions. Token 91 is one of them. A Proposed issuance has not been broadcast. Not every citizen has a wallet yet.
 
 The economy rows returned at that check were wallet issuances, not MON distributions. A MON distribution is a separate stored receipt. The mind records a refusal when it decides not to allocate, and that row is not a payment.
+
+These five receipts were read from Monad after that snapshot. Each transaction calls ChogBank, succeeded, and emits `Distributed` for 0.01 MON. They were broadcast by the old scheduled job before pull request #77. The schedule no longer starts that job. A later manual payout would be a new receipt, not a change to these rows.
+
+| Citizen | When (Asia/Manila) | Transaction |
+| --- | --- | --- |
+| Chog #135 | 12:54 AM, 24 Oct 2026 | [`0xceda27ddc3aa500ed49ba550e2d6c38194262196b6af0782129c96652b30dc3a`](https://monadscan.com/tx/0xceda27ddc3aa500ed49ba550e2d6c38194262196b6af0782129c96652b30dc3a) |
+| Chog #118 | 1:34 AM, 24 Oct 2026 | [`0xee2d8b10f9b7ab3044cf10ebedf2b405d5d750884155ec3f0e2c194a97c2164f`](https://monadscan.com/tx/0xee2d8b10f9b7ab3044cf10ebedf2b405d5d750884155ec3f0e2c194a97c2164f) |
+| Chog #124 | 7:33 AM, 24 Oct 2026 | [`0x8df79c5005b4845d3de8f71c85be589f45af0259898c59131822235b1930bcad`](https://monadscan.com/tx/0x8df79c5005b4845d3de8f71c85be589f45af0259898c59131822235b1930bcad) |
+| Chog #137 | 7:54 PM, 24 Oct 2026 | [`0x88ab9d75c75e81feacd92465483ad16d7905adc7164db9413d03f63c40d35508`](https://monadscan.com/tx/0x88ab9d75c75e81feacd92465483ad16d7905adc7164db9413d03f63c40d35508) |
+| Chog #140 | 11:27 PM, 24 Oct 2026 | [`0x8ad4e05e9b8a7a19e00a76438872b07b7d4c114e72875ed605ff9cedffe10885`](https://monadscan.com/tx/0x8ad4e05e9b8a7a19e00a76438872b07b7d4c114e72875ed605ff9cedffe10885) |
 
 These addresses have code and are not chogOS deployments. Do not fund them:
 
@@ -108,5 +118,15 @@ npm run verify:contracts
 ```
 
 `verify:contracts` reads the public Monad RPCs and does not print holder balances.
+
+## Known limitations
+
+- The scheduled mind can store a proposal. It cannot sign or broadcast a ChogBank payout.
+- Citizen-to-citizen and citizen-to-ChogBank transfers are proposals. This app does not hold the citizen-wallet agent key in the website, and it does not broadcast those calls.
+- The `$CHOG` payout cap is 1 wei. A MON receipt does not raise it.
+- EventAnchor is not deployed. Verify checks stored bytes. It is not a Merkle root on Monad.
+- Monadscan source verification for ChogBank was not recorded by the app. The creation transaction above is the deployment evidence.
+- Food, wood, stone, and tools on the map are simulated. They are not MON or `$CHOG`.
+- Balances and the citizen count move. The World and Economy pages are the live numbers.
 
 Chog Genesis and `$CHOG` existed before this repository. chogOS is the town, the citizen wallets, ChogBank, and the public record around them.
