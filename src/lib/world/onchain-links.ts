@@ -6,7 +6,16 @@ import { MAINNET_WALLET_FACTORY } from "@/lib/wallets/issuer";
 const HASH = /^0x[0-9a-fA-F]{64}$/;
 const ADDRESS = /^0x[0-9a-fA-F]{40}$/;
 const DECIMAL = /^[0-9]+$/;
-const KINDS = new Set(["wallet.decided", "wallet.created", "treasury.allocation", "treasury.paid", "citizen.trade", "citizen.return"]);
+const KINDS = new Set([
+  "wallet.decided",
+  "wallet.created",
+  "treasury.allocation",
+  "treasury.paid",
+  "citizen.trade",
+  "citizen.return",
+  "ai.decision",
+  "ai.completed",
+]);
 const JOIN_KINDS = new Set(["genesis_joined", "citizen_enrolled", "citizen.joined_world"]);
 
 export type OnchainLink = { label: string; href: string; value: string };
@@ -32,6 +41,8 @@ function titleFor(kind: string, broadcast: boolean): string {
   if (kind === "treasury.paid") return "Monad ChogBank payout";
   if (kind === "treasury.allocation") return "AI decision to send funds";
   if (kind === "citizen.trade") return "AI decision to trade";
+  if (kind === "ai.decision") return "AI decision, not yet carried out";
+  if (kind === "ai.completed") return "Simulation carried out the decision";
   return "AI decision to return funds to ChogBank";
 }
 
@@ -50,6 +61,12 @@ function defaultNote(kind: string, broadcast: boolean): string {
   }
   if (kind === "citizen.trade") {
     return "The mind decided this citizen should trade. This row has no Monad transaction.";
+  }
+  if (kind === "ai.decision") {
+    return "The mind recorded this choice. The simulation has not carried it out on this row, and this row has no Monad transaction.";
+  }
+  if (kind === "ai.completed") {
+    return "A world event confirmed this decision. This row is not an onchain transfer.";
   }
   if (kind === "treasury.paid") {
     return "Monad confirmed this ChogBank distribution. Open the transaction to read the receipt. The website did not sign it.";

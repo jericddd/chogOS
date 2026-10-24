@@ -180,4 +180,28 @@ describe("onchain evidence", () => {
     expect(event.txUrl).toBeNull();
     expect(event.onchain?.links.map((link) => link.label)).toEqual(["Citizen wallet", "Wallet factory", "Genesis token"]);
   });
+
+  it("labels a citizen decision separately from a confirmed simulation action", () => {
+    const decided = onchainEvidenceFromRow({
+      kind: "ai.decision",
+      chain_status: "offchain",
+      chain_id: null,
+      tx_hash: null,
+      payload: { tokenId: "7", genesis: addresses.chogGenesis, factory: MAINNET_WALLET_FACTORY, executed: false },
+    });
+    const carried = onchainEvidenceFromRow({
+      kind: "ai.completed",
+      chain_status: "offchain",
+      chain_id: null,
+      tx_hash: null,
+      payload: { tokenId: "7", genesis: addresses.chogGenesis, factory: MAINNET_WALLET_FACTORY, executed: true },
+    });
+    expect(decided?.title).toBe("AI decision, not yet carried out");
+    expect(decided?.note).toMatch(/has not carried it out/);
+    expect(decided?.links.some((link) => link.label === "Transaction")).toBe(false);
+    expect(carried?.title).toBe("Simulation carried out the decision");
+    expect(carried?.note).toMatch(/not an onchain transfer/);
+    expect(carried?.links.some((link) => link.label === "Transaction")).toBe(false);
+    expect(carried?.links.some((link) => link.label === "Genesis token")).toBe(true);
+  });
 });

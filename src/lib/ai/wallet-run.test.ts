@@ -189,6 +189,29 @@ describe("wallet issuance consideration", () => {
     expect(rows[0]?.output.decisionId).toBe(issuanceDecisionId("104"));
   });
 
+  it("does not store a wallet when the Lite slot is closed", async () => {
+    const rows: WalletIssuanceInsert[] = [];
+    const result = await considerWalletIssuance({
+      roster,
+      admittedDecisionIds: new Set(),
+      deploymentPathReady: false,
+      timeoutMs: 1000,
+      maxOutputTokens: 200,
+      provider: "gemini",
+      model: "gemini-3.5-flash-lite",
+      complete: async () => {
+        throw new AiProviderError("The shared daily model budget is closed for this model.", "quota", false);
+      },
+      record: async (row) => {
+        rows.push(row);
+        return true;
+      },
+    });
+    expect(result.status).toBe("skipped");
+    expect(result.halt).toBeNull();
+    expect(rows).toHaveLength(0);
+  });
+
   it("queues a permanent wallet when the model says the citizen does not need one", async () => {
     const rows: WalletIssuanceInsert[] = [];
     const result = await considerWalletIssuance({

@@ -12,6 +12,13 @@ export type AiCompletionRequest = {
   responseSchema?: Record<string, unknown>;
   timeoutMs?: number;
   maxOutputTokens?: number;
+  /**
+   * Called before each outbound model attempt, including a retry.
+   * Throwing refuses the attempt and must prevent the network call.
+   */
+  reserveAttempt?: (model: string) => Promise<void>;
+  /** The caller already reserved the first attempt. A retry still reserves. */
+  attemptAlreadyReserved?: boolean;
 };
 
 export type AiCompletion = {
