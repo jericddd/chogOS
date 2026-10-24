@@ -28,11 +28,12 @@ The model does not hold a key and does not sign. It can record a town-growth dec
 
 The website does not sign or broadcast. `POST /api/transactions` returns 403. The Next.js process refuses `CHOG_BANK_AUTHORIZER_PRIVATE_KEY`, `CHOG_WALLET_AGENT_KEY`, `CHOG_WALLET_AGENT_PRIVATE_KEY`, and `CHOG_BANK_AUTHORIZER_KEY`.
 
-GitHub Actions on `main` runs `.github/workflows/ai-mind.yml` on the schedule `*/10 * * * *`, and when someone starts it by hand. GitHub may start that schedule later than the expression. The workflow has three jobs:
+GitHub Actions on `main` runs `.github/workflows/ai-mind.yml` on the schedule `*/10 * * * *`, and when someone starts it by hand. GitHub may start that schedule later than the expression. That workflow has two jobs:
 
-1. `run` calls the production mind.
+1. `run` calls the production mind and can store a proposal. It does not pay ChogBank.
 2. `issue` uses the wallet agent key to create a citizen wallet from an accepted issuance decision. The gas key pays that transaction.
-3. `pay` uses the ChogBank authorizer key to sign an accepted MON allocation, and the gas key to submit `distribute`. The agent key is not used for payouts.
+
+`.github/workflows/chogbank-payout.yml` has no schedule. A person starts it and enters one stored decision id. It uses the ChogBank authorizer key to sign that allocation, and the gas key to submit `distribute`. It does not call the mind and does not pay any other decision. The agent key is not used for payouts. A checkout that still lists every allocation refuses to run. Until this file is on `main`, the older scheduled workflow file can still name a `pay` job, and that job checks out this branch. The broadcaster on this branch returns before signing when `CHOG_BANK_DECISION_ID` is unset.
 
 Those keys are GitHub Actions secrets. They are not in this repository, and the website does not receive them. The agent key can move MON out of a citizen wallet, because `CitizenAccountV3` authorizes calls with that one key. The NFT holder does not control the citizen wallet.
 

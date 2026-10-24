@@ -272,6 +272,7 @@ export function toEvent(row: EventRow): WorldEventView {
     buildingId: row.building_id,
     buildingName: payloadText(row.payload, "buildingName"),
     chainStatus: confirmed ? "confirmed" : reorg || inconsistent ? "offchain" : row.chain_status,
+    chainId: typeof row.chain_id === "number" ? row.chain_id : null,
     txHash: confirmed ? row.tx_hash : reorg || inconsistent ? null : row.tx_hash,
     txUrl: confirmed ? (transfer ? transfer.links.transaction : explorerTxUrl(row.chain_id, row.tx_hash)) : null,
     onchain: onchainEvidenceFromRow(row),

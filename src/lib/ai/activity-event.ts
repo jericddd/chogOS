@@ -2,6 +2,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { getAddress } from "viem";
 import { addresses } from "@/lib/blockchain/addresses";
 import { MAINNET_CHOG_BANK } from "@/lib/chogbank/bank";
+import { economicPayoutReason } from "@/lib/chogbank/payout-reason";
 import { MAINNET_WALLET_FACTORY } from "@/lib/wallets/issuer";
 import { formatTokenAmount } from "@/lib/wallets/present";
 
@@ -186,7 +187,7 @@ export function activityDrafts(row: ActivityDecision): AiActivityDraft[] {
           walletVerified: Boolean(wallet),
           broadcast: true,
           blockNumber: block,
-          note: typeof output.reason === "string" ? output.reason.slice(0, 320) : "Monad receipt matched Distributed for this decision.",
+          note: economicPayoutReason(output.reason) ?? "The stored world reason could not be shown.",
         }),
       });
     }

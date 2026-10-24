@@ -12,9 +12,10 @@ import {
   bankSnapshotProblem,
   matchDistributed,
   pendingPayoutFromOutput,
-  payoutReason,
   type BankSnapshot,
 } from "@/lib/chogbank/payout";
+import { economicPayoutReason } from "@/lib/chogbank/payout-reason";
+import { treasuryReasonHash } from "@/lib/economy/treasury-policy";
 import { readAppConfig } from "@/lib/config/env";
 import { createServiceRoleClient } from "@/lib/db/client";
 import type { TreasuryAsset } from "@/lib/economy/treasury-policy";
@@ -41,11 +42,21 @@ function authorize(request: Request): NextResponse | null {
   if (config.chainId !== 143) {
     return NextResponse.json({ ok: false, error: "ChogBank payouts run on Monad mainnet, chain 143." }, { status: 409 });
   }
-  const url = new URL(request.url);
-  if (url.search) {
-    return NextResponse.json({ ok: false, error: "This route does not take query parameters." }, { status: 400 });
-  }
   return null;
+}
+
+function decisionQuery(request: Request): { decisionId: string | null } | { error: NextResponse } {
+  const url = new URL(request.url);
+  const keys = [...url.searchParams.keys()];
+  if (keys.length === 0) return { decisionId: null };
+  if (keys.length !== 1 || keys[0] !== "decisionId" || url.searchParams.getAll("decisionId").length !== 1) {
+    return { error: NextResponse.json({ ok: false, error: "This route accepts only one decisionId parameter." }, { status: 400 }) };
+  }
+  const decisionId = url.searchParams.get("decisionId")?.trim().toLowerCase() ?? "";
+  if (!HASH.test(decisionId)) {
+    return { error: NextResponse.json({ ok: false, error: "decisionId must be one 32-byte hex id." }, { status: 400 }) };
+  }
+  return { decisionId };
 }
 
 function outputOf(value: unknown): StoredOutput {
@@ -136,7 +147,10 @@ async function readSnapshot(client: ReturnType<typeof chainClient>): Promise<Ban
 export async function GET(request: Request): Promise<NextResponse> {
   const denied = authorize(request);
   if (denied) return denied;
+  const query = decisionQuery(request);
+  if ("error" in query) return query.error;
   const client = createServiceRoleClient();
+  if (query.decisionId) return onePayout(client, query.decisionId);
   const { data, error } = await client
     .from("ai_decisions")
     .select("id, output")
@@ -155,6 +169,59 @@ export async function GET(request: Request): Promise<NextResponse> {
     })
     .sort((left, right) => (left.asset === right.asset ? 0 : left.asset === "MON" ? -1 : 1))
     .slice(0, 8);
+  const monDistributed = await readMonDistributed(client);
+  return NextResponse.json({ ok: true, bank: MAINNET_CHOG_BANK, monDistributed, decisions });
+}
+
+async function onePayout(client: ReturnType<typeof createServiceRoleClient>, decisionId: string): Promise<NextResponse> {
+  const selected = await client
+    .from("ai_decisions")
+    .select("id, status, output")
+    .eq("purpose", "treasury_allocation")
+    .eq("input_commitment", decisionId)
+    .in("status", ["proposed", "accepted", "queued", "executed"])
+    .order("created_at", { ascending: false })
+    .limit(5);
+  let data = selected.data;
+  let error = selected.error;
+  if (!error && (data ?? []).length === 0) {
+    const recent = await client
+      .from("ai_decisions")
+      .select("id, status, output")
+      .eq("purpose", "treasury_allocation")
+      .in("status", ["proposed", "accepted", "queued", "executed"])
+      .order("created_at", { ascending: false })
+      .limit(80);
+    data = recent.data;
+    error = recent.error;
+  }
+  if (error) return NextResponse.json({ ok: false, error: "Payout decisions could not be read." }, { status: 502 });
+  const rows = ((data ?? []) as Array<{ status: string; output: unknown }>).filter((row) => {
+    const output = outputOf(row.output);
+    return typeof output.decisionId === "string" && output.decisionId.toLowerCase() === decisionId;
+  });
+  if (rows.length === 0) {
+    return NextResponse.json({ ok: false, error: "No stored allocation has that id. Nothing was signed." }, { status: 404 });
+  }
+  const paid = rows.some((row) => {
+    const output = outputOf(row.output);
+    return output.onchain === true && output.verified === true;
+  });
+  if (paid) {
+    return NextResponse.json({ ok: false, error: "That decision is already paid. Nothing was signed." }, { status: 409 });
+  }
+  const pending = rows.flatMap((row) => {
+    const payout = pendingPayoutFromOutput(outputOf(row.output));
+    return payout ? [payout] : [];
+  });
+  if (pending.length !== 1 || pending[0]?.decisionId !== decisionId) {
+    return NextResponse.json({ ok: false, error: "That decision is not one eligible unpaid allocation. Nothing was signed." }, { status: 409 });
+  }
+  const monDistributed = await readMonDistributed(client);
+  return NextResponse.json({ ok: true, bank: MAINNET_CHOG_BANK, monDistributed, decisions: pending });
+}
+
+async function readMonDistributed(client: ReturnType<typeof createServiceRoleClient>): Promise<boolean> {
   const paid = await client
     .from("civilization_events")
     .select("tx_hash, payload")
@@ -163,18 +230,22 @@ export async function GET(request: Request): Promise<NextResponse> {
     .eq("chain_status", "confirmed")
     .order("seq", { ascending: false })
     .limit(20);
-  const monDistributed =
+  return (
     !paid.error &&
     ((paid.data ?? []) as Array<{ tx_hash?: string; payload?: unknown }>).some((row) => {
       const payload = outputOf(row.payload);
       return payload.asset === "MON" && typeof row.tx_hash === "string" && HASH.test(row.tx_hash);
-    });
-  return NextResponse.json({ ok: true, bank: MAINNET_CHOG_BANK, monDistributed, decisions });
+    })
+  );
 }
 
 export async function POST(request: Request): Promise<NextResponse> {
   const denied = authorize(request);
   if (denied) return denied;
+  const query = decisionQuery(request);
+  if ("error" in query || query.decisionId) {
+    return NextResponse.json({ ok: false, error: "This route does not take query parameters." }, { status: 400 });
+  }
   let body: unknown;
   try {
     body = await request.json();
@@ -238,8 +309,8 @@ export async function POST(request: Request): Promise<NextResponse> {
   if (!pending || pending.decisionId !== decisionId) {
     return NextResponse.json({ ok: false, error: "The stored allocation cannot be paid." }, { status: 409 });
   }
-  const reason = payoutReason(output, match.rationale);
-  if (!reason) return NextResponse.json({ ok: false, error: "The stored allocation has no payable reason." }, { status: 409 });
+  const reason = economicPayoutReason(output.reason);
+  if (!reason) return NextResponse.json({ ok: false, error: "The stored world reason cannot be paid." }, { status: 409 });
   let chain: ReturnType<typeof chainClient>;
   try {
     chain = chainClient();
@@ -292,6 +363,7 @@ export async function POST(request: Request): Promise<NextResponse> {
       requestedAmountRaw: pending.amountRaw,
       asset: pending.asset,
       reason,
+      reasonHash: treasuryReasonHash(reason),
     };
     const updated = await client
       .from("ai_decisions")

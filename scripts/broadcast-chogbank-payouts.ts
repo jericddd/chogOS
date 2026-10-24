@@ -1,7 +1,8 @@
 /**
- * Broadcasts accepted ChogBank allocations on Monad mainnet.
+ * Broadcasts one stored ChogBank allocation on Monad mainnet.
  * GitHub Actions holds the authorizer key and the gas key. Next.js does not import this file.
  * The only contract write is ChogBank.distribute. The wallet agent key is not read.
+ * A run with no CHOG_BANK_DECISION_ID returns before any signature.
  */
 import { createPublicClient, createWalletClient, getAddress, http, type Hex } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
@@ -19,9 +20,11 @@ import {
   distributedEvent,
   parsePayoutList,
   payoutEndpoint,
+  selectManualPayout,
   spendKeys,
   type BankSnapshot,
 } from "../src/lib/chogbank/payout";
+import { readManualDecisionId } from "../src/lib/chogbank/payout-reason";
 import { addresses } from "../src/lib/blockchain/addresses";
 import { getChain } from "../src/lib/blockchain/chains";
 import { missingIssuerExitCode, redactSecrets, SECRETS_URL } from "../src/lib/wallets/issue-broadcast";
@@ -52,6 +55,15 @@ function fail(error: unknown): never {
 }
 
 async function main(): Promise<void> {
+  const named = readManualDecisionId(process.env.CHOG_BANK_DECISION_ID);
+  if ("idle" in named) {
+    console.log(named.idle);
+    process.exit(0);
+  }
+  if ("error" in named) {
+    console.error(named.error);
+    process.exit(1);
+  }
   const authorizerKey = readPrivateKey("CHOG_BANK_AUTHORIZER_KEY");
   const gasKey = readPrivateKey("WALLET_ISSUER_GAS_KEY");
   const secret = process.env.AI_RUNNER_SECRET?.trim() ?? "";
@@ -67,12 +79,13 @@ async function main(): Promise<void> {
     throw new Error("The payout keys do not match the pinned authorizer and gas wallet. Nothing was signed.");
   }
   const endpoint = payoutEndpoint(process.env.AI_RUNNER_URL);
-  const listed = parsePayoutList(await listPayouts(endpoint, secret));
+  const listed = parsePayoutList(await listPayouts(oneDecisionUrl(endpoint, named.decisionId), secret));
+  const only = selectManualPayout(listed.decisions, named.decisionId);
   const chain = getChain(143);
   const transport = http(RPC, { timeout: 20_000, retryCount: 1 });
   const publicClient = createPublicClient({ chain, transport });
   const walletClient = createWalletClient({ account: gas, chain, transport });
-  const result = await broadcastPendingPayouts(listed.decisions, {
+  const result = await broadcastPendingPayouts([only], {
     bank: MAINNET_CHOG_BANK,
     authorizer: authorizer.address,
     gas: gas.address,
@@ -193,6 +206,12 @@ async function readSnapshot(publicClient: ReturnType<typeof createPublicClient>)
     monBalance,
     chogBalance,
   };
+}
+
+function oneDecisionUrl(endpoint: string, decisionId: Hex): string {
+  const url = new URL(endpoint);
+  url.searchParams.set("decisionId", decisionId);
+  return url.toString();
 }
 
 async function listPayouts(endpoint: string, secret: string): Promise<unknown> {

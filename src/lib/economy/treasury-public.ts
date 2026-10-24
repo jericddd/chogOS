@@ -1,5 +1,6 @@
 import { addresses } from "@/lib/blockchain/addresses";
 import { explorerAddressUrl, explorerTxUrl } from "@/lib/blockchain/explorer";
+import { confirmedPayoutReason, economicPayoutReason } from "@/lib/chogbank/payout-reason";
 import { presentOtherTokens, type HeldTokenScan, type PublicOtherToken } from "@/lib/economy/held-tokens";
 import { APPLICATION_TREASURY_LIMITS } from "@/lib/economy/treasury-policy";
 import { formatTokenAmount } from "@/lib/wallets/present";
@@ -67,6 +68,8 @@ export type VerifiedDistribution = {
   amountRaw: string;
   txHash: string;
   blockNumber: string;
+  /** Present when the Distributed log was decoded. Compared with the stored sentence. */
+  reasonHash?: string | null;
 };
 
 export type VerifiedFunding = {
@@ -248,6 +251,7 @@ type Output = {
   amountRaw?: string;
   requestedAmountRaw?: string;
   reason?: string;
+  reasonHash?: string;
   expectedOutcome?: string;
   decisionId?: string;
   txHash?: string;
@@ -271,6 +275,7 @@ function readOutput(value: unknown): Output {
     amountRaw: text("amountRaw"),
     requestedAmountRaw: text("requestedAmountRaw"),
     reason: text("reason"),
+    reasonHash: text("reasonHash"),
     expectedOutcome: text("expectedOutcome"),
     decisionId: text("decisionId"),
     txHash: text("txHash"),
@@ -354,10 +359,42 @@ function issuanceDecision(row: StoredTreasuryDecision): PublicTreasuryDecision {
   };
 }
 
+function storedReasonRecord(output: Output): Record<string, unknown> {
+  return {
+    verified: output.verified === true,
+    onchain: output.onchain === true,
+    chainId: output.chainId,
+    txHash: output.txHash,
+    reason: output.reason,
+    reasonHash: output.reasonHash,
+  };
+}
+
+function citizenWallet(output: Output): string | null {
+  const address = output.address && /^0x[0-9a-fA-F]{40}$/.test(output.address) ? output.address : null;
+  const recipient = output.recipient && /^0x[0-9a-fA-F]{40}$/.test(output.recipient) ? output.recipient : null;
+  return address ?? recipient;
+}
+
+function reviewDetail(output: Output, rationale: string | null): string {
+  const economic = economicPayoutReason(output.reason);
+  const decisionId = output.decisionId && HASH.test(output.decisionId) ? output.decisionId : null;
+  const id = decisionId ? ` Stored decision id ${decisionId}.` : "";
+  const expected = output.expectedOutcome ? ` Expected outcome: ${output.expectedOutcome}` : "";
+  const review = rationale?.trim() ?? "";
+  const policy =
+    review && economicPayoutReason(review) == null && review !== (output.reason ?? "").trim() ? ` Review note: ${review}` : "";
+  if (economic) return `${economic}.${id}${expected}${policy} This row is not a confirmed payout.`;
+  return `No world-grounded reason is stored.${id}${policy} This row is not a confirmed payout.`;
+}
+
+function confirmedDetail(reason: string | null, txHash: string): string {
+  if (reason) return `${reason} Monad transaction ${txHash} is the verified Distributed event.`;
+  return `The stored world reason could not be verified. Monad transaction ${txHash} is the Distributed event.`;
+}
+
 function offchainDecision(row: StoredTreasuryDecision, decimals: number | null): PublicTreasuryDecision {
   const output = readOutput(row.output);
-  const reason = output.reason || row.rationale || "No reason was stored.";
-  const expected = output.expectedOutcome ? ` Expected outcome: ${output.expectedOutcome}` : "";
   const citizen = output.tokenId && /^[0-9]+$/.test(output.tokenId) ? `Citizen token ${output.tokenId}` : null;
   const confirmed =
     (output.stage === "confirmed" || row.status === "confirmed" || row.status === "executed") &&
@@ -377,14 +414,23 @@ function offchainDecision(row: StoredTreasuryDecision, decimals: number | null):
   else if (output.stage === "proposed" || row.status === "proposed" || row.status === "accepted") statusLabel = "Proposed";
   const storedHash = output.txHash && HASH.test(output.txHash) ? output.txHash : null;
   const noun = statusLabel === "Confirmed" ? "payout" : statusLabel === "Submitted" ? "transaction" : "allocation";
+  const reason = confirmed && storedHash
+    ? confirmedPayoutReason({
+        kind: "treasury.paid",
+        chainStatus: "confirmed",
+        chainId: output.chainId ?? null,
+        txHash: storedHash,
+        output: storedReasonRecord(output),
+      })
+    : null;
   return {
     id: row.id,
     statusLabel,
     headline: citizen ? `${statusLabel} ${noun} for ${citizen}` : `${statusLabel} treasury ${noun}`,
-    detail: `${reason}${expected}`,
+    detail: confirmed && storedHash ? confirmedDetail(reason, storedHash) : reviewDetail(output, row.rationale),
     amountText: allocationAmountText(statusLabel, output.asset, output.amountRaw, output.requestedAmountRaw, decimals),
     citizen,
-    recipient: confirmed && output.recipient ? output.recipient : null,
+    recipient: confirmed ? citizenWallet(output) : null,
     txHash: confirmed ? storedHash : null,
     txHref: confirmed ? explorerTxUrl(143, storedHash) : null,
     txLabel: confirmed ? "View payout receipt" : null,
@@ -393,15 +439,19 @@ function offchainDecision(row: StoredTreasuryDecision, decimals: number | null):
 
 function chainDecision(row: VerifiedDistribution, decimals: number | null, db: StoredTreasuryDecision | undefined): PublicTreasuryDecision {
   const output = db ? readOutput(db.output) : {};
-  const reason = output.reason || db?.rationale;
-  const detail = reason
-    ? `${reason} The database status was ${db?.status ?? "missing"}. The Distributed event is the payment record.`
-    : "This payout is on Monad mainnet. The application database does not yet have a matching row.";
+  const reason = confirmedPayoutReason({
+    kind: "treasury.paid",
+    chainStatus: "confirmed",
+    chainId: 143,
+    txHash: row.txHash,
+    output: storedReasonRecord(output),
+    reasonHash: row.reasonHash ?? output.reasonHash ?? null,
+  });
   return {
     id: row.decisionId,
     statusLabel: "Confirmed",
     headline: `Confirmed payout for citizen token ${row.tokenId}`,
-    detail,
+    detail: confirmedDetail(reason, row.txHash),
     amountText: allocationAmountText("Confirmed", row.asset, row.amountRaw, output.requestedAmountRaw, decimals),
     citizen: `Citizen token ${row.tokenId}`,
     recipient: row.recipient,
@@ -428,7 +478,7 @@ export function presentOwnerlessTreasury(input: {
   const reviewThresholds = applicationPolicy();
   const contractLimits: string[] = [];
   const execution =
-    "Signing on this server is disabled. This server does not sign or broadcast. GitHub Actions broadcasts an accepted MON allocation inside the ChogBank cap, and Verify links the Monad receipt. $CHOG waits until that MON receipt is stored.";
+    "Signing on this server is disabled. This server does not sign or broadcast. A scheduled AI mind run stores proposals and does not pay them. A person starts one stored ChogBank payout by entering that decision id. Verify links the Monad receipt. $CHOG waits until that MON receipt is stored.";
   const sourceNote = "Source-code verification: not checked.";
   let deploymentState: ChogBankPublicView["deploymentState"] = "pending";
   let fundingReady = false;
@@ -493,7 +543,7 @@ export function presentOwnerlessTreasury(input: {
     } else if (inspection.chainCaps) {
       deploymentState = "live";
       fundingReady = true;
-      summary = "Deployed code on Monad mainnet passed the owner, proxy, chain, and asset checks. An accepted MON allocation is broadcast from GitHub Actions, and Verify links the receipt.";
+      summary = "Deployed code on Monad mainnet passed the owner, proxy, chain, and asset checks. A person starts one stored MON payout, and Verify links the receipt.";
       contractLimits.push(...chainPolicy(inspection.chainCaps));
       if (inspection.deploymentTx && !inspection.deploymentTxVerified) {
         warnings.push("A deployment transaction was configured, and it is not linked. The receipt must be a successful creation of this contract.");

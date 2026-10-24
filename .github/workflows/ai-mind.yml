@@ -1,8 +1,7 @@
-# Pokes the production mind, then broadcasts pending wallet decisions
-# and accepted ChogBank allocations. The authorizer key signs distribute.
-# The gas key pays gas. The wallet agent key is not used for payouts.
-# GitHub only fires `schedule` from the default branch (`main` today).
-# The issuer checks out the production branch, where the broadcaster lives.
+# Pokes the production mind, then broadcasts pending wallet decisions.
+# This workflow does not pay ChogBank. One stored payout is a separate
+# manual workflow. GitHub only fires `schedule` from the default branch
+# (`main` today). The issuer checks out the production branch.
 # The agent key can move MON out of every citizen wallet. It stays in GitHub
 # Actions secrets. The website never receives it.
 name: AI mind
@@ -106,58 +105,3 @@ jobs:
           fi
           npm ci
           npx tsx scripts/issue-wallet-decisions.ts
-
-  pay:
-    needs: issue
-    if: always() && needs.issue.result == 'success'
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    permissions:
-      contents: read
-    steps:
-      - name: Check payout secrets
-        id: gate
-        env:
-          CHOG_BANK_AUTHORIZER_KEY: ${{ secrets.CHOG_BANK_AUTHORIZER_KEY }}
-          WALLET_ISSUER_GAS_KEY: ${{ secrets.WALLET_ISSUER_GAS_KEY }}
-          AI_RUNNER_SECRET: ${{ secrets.AI_RUNNER_SECRET }}
-        run: |
-          set -euo pipefail
-          if [ -z "${CHOG_BANK_AUTHORIZER_KEY:-}" ] || [ -z "${WALLET_ISSUER_GAS_KEY:-}" ] || [ -z "${AI_RUNNER_SECRET:-}" ]; then
-            echo "Add repository secrets CHOG_BANK_AUTHORIZER_KEY, WALLET_ISSUER_GAS_KEY, and AI_RUNNER_SECRET."
-            echo "https://github.com/jericddd/chogOS/settings/secrets/actions"
-            echo "Copy the authorizer key from your notes. The website does not receive it. The wallet agent key is not used for payouts."
-            if [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ]; then
-              exit 1
-            fi
-            echo "ready=false" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          echo "ready=true" >> "$GITHUB_OUTPUT"
-
-      - uses: actions/checkout@v4
-        if: steps.gate.outputs.ready == 'true'
-        with:
-          ref: cursor/phase-1-genesis-world-155c
-
-      - uses: actions/setup-node@v4
-        if: steps.gate.outputs.ready == 'true'
-        with:
-          node-version: "22"
-          cache: npm
-
-      - name: Broadcast accepted ChogBank allocations
-        if: steps.gate.outputs.ready == 'true'
-        env:
-          CHOG_BANK_AUTHORIZER_KEY: ${{ secrets.CHOG_BANK_AUTHORIZER_KEY }}
-          WALLET_ISSUER_GAS_KEY: ${{ secrets.WALLET_ISSUER_GAS_KEY }}
-          AI_RUNNER_SECRET: ${{ secrets.AI_RUNNER_SECRET }}
-          AI_RUNNER_URL: ${{ vars.AI_RUNNER_URL }}
-        run: |
-          set -euo pipefail
-          if [ ! -f scripts/broadcast-chogbank-payouts.ts ]; then
-            echo "The production branch does not have the ChogBank payout broadcaster yet."
-            exit 0
-          fi
-          npm ci
-          npx tsx scripts/broadcast-chogbank-payouts.ts

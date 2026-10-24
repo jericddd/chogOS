@@ -1,4 +1,5 @@
 import "server-only";
+import { confirmedPayoutReason } from "@/lib/chogbank/payout-reason";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { readAppConfig } from "@/lib/config/env";
 import { createServiceRoleClient } from "@/lib/db/client";
@@ -294,7 +295,7 @@ async function attachMind(client: SupabaseClient, events: WorldEventView[]): Pro
   if (error || !data) {
     return events;
   }
-  const byId = new Map<string, NonNullable<WorldEventView["mind"]>>();
+  const byId = new Map<string, { mind: NonNullable<WorldEventView["mind"]>; output: Record<string, unknown> | null }>();
   for (const row of data as Array<{ id?: string; rationale?: unknown; output?: unknown }>) {
     if (!row.id) {
       continue;
@@ -303,17 +304,30 @@ async function attachMind(client: SupabaseClient, events: WorldEventView[]): Pro
       row.output && typeof row.output === "object" && !Array.isArray(row.output)
         ? (row.output as Record<string, unknown>)
         : null;
-    const mind = {
-      summary: mindText(output?.summary),
-      rationale: mindText(row.rationale) ?? mindText(output?.rationale) ?? mindText(output?.reason),
-    };
-    if (mind.summary || mind.rationale) {
-      byId.set(row.id, mind);
-    }
+    byId.set(row.id, {
+      output,
+      mind: {
+        summary: mindText(output?.summary),
+        rationale: mindText(row.rationale) ?? mindText(output?.rationale) ?? mindText(output?.reason),
+      },
+    });
   }
   return events.map((event) => {
-    const mind = event.decisionId ? byId.get(event.decisionId) : undefined;
-    return mind ? { ...event, mind } : event;
+    const stored = event.decisionId ? byId.get(event.decisionId) : undefined;
+    if (!stored) return event;
+    if (event.kind === "treasury.paid") {
+      const reason = confirmedPayoutReason({
+        kind: event.kind,
+        chainStatus: event.chainStatus,
+        chainId: event.chainId ?? null,
+        txHash: event.txHash,
+        output: stored.output,
+      });
+      if (!reason) return event;
+      return { ...event, mind: { summary: null, rationale: reason } };
+    }
+    if (!stored.mind.summary && !stored.mind.rationale) return event;
+    return { ...event, mind: stored.mind };
   });
 }
 
