@@ -40,7 +40,7 @@ import { storeCitizenCommerce } from "@/lib/ai/citizen-commerce-db";
 import { observeCitizenWallets, readCitizenMonSpent, readTreasuryChain } from "@/lib/ai/treasury-chain";
 import { rosterFromDeployedWallets, selectRotatedRoster } from "@/lib/ai/treasury-roster";
 import { considerTreasuryAllocation, treasuryReviewInsert } from "@/lib/ai/treasury-run";
-import { loadTreasuryCandidates, loadTreasuryPrior, recordTreasuryDecision } from "@/lib/ai/treasury-db";
+import { loadEconomicContextFacts, loadTreasuryCandidates, loadTreasuryPrior, recordTreasuryDecision } from "@/lib/ai/treasury-db";
 import { considerWalletIssuance } from "@/lib/ai/wallet-run";
 import { loadWalletIssuanceContext, recordWalletIssuance } from "@/lib/ai/wallet-db";
 import { AiProviderError, type AiCompletion } from "@/lib/ai/types";
@@ -605,7 +605,13 @@ async function runAiMindWork(config: AppConfig, deadlineMs: number, report: Mind
 
     async function guardedComplete(
       purpose: string,
-      request: { system: string; user: string; timeoutMs: number; maxOutputTokens: number },
+      request: {
+        system: string;
+        user: string;
+        timeoutMs: number;
+        maxOutputTokens: number;
+        responseSchema?: Record<string, unknown>;
+      },
     ): Promise<AiCompletion> {
       try {
         return await provider.complete({
@@ -614,6 +620,7 @@ async function runAiMindWork(config: AppConfig, deadlineMs: number, report: Mind
             { role: "system", content: request.system },
             { role: "user", content: request.user },
           ],
+          responseSchema: request.responseSchema,
           timeoutMs: purposeCallTimeoutMs(purpose, request.timeoutMs),
           maxOutputTokens: request.maxOutputTokens,
           reserveAttempt,
@@ -815,9 +822,11 @@ async function runAiMindWork(config: AppConfig, deadlineMs: number, report: Mind
         return;
       }
       try {
+        const extraFacts = await loadEconomicContextFacts(client);
         const result = await considerTreasuryAllocation({
           nowMs: Date.now(),
           roster: payable,
+          extraFacts,
           prior,
           monBalance: chain.facts.monBalance,
           chogBalance: chain.facts.chogBalance,
@@ -838,6 +847,7 @@ async function runAiMindWork(config: AppConfig, deadlineMs: number, report: Mind
         });
         if (result.promptChars > 0) {
           await bumpUsage(client, result.promptChars, result.outputTokens);
+          if (result.modelCalls > 1) await bumpUsage(client, 0, 0);
         }
         const leftOut = unreadSpend.length > 0 ? ` Token ids left unread this round: ${unreadSpend.slice(0, 6).join(", ")}.` : "";
         report.treasury = { status: result.status, detail: `${result.detail}${leftOut}` };
@@ -878,6 +888,7 @@ async function runAiMindWork(config: AppConfig, deadlineMs: number, report: Mind
           model: routedModel("citizen_trade"),
           timeoutMs: purposeCallTimeoutMs("citizen_trade", slot.timeoutMs),
           maxOutputTokens: config.aiMaxOutputTokens,
+          config,
           complete: (request) => guardedComplete("citizen_trade", request),
         });
         if (result.promptChars > 0) await bumpUsage(client, result.promptChars, result.outputTokens);
@@ -1208,6 +1219,7 @@ async function runAiMindWork(config: AppConfig, deadlineMs: number, report: Mind
           }
         }
         if (!accepted.ok) {
+          if (accepted.reason === "model output was not JSON") decided = false;
           await rememberRejection(client, row.claimed_citizen_id, accepted.reason);
           recentRejections.push(`${row.token_id}: ${accepted.reason}`);
           if (/unsupported construction kind|cannot be started/.test(accepted.reason)) {

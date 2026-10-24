@@ -40,13 +40,13 @@ function titleFor(kind: string, broadcast: boolean): string {
   if (kind === "wallet.decided") return "AI decision to create a wallet";
   if (kind === "treasury.paid") return "Monad ChogBank payout";
   if (kind === "treasury.allocation") return "AI decision to send funds";
-  if (kind === "citizen.trade") return "AI decision to trade";
+  if (kind === "citizen.trade") return "Citizen transfer proposal";
   if (kind === "ai.decision") return "AI decision, not yet carried out";
   if (kind === "ai.completed") return "Simulation carried out the decision";
-  return "AI decision to return funds to ChogBank";
+  return "Proposed transfer to ChogBank";
 }
 
-function defaultNote(kind: string, broadcast: boolean): string {
+function defaultNote(kind: string, broadcast: boolean, payload: Record<string, unknown>): string {
   if (kind === "wallet.created" && broadcast) {
     return "Open the transaction, block, citizen wallet, factory, and Genesis token on Monadscan. Opening a link does not replace reading the receipt.";
   }
@@ -56,11 +56,21 @@ function defaultNote(kind: string, broadcast: boolean): string {
   if (kind === "wallet.decided") {
     return "The mind decided to create this wallet. The wallet address is published on the creation row after Monad confirms it. No transaction is linked here.";
   }
+  const state = typeof payload === "object" && payload && "publicState" in payload ? String((payload as { publicState?: unknown }).publicState) : "";
+  if (state === "technical_failure") {
+    return "This row is a technical failure. It is not an economic decision and it has no transaction.";
+  }
+  if (state === "deferred") return "This transfer was deferred. This row has no transaction.";
+  if (state === "no_allocation") return "No allocation was made. This row has no transaction.";
+  if (state === "submitted_pending") return "A transaction was submitted and is not confirmed.";
+  if (state === "proposed" || state === "approved_awaiting_execution") {
+    return "This is a proposal awaiting a verified receipt. This row has no confirmed transaction.";
+  }
   if (kind === "citizen.return") {
-    return "The mind decided this citizen should return funds to ChogBank. This row has no return transaction.";
+    return "The mind proposed a citizen transfer to ChogBank. This row has no return transaction.";
   }
   if (kind === "citizen.trade") {
-    return "The mind decided this citizen should trade. This row has no Monad transaction.";
+    return "The mind proposed a citizen transfer. This row has no Monad transaction and is not a completed purchase.";
   }
   if (kind === "ai.decision") {
     return "The mind recorded this choice. The simulation has not carried it out on this row, and this row has no Monad transaction.";
@@ -140,7 +150,7 @@ export function onchainEvidenceFromRow(row: {
   if (!KINDS.has(row.kind)) return null;
   const payload = payloadRecord(row.payload);
   const broadcast = payload.broadcast === true && (row.kind === "wallet.created" || row.kind === "treasury.paid");
-  const note = defaultNote(row.kind, broadcast);
+  const note = defaultNote(row.kind, broadcast, payload);
   const links: OnchainLink[] = [];
   const tx = typeof row.tx_hash === "string" ? row.tx_hash : "";
   const confirmed = row.chain_status === "confirmed" && row.chain_id === 143 && HASH.test(tx);

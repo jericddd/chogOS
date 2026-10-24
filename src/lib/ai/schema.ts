@@ -1,3 +1,4 @@
+import { readModelJson } from "@/lib/ai/model-json";
 import { ACTIVATION_MOTIVES, type ActivationMotive } from "@/lib/chogbank/types";
 import type { EconomyDraft } from "@/lib/economy/proposal";
 import { parseEconomyDraft } from "@/lib/economy/proposal";
@@ -82,21 +83,9 @@ function isConstructKind(value: unknown): value is ConstructKind {
  * code are not accepted as actions. Missing or unknown build kinds are rejected.
  */
 export function parseDecisionOutput(text: string): { ok: true; decision: ParsedDecision } | { ok: false; reason: string } {
-  let raw: unknown;
-  try {
-    raw = JSON.parse(text) as unknown;
-  } catch {
-    const start = text.indexOf("{");
-    const end = text.lastIndexOf("}");
-    if (start < 0 || end <= start) {
-      return { ok: false, reason: "model output was not JSON" };
-    }
-    try {
-      raw = JSON.parse(text.slice(start, end + 1)) as unknown;
-    } catch {
-      return { ok: false, reason: "model output was not JSON" };
-    }
-  }
+  const parsed = readModelJson(text);
+  if (!parsed.ok) return { ok: false, reason: "model output was not JSON" };
+  const raw = parsed.value;
 
   const body = asRecord(raw);
   if (!body) {

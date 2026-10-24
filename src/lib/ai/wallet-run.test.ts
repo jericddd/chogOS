@@ -163,6 +163,13 @@ describe("wallet issuance consideration", () => {
     expect(parsed.ok).toBe(false);
   });
 
+  it("reads a fenced wallet choice and does not invent one from prose", () => {
+    const parsed = parseWalletIssuance('```json\n{"choice":"defer","tokenId":"104","rationale":"The storehouse can wait."}\n```');
+    expect(parsed.ok && parsed.tokenId).toBe("104");
+    if (parsed.ok) expect(parsed.choice).toBe("defer");
+    expect(parseWalletIssuance("Please make a wallet.").ok).toBe(false);
+  });
+
   it("halts on a provider quota error after recording the wallet decision", async () => {
     const rows: WalletIssuanceInsert[] = [];
     const result = await considerWalletIssuance({

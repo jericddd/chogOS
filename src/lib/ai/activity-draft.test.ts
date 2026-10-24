@@ -67,9 +67,21 @@ describe("activity drafts", () => {
     expect(funds[0]).toMatchObject({ kind: "treasury.allocation", chainStatus: "offchain", txHash: null });
     expect(funds[0]?.summary).toMatch(/send MON/);
     expect(funds[0]?.summary).toMatch(/No transaction was broadcast/);
-    expect(trade[0]?.summary).toMatch(/should trade/);
-    expect(returning[0]?.summary).toMatch(/return funds to ChogBank/);
+    const unreadable = activityDrafts(decision({
+      purpose: "treasury_allocation",
+      status: "rejected",
+      rationale: "The treasury proposal was not JSON.",
+      output: { tokenId: null, txHash: null, executed: false, onchain: false },
+    }));
+    expect(unreadable[0]?.summary).toMatch(/could not be read/);
+    expect(unreadable[0]?.summary).toMatch(/no citizen was paid/i);
+    expect(unreadable[0]).toMatchObject({ kind: "treasury.allocation", chainStatus: "offchain", txHash: null });
+    expect(unreadable.map((draft) => draft.kind)).toEqual(["treasury.allocation"]);
+    expect(trade[0]?.summary).toMatch(/Proposed/);
+    expect(trade[0]?.summary).toMatch(/not a completed purchase/i);
+    expect(returning[0]?.summary).toMatch(/ChogBank/);
     expect(returning[0]?.summary).toMatch(/No transaction was broadcast/);
+    expect(returning[0]?.summary).toMatch(/not a completed return/i);
     expect([funds[0], trade[0], returning[0]].every((draft) => draft?.chainStatus === "offchain" && draft.txHash === null)).toBe(true);
   });
 
@@ -234,6 +246,86 @@ describe("activity drafts", () => {
     expect(events.map((event) => event.category)).toEqual(["ai", "ai"]);
     expect(events[1]).toMatchObject({ chain_status: "confirmed", tx_hash: TX, decision_id: ID });
     expect(outcomes.at(-1)).toContain("evt-2");
+  });
+
+  it("keeps every transfer state truthful and does not confirm a citizen transfer without a matching receipt", () => {
+    const awaiting = activityDrafts(decision({
+      purpose: "treasury_allocation",
+      status: "proposed",
+      rationale: "Production signing is disabled.",
+      output: {
+        tokenId: "104",
+        asset: "MON",
+        publicState: "approved_awaiting_execution",
+        reason: "Finish the east road.",
+        txHash: TX,
+      },
+    }));
+    expect(awaiting[0]?.summary).toMatch(/Approved and awaiting execution/);
+    expect(awaiting[0]?.summary).toMatch(/Finish the east road/);
+    expect(awaiting[0]?.summary).toMatch(/No transaction was broadcast/);
+    expect(awaiting[0]).toMatchObject({ chainStatus: "offchain", txHash: null });
+    expect(awaiting.map((draft) => draft.kind)).toEqual(["treasury.allocation"]);
+
+    const deferred = activityDrafts(decision({
+      purpose: "citizen_trade",
+      status: "rejected",
+      rationale: "Citizen MON balances were not read, so no citizen transfer was proposed.",
+      output: { tokenId: "7", publicState: "deferred", direction: "citizen_to_citizen", txHash: TX, verified: true, onchain: true },
+    }));
+    expect(deferred[0]?.summary).toMatch(/Deferred/);
+    expect(deferred[0]?.summary).toMatch(/No transaction was broadcast/);
+    expect(deferred[0]).toMatchObject({ chainStatus: "offchain", txHash: null });
+
+    const falseSuccess = activityDrafts(decision({
+      purpose: "citizen_trade",
+      status: "executed",
+      rationale: "Pay for the shift.",
+      output: {
+        tokenId: "7",
+        recipientTokenId: "104",
+        publicState: "confirmed",
+        direction: "citizen_to_citizen",
+        amountRaw: "1000",
+        asset: "MON",
+        wallet: WALLET,
+        walletVerified: true,
+        recipientWallet: "0x1111111111111111111111111111111111111111",
+        txHash: TX,
+        verified: true,
+        onchain: true,
+        chainId: 143,
+        receiptStatus: "success",
+        logMatched: false,
+      },
+    }));
+    expect(falseSuccess[0]?.summary).toMatch(/Failed during execution/);
+    expect(falseSuccess[0]?.summary).not.toMatch(/Confirmed successful/);
+    expect(falseSuccess[0]).toMatchObject({ chainStatus: "offchain", txHash: null });
+
+    const confirmed = activityDrafts(decision({
+      purpose: "citizen_return",
+      status: "executed",
+      rationale: "Voluntary project funding.",
+      output: {
+        tokenId: "7",
+        publicState: "confirmed",
+        direction: "citizen_to_chogbank",
+        amountRaw: "1000",
+        asset: "MON",
+        wallet: WALLET,
+        walletVerified: true,
+        recipientWallet: "0xB2494538433B2FA3167A723d32329cc22c3A59C1",
+        bank: "0xB2494538433B2FA3167A723d32329cc22c3A59C1",
+        txHash: TX,
+        chainId: 143,
+        receiptStatus: "success",
+        logMatched: true,
+      },
+    }));
+    expect(confirmed[0]?.summary).toMatch(/Confirmed successful/);
+    expect(confirmed[0]?.summary).toMatch(/ChogBank/);
+    expect(confirmed[0]).toMatchObject({ chainStatus: "confirmed", chainId: 143, txHash: TX });
   });
 
   it("distinguishes a citizen decision from an action the simulation carried out", () => {
@@ -445,8 +537,12 @@ describe("activity drafts", () => {
   it("does not give the website a way to spend a citizen wallet", () => {
     const source = readFileSync("src/lib/ai/activity-event.ts", "utf8");
     const commerce = readFileSync("src/lib/ai/citizen-commerce.ts", "utf8");
+    const database = readFileSync("src/lib/ai/citizen-commerce-db.ts", "utf8");
+    const transfers = readFileSync("src/lib/ai/transfer-decision.ts", "utf8");
     expect(source).not.toMatch(/sendTransaction|signTypedData|privateKey/);
     expect(commerce).not.toMatch(/sendTransaction|signTypedData|privateKey|functionName/);
-    expect(commerce).toContain("You do not sign, broadcast");
+    expect(database).not.toMatch(/sendTransaction|signTypedData|privateKey|submitIntent/);
+    expect(transfers).toContain("does not sign");
+    expect(transfers).toContain("executable: false");
   });
 });

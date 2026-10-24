@@ -1,4 +1,5 @@
 import { haltFromError } from "@/lib/ai/budget";
+import { readModelJson } from "@/lib/ai/model-json";
 import { AiProviderError, type AiCompletion } from "@/lib/ai/types";
 import {
   evaluateIssuanceDecision,
@@ -109,12 +110,9 @@ export function walletIssuanceMessages(roster: readonly WalletRosterEntry[], dep
 }
 
 export function parseWalletIssuance(text: string): { ok: true; choice: IssuanceChoice; tokenId: string | null; rationale: string } | { ok: false; reason: string } {
-  let raw: unknown;
-  try {
-    raw = JSON.parse(text) as unknown;
-  } catch {
-    return { ok: false, reason: "The wallet decision was not JSON." };
-  }
+  const parsed = readModelJson(text);
+  if (!parsed.ok) return { ok: false, reason: "The wallet decision was not JSON." };
+  const raw = parsed.value;
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
     return { ok: false, reason: "The wallet decision was not an object." };
   }

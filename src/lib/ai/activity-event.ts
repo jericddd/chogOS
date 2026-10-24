@@ -4,6 +4,7 @@ import { addresses } from "@/lib/blockchain/addresses";
 import { MAINNET_CHOG_BANK } from "@/lib/chogbank/bank";
 import { economicPayoutReason } from "@/lib/chogbank/payout-reason";
 import { MAINNET_WALLET_FACTORY } from "@/lib/wallets/issuer";
+import { classifyTransferReceipt, PUBLIC_TRANSFER_STATES, type PublicTransferState } from "@/lib/ai/transfer-decision";
 import { formatTokenAmount } from "@/lib/wallets/present";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -31,7 +32,7 @@ export type AiActivityDraft = {
   payload: Record<string, JsonValue>;
   chainId: 143 | null;
   txHash: string | null;
-  chainStatus: "offchain" | "confirmed";
+  chainStatus: "offchain" | "submitted" | "confirmed";
   /** fill keeps an existing outcome. prefer points the decision at this chain row. */
   outcome: "fill" | "prefer";
 };
@@ -126,6 +127,73 @@ function citizenId(value: string | null): string | null {
   return value && UUID.test(value) ? value : null;
 }
 
+function namedState(value: unknown): PublicTransferState | null {
+  return typeof value === "string" && (PUBLIC_TRANSFER_STATES as readonly string[]).includes(value) ? (value as PublicTransferState) : null;
+}
+
+function textValue(value: unknown): string | null {
+  if (Array.isArray(value)) return textValue(value.filter((item) => typeof item === "string").join(" "));
+  if (typeof value !== "string") return null;
+  const text = value.replace(/\s+/g, " ").trim().slice(0, 320);
+  return text || null;
+}
+
+function clipText(value: string): string {
+  return value.replace(/\s+/g, " ").trim().slice(0, 240);
+}
+
+function factSentence(output: Record<string, unknown>): string {
+  const text = textValue(output.factSummaries);
+  return text ? ` Facts: ${text.slice(0, 180)}` : "";
+}
+
+function treasurySummary(input: {
+  paid: boolean;
+  sending: boolean;
+  publicState: PublicTransferState | null;
+  rationale: string | null;
+  assetLabel: string;
+  who: string;
+  reason: string | null;
+}): string {
+  if (input.paid) return `The AI mind decided to send${input.assetLabel}${input.who}. The Monad receipt is stored with this decision.`;
+  if (input.publicState === "approved_awaiting_execution" || input.publicState === "proposed") {
+    const because = input.reason ? ` ${clipText(input.reason)}` : "";
+    return `Approved and awaiting execution: send${input.assetLabel}${input.who}.${because} No transaction was broadcast.`;
+  }
+  if (input.publicState === "submitted_pending") {
+    return `Submitted and pending confirmation: send${input.assetLabel}${input.who}. The transaction is not confirmed.`;
+  }
+  if (input.publicState === "failed_execution") {
+    return `Failed during execution: the payout${input.who} did not succeed. ${clipText(input.rationale ?? "")}`.trim();
+  }
+  if (input.publicState === "deferred") {
+    return `Deferred: no payout${input.who}. ${clipText(input.rationale ?? "")} No transaction was broadcast.`.replace(/\s+/g, " ").trim();
+  }
+  if (input.publicState === "no_allocation") {
+    return `No allocation was made${input.who}. ${clipText(input.rationale ?? "")} No transaction was broadcast.`.replace(/\s+/g, " ").trim();
+  }
+  if (input.publicState === "technical_failure" || /not JSON|could not be read/i.test(input.rationale ?? "")) {
+    return "Technical failure: the payment proposal could not be read, so no citizen was paid. No transaction was sent.";
+  }
+  if (input.sending) return `The AI mind decided to send${input.assetLabel}${input.who}. No transaction was broadcast.`;
+  return `The AI mind decided not to send funds${input.who}. No transaction was broadcast.`;
+}
+
+function citizenSummary(state: PublicTransferState, returning: boolean, route: string, rationale: string | null, confirmed: boolean): string {
+  const reason = clipText(rationale ?? "");
+  if (confirmed) return `Confirmed successful: ${route}. ${reason}`.trim();
+  if (state === "submitted_pending") return `Submitted and pending confirmation: ${route}. The transaction is not confirmed.`;
+  if (state === "failed_execution") return `Failed during execution: ${route}. ${reason} No successful receipt was stored.`.replace(/\s+/g, " ").trim();
+  if (state === "deferred") return `Deferred: ${route}. ${reason} No transaction was broadcast.`.replace(/\s+/g, " ").trim();
+  if (state === "no_allocation") return `No allocation was made. ${reason} No transaction was broadcast.`.replace(/\s+/g, " ").trim();
+  if (state === "technical_failure") return `Technical failure: ${reason || "the transfer proposal could not be read."} No citizen transfer was proposed.`;
+  if (state === "approved_awaiting_execution") return `Approved and awaiting execution: ${route}. No transaction was broadcast.`;
+  return returning
+    ? `Proposed: ${route}. No transaction was broadcast. This is not a completed return to ChogBank.`
+    : `Proposed: ${route}. No transaction was broadcast. This is not a completed purchase.`;
+}
+
 function basePayload(tokenId: string | null, extra: Record<string, JsonValue>): Record<string, JsonValue> {
   return {
     tokenId,
@@ -209,15 +277,20 @@ export function activityDrafts(row: ActivityDecision, options?: { worldConfirmed
     const tx = typeof output.txHash === "string" && HASH.test(output.txHash) ? output.txHash.toLowerCase() : null;
     const paid = row.status === "executed" && output.verified === true && output.onchain === true && tx != null;
     const amountRaw = typeof output.amountRaw === "string" && /^[0-9]+$/.test(output.amountRaw) ? output.amountRaw : null;
+    const publicState = paid ? "confirmed" : namedState(output.publicState);
     const drafts: AiActivityDraft[] = [
       {
         dedupeKey: `ai:treasury:${row.id}`,
         kind: "treasury.allocation",
-        summary: paid
-          ? `The AI mind decided to send${assetLabel}${who}. The Monad receipt is stored with this decision.`
-          : sending
-            ? `The AI mind decided to send${assetLabel}${who}. No transaction was broadcast.`
-            : `The AI mind decided not to send funds${who}. No transaction was broadcast.`,
+        summary: treasurySummary({
+          paid,
+          sending,
+          publicState,
+          rationale: row.rationale,
+          assetLabel,
+          who,
+          reason: typeof output.reason === "string" ? output.reason : null,
+        }),
         citizenId: actor,
         decisionId: row.id,
         chainId: null,
@@ -227,7 +300,14 @@ export function activityDrafts(row: ActivityDecision, options?: { worldConfirmed
         payload: basePayload(tokenId, {
           action: "send_funds",
           asset,
-          note: paid ? "The Monad receipt is on the payout row." : "This decision did not broadcast a Monad transaction.",
+          publicState,
+          direction: "chogbank_to_citizen",
+          factSummaries: textValue(output.factSummaries),
+          note: paid
+            ? "The Monad receipt is on the payout row."
+            : publicState === "technical_failure"
+              ? (row.rationale ?? "The payment proposal could not be read.").slice(0, 320)
+              : "This decision did not broadcast a Monad transaction.",
         }),
       },
     ];
@@ -241,8 +321,8 @@ export function activityDrafts(row: ActivityDecision, options?: { worldConfirmed
         dedupeKey: `ai:treasury-paid:${row.id}`,
         kind: "treasury.paid",
         summary: limited
-          ? `The AI mind sent ${paidLabel} to Chog #${tokenId}. The ChogBank cap limited this payment. Monad confirmed the distribution.`
-          : `The AI mind sent ${paidLabel} to Chog #${tokenId}. Monad confirmed the ChogBank distribution.`,
+          ? `Confirmed successful. The AI mind sent ${paidLabel} from ChogBank to Chog #${tokenId}. The ChogBank cap limited this payment. Monad confirmed the distribution.${factSentence(output)}`
+          : `Confirmed successful. The AI mind sent ${paidLabel} from ChogBank to Chog #${tokenId}. Monad confirmed the ChogBank distribution.${factSentence(output)}`,
         citizenId: actor,
         decisionId: row.id,
         chainId: 143,
@@ -259,35 +339,95 @@ export function activityDrafts(row: ActivityDecision, options?: { worldConfirmed
           walletVerified: Boolean(wallet),
           broadcast: true,
           blockNumber: block,
+          publicState: "confirmed",
+          direction: "chogbank_to_citizen",
+          factSummaries: textValue(output.factSummaries),
           note: economicPayoutReason(output.reason) ?? "The stored world reason could not be shown.",
         }),
       });
     }
     return drafts;
   }
-  if ((row.purpose === "citizen_trade" || row.purpose === "citizen_return") && tokenId) {
+  if (row.purpose === "citizen_trade" || row.purpose === "citizen_return") {
     const wallet = output.walletVerified === true ? checksum(output.wallet) : null;
-    const returning = row.purpose === "citizen_return";
+    const returning = row.purpose === "citizen_return" || output.direction === "citizen_to_chogbank";
+    const state = namedState(output.publicState) ?? "proposed";
+    const modern = namedState(output.publicState) != null;
+    const other = tokenOf({ tokenId: output.recipientTokenId ?? output.relatedTokenId });
+    const amountRaw = typeof output.amountRaw === "string" && /^[0-9]+$/.test(output.amountRaw) ? output.amountRaw : null;
+    const hash = typeof output.txHash === "string" && HASH.test(output.txHash) ? output.txHash.toLowerCase() : null;
+    const sender = checksum(output.wallet);
+    const recipient = checksum(output.recipientWallet) ?? (returning ? checksum(output.bank) : null);
+    const receiptState =
+      state === "confirmed" || state === "submitted_pending" || state === "failed_execution"
+        ? classifyTransferReceipt({
+            expected: {
+              asset: "MON",
+              amountRaw: amountRaw ?? "",
+              sender: sender ?? "",
+              recipient: recipient ?? "",
+            },
+            receipt: hash
+              ? {
+                  chainId: output.chainId === 143 ? 143 : 0,
+                  txHash: hash,
+                  status: output.receiptStatus === "success" || output.receiptStatus === "reverted" || output.receiptStatus === "unknown" ? output.receiptStatus : null,
+                  sender,
+                  recipient,
+                  amountRaw,
+                  asset: output.asset === "MON" ? "MON" : null,
+                  logMatched: output.logMatched === true,
+                }
+              : null,
+          })
+        : "not_confirmed";
+    const confirmed = receiptState === "confirmed";
+    const pending = state === "submitted_pending" && receiptState === "submitted_pending";
+    const shown: PublicTransferState = confirmed
+      ? "confirmed"
+      : receiptState === "failed_execution" || state === "confirmed"
+        ? "failed_execution"
+        : pending
+          ? "submitted_pending"
+          : state;
+    const who = tokenId ? `Chog #${tokenId}` : "A citizen";
+    const counterparty = other ? `Chog #${other}` : returning ? "ChogBank" : "another citizen";
+    const amount = amountRaw ? formatTokenAmount(amountRaw, 18, "MON") : null;
+    const route = amount ? `${who} to ${counterparty}, ${amount}` : `${who} to ${counterparty}`;
+    const summary = citizenSummary(shown, returning, route, row.rationale, confirmed);
     return [
       {
-        dedupeKey: returning ? `ai:citizen-return:${tokenId}` : `ai:citizen-trade:${tokenId}`,
+        dedupeKey: modern
+          ? `${returning ? "ai:citizen-return" : "ai:citizen-trade"}:${row.id}`
+          : tokenId
+            ? returning
+              ? `ai:citizen-return:${tokenId}`
+              : `ai:citizen-trade:${tokenId}`
+            : `ai:citizen-transfer:${row.id}`,
         kind: returning ? "citizen.return" : "citizen.trade",
-        summary: returning
-          ? `The AI mind decided Chog #${tokenId} should return funds to ChogBank. No transaction was broadcast.`
-          : `The AI mind decided Chog #${tokenId} should trade. No transaction was broadcast.`,
+        summary,
         citizenId: actor,
         decisionId: row.id,
-        chainId: null,
-        txHash: null,
-        chainStatus: "offchain",
-        outcome: "fill",
+        chainId: confirmed || pending ? 143 : null,
+        txHash: confirmed || pending ? hash : null,
+        chainStatus: confirmed ? "confirmed" : pending ? "submitted" : "offchain",
+        outcome: confirmed ? "prefer" : "fill",
         payload: basePayload(tokenId, {
           action: returning ? "return_to_chogbank" : "trade",
+          direction: returning ? "citizen_to_chogbank" : "citizen_to_citizen",
+          publicState: shown,
+          relatedTokenId: other,
+          amountRaw,
+          asset: output.asset === "MON" ? "MON" : null,
           wallet,
           walletVerified: Boolean(wallet),
-          note: returning
-            ? "This return decision did not broadcast a Monad transaction."
-            : "This trade decision did not broadcast a Monad transaction.",
+          factSummaries: textValue(output.factSummaries),
+          limitation: textValue(output.limitation),
+          bank: returning ? MAINNET_CHOG_BANK : null,
+          broadcast: confirmed,
+          note: confirmed
+            ? "Monad receipt matched this citizen transfer."
+            : "This row did not broadcast a confirmed Monad transaction.",
         }),
       },
     ];
