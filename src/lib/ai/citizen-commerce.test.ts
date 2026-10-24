@@ -1,46 +1,46 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { considerCitizenCommerce, settleCommerceText, type CommerceCitizen } from "@/lib/ai/citizen-commerce";
+import { considerCitizenCommerce } from "@/lib/ai/citizen-commerce";
+import { assembleTransferWorld, type TransferCitizen } from "@/lib/ai/transfer-decision";
 
-const citizens: CommerceCitizen[] = [
-  {
-    tokenId: "104",
-    name: "Chog #104",
-    citizenId: "bbbbbbbb-cccc-4ddd-8eee-ffffffffffff",
+function citizen(tokenId: string, citizenId: string, balance: string | null): TransferCitizen {
+  return {
+    tokenId,
+    citizenId,
+    name: `Chog #${tokenId}`,
     wallet: "0x238797c75Ad0423516F84D917B7A9d765831bf02",
-    missing: ["trade", "return"],
-  },
-  {
-    tokenId: "7",
-    name: "Chog #7",
-    citizenId: "cccccccc-dddd-4eee-8fff-000000000000",
-    wallet: "0x238797c75Ad0423516F84D917B7A9d765831bf02",
-    missing: ["trade"],
-  },
-];
+    role: "builder",
+    activity: "working",
+    workId: "road-east",
+    goal: "Finish the east road",
+    monBalanceRaw: balance,
+  };
+}
+
+const world = assembleTransferWorld({
+  citizens: [
+    citizen("104", "bbbbbbbb-cccc-4ddd-8eee-ffffffffffff", "2000000000000000"),
+    citizen("7", "cccccccc-dddd-4eee-8fff-000000000000", "2000000000000000"),
+  ],
+  needs: [],
+  projects: [
+    {
+      id: "11111111-2222-4333-8444-555555555555",
+      name: "East road",
+      status: "active",
+      projectType: "territorial",
+      justification: "The east road is still incomplete.",
+    },
+  ],
+  events: [],
+  priors: [],
+});
 
 describe("citizen commerce", () => {
-  it("keeps the model's reason only when it names that citizen and has no URL", () => {
-    const text = JSON.stringify({
-      citizens: [
-        { tokenId: "104", tradeRationale: "The east market still has open stalls.", returnRationale: "Surplus MON should go back to ChogBank." },
-        { tokenId: "7", tradeRationale: "See https://evil.test", returnRationale: "" },
-      ],
-    });
-    const settled = settleCommerceText(text, citizens);
-    expect(settled.get("104")).toEqual({
-      trade: { text: "The east market still has open stalls.", fromModel: true },
-      returnToBank: { text: "Surplus MON should go back to ChogBank.", fromModel: true },
-    });
-    expect(settled.get("7")?.trade.fromModel).toBe(false);
-    expect(settled.get("7")?.trade.text).toMatch(/does not broadcast/i);
-    expect(settled.get("7")?.returnToBank.text).toMatch(/does not broadcast/i);
-  });
-
-  it("records a trade and a return with reasons and does not broadcast", async () => {
-    const rows: Array<{ purpose: string; rationale: string; fromModel: boolean }> = [];
+  it("records one grounded proposal and does not invent a second trade", async () => {
+    const rows: Array<{ purpose: string; publicState: string; fromModel: boolean; executable: boolean }> = [];
     const result = await considerCitizenCommerce({
-      citizens,
+      world,
       timeoutMs: 1000,
       maxOutputTokens: 200,
       provider: "gemini",
@@ -49,29 +49,62 @@ describe("citizen commerce", () => {
         provider: "gemini",
         model: "test",
         text: JSON.stringify({
-          citizens: [{ tokenId: "104", tradeRationale: "Trade the spare tools.", returnRationale: "Return the spare MON." }],
+          direction: "citizen_to_chogbank",
+          action: "fund_project",
+          senderTokenId: "104",
+          amountRaw: "1000000000000000",
+          asset: "MON",
+          explanation: "Fund the stored road project.",
+          factIds: ["project:11111111-2222-4333-8444-555555555555"],
         }),
         promptChars: 20,
         outputTokens: 10,
       }),
       record: async (row) => {
-        rows.push({ purpose: row.purpose, rationale: row.rationale, fromModel: row.fromModel });
+        rows.push({ purpose: row.purpose, publicState: row.publicState, fromModel: row.fromModel, executable: row.executable });
         return true;
       },
     });
     expect(result.status).toBe("proposed");
     expect(result.detail).toMatch(/No transaction was broadcast/);
     expect(rows).toEqual([
-      { purpose: "citizen_trade", rationale: "Trade the spare tools.", fromModel: true },
-      { purpose: "citizen_return", rationale: "Return the spare MON.", fromModel: true },
-      { purpose: "citizen_trade", rationale: expect.stringMatching(/Chog #7/), fromModel: false },
+      { purpose: "citizen_return", publicState: "proposed", fromModel: true, executable: false },
     ]);
+  });
+
+  it("defers when balances were not read and does not call the model", async () => {
+    let called = false;
+    const rows: string[] = [];
+    const result = await considerCitizenCommerce({
+      world: assembleTransferWorld({
+        citizens: [citizen("104", "bbbbbbbb-cccc-4ddd-8eee-ffffffffffff", null)],
+        needs: [],
+        projects: [],
+        events: [],
+        priors: [],
+      }),
+      timeoutMs: 1000,
+      maxOutputTokens: 200,
+      provider: "gemini",
+      model: "test",
+      complete: async () => {
+        called = true;
+        return { provider: "gemini", model: "test", text: "{}", promptChars: 1, outputTokens: 1 };
+      },
+      record: async (row) => {
+        rows.push(row.rationale);
+        return true;
+      },
+    });
+    expect(called).toBe(false);
+    expect(result.status).toBe("deferred");
+    expect(rows[0]).toMatch(/balances were not read/i);
   });
 
   it("does not invent a trade when the model is not called", async () => {
     let recorded = false;
     const result = await considerCitizenCommerce({
-      citizens: citizens.slice(0, 1),
+      world,
       timeoutMs: 1000,
       maxOutputTokens: 200,
       provider: "gemini",
@@ -86,10 +119,10 @@ describe("citizen commerce", () => {
     expect(recorded).toBe(false);
   });
 
-  it("stores a policy reason when the model call fails", async () => {
+  it("stores a technical failure when the model call fails", async () => {
     const rows: string[] = [];
     const result = await considerCitizenCommerce({
-      citizens: citizens.slice(0, 1),
+      world,
       timeoutMs: 1000,
       maxOutputTokens: 200,
       provider: "gemini",
@@ -98,13 +131,13 @@ describe("citizen commerce", () => {
         throw new Error("model unavailable");
       },
       record: async (row) => {
-        rows.push(row.rationale);
+        rows.push(`${row.publicState}:${row.rationale}`);
         return true;
       },
     });
-    expect(result.status).toBe("proposed");
-    expect(rows[0]).toMatch(/does not broadcast/i);
-    expect(rows[1]).toMatch(/does not broadcast/i);
+    expect(result.status).toBe("failed");
+    expect(rows[0]).toMatch(/technical_failure:model unavailable/);
+    expect(rows[0]).not.toMatch(/should trade|should return/i);
   });
 
   it("leaves the growth prompt unchanged and keeps signing out of the runner", () => {
@@ -116,6 +149,6 @@ describe("citizen commerce", () => {
     expect(readFileSync("src/lib/ai/context.ts", "utf8")).toContain(
       "Do not return propose_economy or request_wallet_activation. This decision cannot move money, approve funding, or deploy a wallet.",
     );
-    expect(readFileSync("src/lib/ai/citizen-commerce-db.ts", "utf8")).not.toMatch(/sendTransaction|signTypedData|privateKey/);
+    expect(readFileSync("src/lib/ai/citizen-commerce-db.ts", "utf8")).not.toMatch(/sendTransaction|signTypedData|privateKey|submitIntent/);
   });
 });

@@ -3,6 +3,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { getAddress } from "viem";
 import { publishDecisionActivity } from "@/lib/ai/activity-event";
 import type { RosterWallet } from "@/lib/ai/treasury-roster";
+import type { TreasuryWorldFact } from "@/lib/ai/treasury-decision";
 import type { TreasuryDecisionInsert } from "@/lib/ai/treasury-run";
 import type { AppConfig } from "@/lib/config/env";
 import type { SpendRecord, TreasuryAsset } from "@/lib/economy/treasury-policy";
@@ -149,6 +150,58 @@ export async function loadTreasuryCandidates(client: SupabaseClient, config: App
     wallets.push({ ...citizen, accountAddress });
   }
   return { wallets, cursor: counted.count };
+}
+
+/** Stored town needs, open projects, and recent verified events. A failed read contributes nothing. */
+export async function loadEconomicContextFacts(client: SupabaseClient): Promise<TreasuryWorldFact[]> {
+  const facts: TreasuryWorldFact[] = [];
+  const [needs, projects, events] = await Promise.all([
+    client.from("town_needs").select("need_type, status, evidence").eq("status", "active"),
+    client.from("town_projects").select("id, name, status, project_type, justification").in("status", ["proposed", "active", "blocked"]).limit(8),
+    client
+      .from("civilization_events")
+      .select("id, kind, summary")
+      .in("kind", ["treasury.paid", "work.shift_completed"])
+      .order("occurred_at", { ascending: false })
+      .limit(8),
+  ]);
+  if (!needs.error && needs.data) {
+    for (const row of needs.data as Array<Record<string, unknown>>) {
+      if (row.status !== "active" || typeof row.need_type !== "string") continue;
+      const summary = clipFact(`Town need ${row.need_type} is active.${stockText(row.evidence)}`);
+      if (summary) facts.push({ id: `need:${row.need_type}`, kind: "need", tokenId: null, summary });
+    }
+  }
+  if (!projects.error && projects.data) {
+    for (const row of projects.data as Array<Record<string, unknown>>) {
+      if (typeof row.id !== "string" || typeof row.name !== "string" || typeof row.status !== "string" || typeof row.project_type !== "string") continue;
+      const justification = typeof row.justification === "string" ? row.justification : "";
+      const summary = clipFact(`Project ${row.name} (${row.project_type}) is ${row.status}. ${justification}`);
+      if (summary) facts.push({ id: `project:${row.id}`, kind: "project", tokenId: null, summary });
+    }
+  }
+  if (!events.error && events.data) {
+    for (const row of events.data as Array<Record<string, unknown>>) {
+      if (typeof row.id !== "string" || typeof row.kind !== "string") continue;
+      const summary = clipFact(`Previous event ${row.kind}: ${typeof row.summary === "string" ? row.summary : ""}`);
+      if (summary) facts.push({ id: `event:${row.id}`, kind: "event", tokenId: null, summary });
+    }
+  }
+  return facts;
+}
+
+function clipFact(value: string): string | null {
+  const text = value.replace(/\s+/g, " ").trim().slice(0, 180);
+  return text && !/https?:\/\//i.test(text) ? text : null;
+}
+
+function stockText(value: unknown): string {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return "";
+  const body = value as Record<string, unknown>;
+  const parts = ["food", "wood", "stone", "tools"].flatMap((key) =>
+    typeof body[key] === "number" && Number.isFinite(body[key]) ? [`${key} ${Math.floor(body[key] as number)}`] : [],
+  );
+  return parts.length > 0 ? ` Storehouse: ${parts.join(", ")}.` : "";
 }
 
 export async function loadTreasuryPrior(client: SupabaseClient): Promise<SpendRecord[] | null> {

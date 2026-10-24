@@ -45,6 +45,7 @@ describe("treasury consideration", () => {
       amountRaw: "1000000000000000",
       reason: "The east road still needs fare.",
       expectedOutcome: "One work trip can be paid.",
+      factIds: ["citizen:104:goal"],
     });
     const first = await considerTreasuryAllocation({
       nowMs: Date.UTC(2026, 9, 21),
@@ -70,6 +71,10 @@ describe("treasury consideration", () => {
     expect(rows[0]?.output.txHash).toBeNull();
     expect(rows[0]?.citizenId).toBe("citizen-104");
     expect(rows[0]?.output.tokenId).toBe("104");
+    expect(rows[0]?.output.publicState).toBe("approved_awaiting_execution");
+    expect(rows[0]?.output.direction).toBe("chogbank_to_citizen");
+    expect(rows[0]?.output.factIds).toEqual(["citizen:104:goal"]);
+    expect(rows[0]?.output.factSummaries.join(" ")).toContain("Finish the east road");
     expect(JSON.stringify(rows[0]?.output)).not.toContain("recipient");
     const payable = pendingPayoutFromOutput(rows[0]?.output ?? {});
     expect(payable?.tokenId).toBe("104");
@@ -272,6 +277,7 @@ describe("treasury consideration", () => {
             amountRaw: "1000000000000000",
             reason: "The east road still needs fare.",
             expectedOutcome: "One work trip can be paid.",
+            factIds: ["citizen:104:goal"],
           }) +
           "\n```",
       ),
@@ -378,6 +384,7 @@ describe("treasury consideration", () => {
             amountRaw: "1000000000000000",
             reason: "The east road still needs fare.",
             expectedOutcome: "One work trip can be paid.",
+            factIds: ["citizen:104:goal"],
           }),
         ),
       );

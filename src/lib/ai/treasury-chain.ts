@@ -251,3 +251,24 @@ export async function readCitizenMonSpent(
   }
   return { spent, unread };
 }
+
+/** Live MON balances for verified citizen wallets. A failed read stays unknown. This does not broadcast. */
+export async function readCitizenMonBalances(
+  config: AppConfig,
+  wallets: readonly { tokenId: string; wallet: string }[],
+): Promise<Map<string, bigint | null>> {
+  const result = new Map<string, bigint | null>();
+  if (wallets.length === 0) return result;
+  const client = chainClient(config);
+  await Promise.all(
+    wallets.slice(0, 12).map(async (row) => {
+      try {
+        const value = await withTimeout(client.getBalance({ address: getAddress(row.wallet) }), RPC_CALL_MS, `citizen ${row.tokenId} MON balance`);
+        result.set(row.tokenId, value);
+      } catch {
+        result.set(row.tokenId, null);
+      }
+    }),
+  );
+  return result;
+}

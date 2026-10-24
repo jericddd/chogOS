@@ -38,7 +38,7 @@ import { storeCitizenCommerce } from "@/lib/ai/citizen-commerce-db";
 import { observeCitizenWallets, readCitizenMonSpent, readTreasuryChain } from "@/lib/ai/treasury-chain";
 import { rosterFromDeployedWallets, selectRotatedRoster } from "@/lib/ai/treasury-roster";
 import { considerTreasuryAllocation, treasuryReviewInsert } from "@/lib/ai/treasury-run";
-import { loadTreasuryCandidates, loadTreasuryPrior, recordTreasuryDecision } from "@/lib/ai/treasury-db";
+import { loadEconomicContextFacts, loadTreasuryCandidates, loadTreasuryPrior, recordTreasuryDecision } from "@/lib/ai/treasury-db";
 import { considerWalletIssuance } from "@/lib/ai/wallet-run";
 import { loadWalletIssuanceContext, recordWalletIssuance } from "@/lib/ai/wallet-db";
 import { AiProviderError, type AiCompletion } from "@/lib/ai/types";
@@ -736,9 +736,11 @@ async function runAiMindWork(config: AppConfig, deadlineMs: number, report: Mind
         return;
       }
       try {
+        const extraFacts = await loadEconomicContextFacts(client);
         const result = await considerTreasuryAllocation({
           nowMs: Date.now(),
           roster: payable,
+          extraFacts,
           prior,
           monBalance: chain.facts.monBalance,
           chogBalance: chain.facts.chogBalance,
@@ -803,6 +805,7 @@ async function runAiMindWork(config: AppConfig, deadlineMs: number, report: Mind
           model: config.aiModel ?? "",
           timeoutMs: slot.timeoutMs,
           maxOutputTokens: config.aiMaxOutputTokens,
+          config,
           complete: async (request) =>
             provider.complete({
               purpose: "citizen_trade",
@@ -810,6 +813,7 @@ async function runAiMindWork(config: AppConfig, deadlineMs: number, report: Mind
                 { role: "system", content: request.system },
                 { role: "user", content: request.user },
               ],
+              responseSchema: request.responseSchema,
               timeoutMs: request.timeoutMs,
               maxOutputTokens: request.maxOutputTokens,
             }),

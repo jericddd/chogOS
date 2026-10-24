@@ -8,7 +8,9 @@ import {
   TREASURY_UNREADABLE,
   treasuryMessages,
   type TreasuryRosterEntry,
+  type TreasuryWorldFact,
 } from "@/lib/ai/treasury-decision";
+import { treasuryActivityState, type PublicTransferState } from "@/lib/ai/transfer-decision";
 import { AiProviderError, type AiCompletion } from "@/lib/ai/types";
 import type { SpendRecord } from "@/lib/economy/treasury-policy";
 
@@ -37,6 +39,10 @@ export type TreasuryDecisionInsert = {
     txHash: null;
     blockNumber: null;
     replyShape: string | null;
+    publicState: PublicTransferState;
+    direction: "chogbank_to_citizen";
+    factIds: string[];
+    factSummaries: string[];
   };
 };
 
@@ -66,6 +72,7 @@ export async function considerTreasuryAllocation(input: {
   chogCap?: bigint;
   walletDeployed?: boolean;
   citizenSpentMon?: ReadonlyMap<string, bigint>;
+  extraFacts?: readonly TreasuryWorldFact[];
   timeoutMs: number;
   maxOutputTokens: number;
   provider: string;
@@ -100,6 +107,7 @@ export async function considerTreasuryAllocation(input: {
     monSpentInWindow: input.monSpentInWindow ?? 0n,
     chogCap: input.chogCap ?? CHAIN_CHOG_CAP,
     citizenSpentMon: input.citizenSpentMon,
+    extraFacts: input.extraFacts,
   };
   if (monPayoutRoom(facts) === 0n) {
     const detail = "The MON balance or the remaining contract capacity does not cover a payout. No allocation was requested.";
@@ -175,6 +183,7 @@ export async function considerTreasuryAllocation(input: {
       walletDeployed: input.walletDeployed === true,
       observedWindowSpent: input.monSpentInWindow,
       citizenSpentMon: input.citizenSpentMon,
+      extraFacts: input.extraFacts,
     });
   let settled = settle(completion.text);
   let replyShape: string | null = null;
@@ -246,6 +255,9 @@ export async function considerTreasuryAllocation(input: {
     windowId: settled.verdict.windowId,
     reason: settled.draft?.reason ?? settled.verdict.reason,
     replyShape,
+    factIds: settled.draft?.factIds ?? [],
+    factSummaries: settled.factSummaries,
+    verdictStatus: settled.verdict.status,
   }));
   if (!recorded) {
     return skipped("failed", "The treasury review finished, and the database did not store it. No transaction was created.", promptChars, outputTokens, modelCalls);
@@ -317,6 +329,9 @@ function row(input: {
   windowId: string | null;
   reason?: string;
   replyShape?: string | null;
+  factIds?: string[];
+  factSummaries?: string[];
+  verdictStatus?: string;
 }): TreasuryDecisionInsert {
   const commitment = input.decisionId && COMMITMENT.test(input.decisionId) ? input.decisionId.toLowerCase() : null;
   return {
@@ -344,6 +359,10 @@ function row(input: {
       txHash: null,
       blockNumber: null,
       replyShape: input.replyShape ?? null,
+      publicState: treasuryActivityState(input.verdictStatus ?? (input.stage === "proposed" ? "accepted_not_executed" : input.status), input.rationale),
+      direction: "chogbank_to_citizen",
+      factIds: input.factIds ?? [],
+      factSummaries: input.factSummaries ?? [],
     },
   };
 }

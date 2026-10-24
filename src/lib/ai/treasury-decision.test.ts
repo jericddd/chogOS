@@ -21,6 +21,8 @@ describe("treasury proposals from the mind", () => {
     expect(messages.system).toContain("must be MON");
     expect(monPayoutRoom(facts)).toBe(CHAIN_MON_PER_TX);
     expect(messages.system).toContain("not a payment");
+    expect(messages.user).toContain("citizen:104:goal");
+    expect(messages.system).toContain("factIds");
     expect(messages.system).toContain("Do not name an address");
     expect(messages.user).toContain("104");
     expect(messages.user).not.toContain("0x");
@@ -38,6 +40,7 @@ describe("treasury proposals from the mind", () => {
       amountRaw: "1000000000000000",
       reason: "The east road still needs fare.",
       expectedOutcome: "One work trip can be paid.",
+      factIds: ["citizen:104:goal"],
     });
     const first = settleTreasuryText({
       text,
@@ -82,6 +85,7 @@ describe("treasury proposals from the mind", () => {
         amountRaw: "1000000000000000000",
         reason: "The east road still needs fare.",
         expectedOutcome: "One work trip can be paid.",
+        factIds: ["citizen:104:goal"],
       }),
       roster,
       nowMs: Date.UTC(2026, 9, 21),
@@ -140,6 +144,7 @@ describe("treasury proposals from the mind", () => {
         amountRaw: "1000000000000000",
         reason: "The east road still needs fare.",
         expectedOutcome: "One work trip can be paid.",
+        factIds: ["citizen:104:goal"],
       }),
       roster,
       nowMs: Date.UTC(2026, 9, 21),
@@ -163,6 +168,7 @@ describe("treasury proposals from the mind", () => {
         amountRaw: "2",
         reason: "The east road still needs fare.",
         expectedOutcome: "One work trip can be paid.",
+        factIds: ["citizen:104:goal"],
       }),
       roster,
       nowMs: Date.UTC(2026, 9, 21),
@@ -198,6 +204,31 @@ describe("treasury proposals from the mind", () => {
     expect(settled.verdict.executed).toBe(false);
   });
 
+  it("rejects a payout that does not cite a stored fact", () => {
+    const settled = settleTreasuryText({
+      text: JSON.stringify({
+        tokenId: "104",
+        asset: "MON",
+        amountRaw: "1000000000000000",
+        reason: "The east road still needs fare.",
+        expectedOutcome: "One work trip can be paid.",
+        factIds: ["project:made-up"],
+      }),
+      roster,
+      nowMs: Date.UTC(2026, 9, 21),
+      spent: [],
+      monBalance: BALANCE,
+      chogBalance: 1n,
+      chogDecimals: 18,
+      walletDeployed: true,
+    });
+    expect(settled.verdict.status).toBe("rejected");
+    expect(settled.verdict.reason).toMatch(/was not in this review/i);
+    expect(settled.draft).toBeNull();
+    expect(settled.verdict.executed).toBe(false);
+    expect(settled.verdict.decisionId).toBeNull();
+  });
+
   it("reads a fenced or comma-repaired proposal and refuses prose that is not an allocation", () => {
     const fields = {
       tokenId: "104",
@@ -205,6 +236,7 @@ describe("treasury proposals from the mind", () => {
       amountRaw: "1000000000000000",
       reason: "The east road still needs fare.",
       expectedOutcome: "One work trip can be paid.",
+      factIds: ["citizen:104:goal"],
     };
     const fenced = parseTreasuryProposal(`Here is the proposal:\n\`\`\`json\n${JSON.stringify(fields)}\n\`\`\``, new Set(["104"]));
     expect(fenced.ok && fenced.draft?.tokenId).toBe("104");
