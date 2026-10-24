@@ -20,13 +20,26 @@ The model does not hold a key and does not sign. A review is not a transfer. The
 
 ## Who signs
 
-The workflow on this branch is scheduled `*/10 * * * *`, and it can be started by hand. GitHub may start that schedule later than the expression. It checks out the application branch and has three jobs:
+The scheduled workflow on this branch is `*/10 * * * *`, and it can be started by hand. GitHub may start that schedule later than the expression. It checks out the application branch and has two jobs:
 
-1. `run` calls the production mind.
-2. `issue` uses the wallet agent key to create a citizen wallet. The gas key pays that transaction.
-3. `pay` uses the ChogBank authorizer key to sign an accepted MON allocation, and the gas key to submit `distribute`. The agent key is not used for payouts.
+1. `run` calls the production mind and can store a proposal. It does not pay ChogBank.
+2. `issue` uses the wallet agent key to create a citizen wallet from an accepted issuance decision. The gas key pays that transaction.
+
+`.github/workflows/chogbank-payout.yml` has no schedule. A person starts it and enters one stored decision id. The workflow checks out the application branch, refuses to run unless that checkout contains the decision-id gate, and then signs only that allocation. It does not call the mind. A missing decision id, a missing gate, or a missing required secret exits before signing.
 
 Those keys are GitHub Actions secrets. They are not in this repository, and the website does not receive them. The agent key can move MON out of a citizen wallet. The NFT holder does not control the citizen wallet.
+
+The schedule used to contain a third job, `pay`, which could sign an allocation when the secrets were present. Pull request #77 removed that job. The scheduled run at 2:17 AM Asia/Manila on 25 October 2026, after that merge, had jobs `run` and `issue` only.
+
+A proposal is not a payment. A confirmed ChogBank payout is a Monad receipt with a `Distributed` log. These five receipts were read from Monad on 25 October 2026. Each paid 0.01 MON from ChogBank. The Economy page is the current list, because later payouts can be added by the manual workflow.
+
+| Citizen | When (Asia/Manila) | Transaction |
+| --- | --- | --- |
+| Chog #135 | 12:54 AM, 24 Oct 2026 | [`0xceda27ddc3aa500ed49ba550e2d6c38194262196b6af0782129c96652b30dc3a`](https://monadscan.com/tx/0xceda27ddc3aa500ed49ba550e2d6c38194262196b6af0782129c96652b30dc3a) |
+| Chog #118 | 1:34 AM, 24 Oct 2026 | [`0xee2d8b10f9b7ab3044cf10ebedf2b405d5d750884155ec3f0e2c194a97c2164f`](https://monadscan.com/tx/0xee2d8b10f9b7ab3044cf10ebedf2b405d5d750884155ec3f0e2c194a97c2164f) |
+| Chog #124 | 7:33 AM, 24 Oct 2026 | [`0x8df79c5005b4845d3de8f71c85be589f45af0259898c59131822235b1930bcad`](https://monadscan.com/tx/0x8df79c5005b4845d3de8f71c85be589f45af0259898c59131822235b1930bcad) |
+| Chog #137 | 7:54 PM, 24 Oct 2026 | [`0x88ab9d75c75e81feacd92465483ad16d7905adc7164db9413d03f63c40d35508`](https://monadscan.com/tx/0x88ab9d75c75e81feacd92465483ad16d7905adc7164db9413d03f63c40d35508) |
+| Chog #140 | 11:27 PM, 24 Oct 2026 | [`0x8ad4e05e9b8a7a19e00a76438872b07b7d4c114e72875ed605ff9cedffe10885`](https://monadscan.com/tx/0x8ad4e05e9b8a7a19e00a76438872b07b7d4c114e72875ed605ff9cedffe10885) |
 
 ## Monad mainnet (chain 143)
 
@@ -44,11 +57,11 @@ Those keys are GitHub Actions secrets. They are not in this repository, and the 
 
 ChogBank has code, and it has no owner, no administrator, no proxy, and no upgrade. The authorizer is still a privileged signer. It can sign allocations only inside the contract caps, and only to a deployed citizen wallet. It cannot change the caps or pay an arbitrary address. The authorizer and gas addresses have no contract code.
 
-At the check above, ChogBank held **30 MON** and **369.97132121875218252 $CHOG**.
+At the check above, ChogBank held **30 MON** and **369.97132121875218252 $CHOG**. A later public read at block `116276410`, 4:16 AM Asia/Manila on 25 October 2026, showed **29.95 MON** and the same `$CHOG` balance. The 0.05 MON difference matches the five 0.01 MON receipts above.
 
 Contract caps, immutable: **0.01 MON** per transaction, **0.05 MON** per citizen, **0.05 MON** aggregate, window **86400** seconds, authorization lifetime at most **3600** seconds. The contract cap on **$CHOG is 1 wei**. The Economy page also shows higher application review limits. A broadcast is reduced to the contract caps.
 
-Confirmed wallet issuances are Monad transactions. Token 91 is one of them. Not every citizen has a wallet yet. The economy rows returned at that check were wallet issuances. A MON distribution is a separate stored receipt. `$CHOG` stays at 1 wei until a confirmed MON distribution receipt is stored.
+Confirmed wallet issuances are Monad transactions. Token 91 is one of them. Not every citizen has a wallet yet. The economy rows returned at that check were wallet issuances. A MON distribution is a separate stored receipt. The contract cap on `$CHOG` is 1 wei. A confirmed MON distribution does not raise it.
 
 Chog Genesis and `$CHOG` existed before this repository. The live application is Next.js 16.4.2 on the production branch. This branch's `package.json` is the older shell.
 

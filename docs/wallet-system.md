@@ -1,4 +1,4 @@
-> **Not the live record.** This file describes the Phase 0 shell on `main`. The live app and the deployment record are in the repository README and on `cursor/phase-1-genesis-world-155c`.
+> **Not the live record.** This file describes the Phase 0 shell on `main`. The live app and the deployment record are in the repository README and on `cursor/phase-1-genesis-world-155c`. The deployed citizen wallet does not give the NFT holder control.
 
 # Wallet system
 
