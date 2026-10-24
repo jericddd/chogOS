@@ -102,6 +102,48 @@ describe("activity drafts", () => {
     expect(drafts[1]?.summary).toMatch(/cap limited/);
     expect(drafts[1]?.payload.broadcast).toBe(true);
     expect(drafts[1]?.payload.bank).toBe("0xB2494538433B2FA3167A723d32329cc22c3A59C1");
+    expect(drafts[1]?.payload.note).toBe("The east road still needs fare.");
+  });
+
+  it("does not record a successful payout for an unverified transaction", () => {
+    const drafts = activityDrafts(decision({
+      purpose: "treasury_allocation",
+      status: "executed",
+      output: {
+        tokenId: "91",
+        asset: "MON",
+        amountRaw: "10000000000000000",
+        verified: false,
+        onchain: true,
+        txHash: TX,
+        reason: "The east road still needs fare.",
+      },
+    }));
+    expect(drafts.map((draft) => draft.kind)).toEqual(["treasury.allocation"]);
+    expect(drafts[0]?.chainStatus).toBe("offchain");
+    expect(drafts[0]?.txHash).toBeNull();
+    expect(JSON.stringify(drafts)).not.toContain(TX);
+  });
+
+  it("keeps a policy sentence out of the confirmed payout note", () => {
+    const drafts = activityDrafts(decision({
+      purpose: "treasury_allocation",
+      status: "executed",
+      output: {
+        tokenId: "137",
+        asset: "MON",
+        amountRaw: "10000000000000000",
+        verified: true,
+        onchain: true,
+        address: WALLET,
+        txHash: TX,
+        blockNumber: "116176787",
+        reason: "Production signing is disabled. This record is not a signature and not a payment.",
+      },
+    }));
+    expect(drafts[1]?.kind).toBe("treasury.paid");
+    expect(drafts[1]?.payload.note).toBe("The stored world reason could not be shown.");
+    expect(String(drafts[1]?.payload.note)).not.toMatch(/signing is disabled/);
   });
 
   it("inserts one AI activity row and does not duplicate it", async () => {

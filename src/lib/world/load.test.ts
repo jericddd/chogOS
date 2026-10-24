@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { treasuryReasonHash } from "@/lib/economy/treasury-policy";
 
 vi.mock("server-only", () => ({}));
 
@@ -161,6 +162,145 @@ describe("world loader", () => {
     });
     expect(page.events[1]?.mind).toBeUndefined();
     expect(calls).toContainEqual({ table: "ai_decisions", method: "in", args: ["id", [decisionId]] });
+  });
+
+  it("shows the verified payout sentence and keeps the policy sentence on the allocation row", async () => {
+    const decisionId = "22222222-2222-4222-8222-222222222222";
+    const tx = `0x${"ab".repeat(32)}`;
+    const world = "Citizen aims to meet neighbours at the square and requires funds for social engagement.";
+    const policy = "Production signing is disabled. This record is not a signature and not a payment.";
+    respond = (table) => {
+      if (table === "civilization_events") {
+        return {
+          data: [
+            {
+              id: "11111111-1111-4111-8111-111111111111",
+              seq: 9,
+              kind: "treasury.paid",
+              category: "economy",
+              source: "ai",
+              summary: "The AI mind sent 0.01 MON to Chog #137.",
+              occurred_at: "2026-10-24T11:54:57.000Z",
+              world_s: 10,
+              tick_seq: 1,
+              building_id: null,
+              chain_status: "confirmed",
+              tx_hash: tx,
+              chain_id: 143,
+              payload: { tokenId: "137" },
+              decision_id: decisionId,
+            },
+            {
+              id: "33333333-3333-4333-8333-333333333333",
+              seq: 8,
+              kind: "treasury.allocation",
+              category: "economy",
+              source: "ai",
+              summary: "The AI mind decided to send MON to Chog #137. No transaction was broadcast.",
+              occurred_at: "2026-10-24T11:51:53.000Z",
+              world_s: 9,
+              tick_seq: 1,
+              building_id: null,
+              chain_status: "offchain",
+              tx_hash: null,
+              chain_id: null,
+              payload: { tokenId: "137" },
+              decision_id: decisionId,
+            },
+          ],
+          error: null,
+        };
+      }
+      if (table === "ai_decisions") {
+        return {
+          data: [
+            {
+              id: decisionId,
+              rationale: policy,
+              output: {
+                summary: "Send fare for the square.",
+                reason: world,
+                verified: true,
+                onchain: true,
+                chainId: 143,
+                txHash: tx,
+                reasonHash: treasuryReasonHash(world),
+              },
+            },
+          ],
+          error: null,
+        };
+      }
+      return { data: [], error: null };
+    };
+    const { loadEventPage } = await import("@/lib/world/load");
+    const page = await loadEventPage({}, null, 10);
+    expect(page.status).toBe("ok");
+    if (page.status !== "ok") return;
+    expect(page.events[0]?.kind).toBe("treasury.paid");
+    expect(page.events[0]?.txHash).toBe(tx);
+    expect(page.events[0]?.chainId).toBe(143);
+    expect(page.events[0]?.mind).toEqual({ summary: null, rationale: world });
+    expect(page.events[1]?.kind).toBe("treasury.allocation");
+    expect(page.events[1]?.txHash).toBeNull();
+    expect(page.events[1]?.mind?.rationale).toBe(policy);
+  });
+
+  it("does not invent a payout reason when the stored sentence does not match the receipt", async () => {
+    const decisionId = "22222222-2222-4222-8222-222222222222";
+    const tx = `0x${"cd".repeat(32)}`;
+    respond = (table) => {
+      if (table === "civilization_events") {
+        return {
+          data: [
+            {
+              id: "11111111-1111-4111-8111-111111111111",
+              seq: 4,
+              kind: "treasury.paid",
+              category: "economy",
+              source: "ai",
+              summary: "The AI mind sent 0.01 MON to Chog #137.",
+              occurred_at: "2026-10-24T11:54:57.000Z",
+              world_s: 10,
+              tick_seq: 1,
+              building_id: null,
+              chain_status: "confirmed",
+              tx_hash: tx,
+              chain_id: 143,
+              payload: { tokenId: "137" },
+              decision_id: decisionId,
+            },
+          ],
+          error: null,
+        };
+      }
+      if (table === "ai_decisions") {
+        return {
+          data: [
+            {
+              id: decisionId,
+              rationale: "Production signing is disabled. This record is not a signature and not a payment.",
+              output: {
+                reason: "Citizen aims to meet neighbours at the square and requires funds for social engagement.",
+                verified: true,
+                onchain: true,
+                chainId: 143,
+                txHash: tx,
+                reasonHash: `0x${"11".repeat(32)}`,
+              },
+            },
+          ],
+          error: null,
+        };
+      }
+      return { data: [], error: null };
+    };
+    const { loadEventPage } = await import("@/lib/world/load");
+    const page = await loadEventPage({}, null, 10);
+    expect(page.status).toBe("ok");
+    if (page.status !== "ok") return;
+    expect(page.events[0]?.mind).toBeUndefined();
+    expect(page.events[0]?.txHash).toBe(tx);
   });
 
   it("fills a join row from a nearby stored world second", async () => {

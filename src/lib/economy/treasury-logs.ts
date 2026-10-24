@@ -49,6 +49,7 @@ export type DecodedDistribution = {
   recipient: string;
   asset: "MON" | "CHOG";
   amountRaw: string;
+  reasonHash: string;
 };
 
 export function treasuryAsset(asset: string): "MON" | "CHOG" | null {
@@ -97,6 +98,7 @@ export function decodeBankLog(log: {
       recipient: decoded.args.recipient,
       asset,
       amountRaw: decoded.args.amount.toString(10),
+      reasonHash: decoded.args.reasonHash,
     };
   } catch {
     return null;

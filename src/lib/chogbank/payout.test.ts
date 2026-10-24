@@ -27,6 +27,7 @@ import {
   parsePayoutList,
   payableAmount,
   payoutEndpoint,
+  selectManualPayout,
   viemAllocationDigest,
   type AllocationMessage,
   type BankSnapshot,
@@ -34,6 +35,7 @@ import {
   type PayoutIO,
   type PendingPayout,
 } from "@/lib/chogbank/payout";
+import { confirmedPayoutReason, economicPayoutReason, readManualDecisionId } from "@/lib/chogbank/payout-reason";
 import { treasuryDecisionId, treasuryReasonHash } from "@/lib/economy/treasury-policy";
 
 const WALLET = getAddress("0xd1E6DC7d7498f964AC2466D88D7edB0B0E87557c");
@@ -338,17 +340,36 @@ describe("ChogBank payout broadcaster", () => {
     const script = readFileSync("scripts/broadcast-chogbank-payouts.ts", "utf8");
     const route = readFileSync("src/app/api/economy/payouts/route.ts", "utf8");
     const workflow = readFileSync(".github/workflows/ai-mind.yml", "utf8");
+    const manual = readFileSync(".github/workflows/chogbank-payout.yml", "utf8");
     const app = readFileSync("src/lib/config/env.ts", "utf8");
     expect(script).toContain('functionName: "distribute"');
     expect(script).toContain("CHOG_BANK_AUTHORIZER_KEY");
     expect(script).toContain("WALLET_ISSUER_GAS_KEY");
+    expect(script).toContain("CHOG_BANK_DECISION_ID");
+    expect(script).toContain("readManualDecisionId");
+    expect(script).toContain("selectManualPayout");
+    expect(script).not.toContain("broadcastPendingPayouts(listed.decisions");
+    expect(script.indexOf("readManualDecisionId")).toBeLessThan(script.indexOf("broadcastPendingPayouts("));
     expect(script).not.toContain("WALLET_ISSUER_AGENT_KEY");
     expect(script).not.toContain("distributeWithIssuance");
     expect(script.toLowerCase()).not.toContain("execute");
     expect(route).not.toMatch(/signTypedData|privateKeyToAccount|CHOG_BANK_AUTHORIZER_KEY|WALLET_ISSUER_AGENT_KEY/);
-    expect(workflow).toContain("CHOG_BANK_AUTHORIZER_KEY");
+    expect(workflow).toContain("schedule:");
+    expect(workflow).toContain("/api/ai/run");
     expect(workflow).toContain("cursor/phase-1-genesis-world-155c");
+    expect(workflow).not.toContain("broadcast-chogbank-payouts");
+    expect(workflow).not.toContain("CHOG_BANK_AUTHORIZER_KEY");
+    expect(workflow).not.toContain("CHOG_BANK_DECISION_ID");
     expect(workflow).not.toContain("distributeWithIssuance");
+    expect(manual).toContain("workflow_dispatch:");
+    expect(manual).toContain("decision_id:");
+    expect(manual).toContain("CHOG_BANK_DECISION_ID");
+    expect(manual).toContain("CHOG_BANK_AUTHORIZER_KEY");
+    expect(manual).toContain("selectManualPayout");
+    expect(manual).toContain("cursor/phase-1-genesis-world-155c");
+    expect(manual).not.toContain("schedule:");
+    expect(manual).not.toContain("/api/ai/run");
+    expect(manual).not.toContain("WALLET_ISSUER_AGENT_KEY");
     expect(app).not.toContain("CHOG_BANK_AUTHORIZER_KEY");
     expect(app).not.toContain("WALLET_ISSUER_");
     expect(readFileSync("src/lib/economy/production.ts", "utf8")).toContain("executionEnabled: false");
@@ -356,5 +377,54 @@ describe("ChogBank payout broadcaster", () => {
     const signer = loadProtectedSigner({ CHOG_BANK_AUTHORIZER_KEY: `0x${"ab".repeat(32)}` });
     expect(signer.kind).toBe("none");
     expect(JSON.stringify(signer)).not.toContain("ab".repeat(32));
+  });
+
+  it("refuses an unattended run and a list that is not exactly one stored decision", () => {
+    expect(readManualDecisionId(undefined)).toEqual({
+      idle: "Unattended ChogBank payouts are off. Nothing was signed.",
+    });
+    expect(readManualDecisionId("  ")).toMatchObject({ idle: expect.stringMatching(/Nothing was signed/) });
+    expect("error" in readManualDecisionId("0x123")).toBe(true);
+    const row = pending("MON");
+    const other = pending("MON", "1000000000000000", "92");
+    expect(readManualDecisionId(row.decisionId)).toEqual({ decisionId: row.decisionId });
+    expect(selectManualPayout([row], row.decisionId)).toEqual(row);
+    expect(() => selectManualPayout([row, other], row.decisionId)).toThrow(/exactly one/);
+    expect(() => selectManualPayout([row], other.decisionId)).toThrow(/different decision/);
+    expect(() =>
+      selectManualPayout(
+        [{ ...row, reason: "Production signing is disabled. This record is not a signature and not a payment." }],
+        row.decisionId,
+      ),
+    ).toThrow(/world reason/);
+    expect(economicPayoutReason("Production signing is disabled. This record is not a signature and not a payment.")).toBeNull();
+  });
+
+  it("shows a confirmed reason only when the stored sentence matches the verified receipt", () => {
+    const verified = {
+      kind: "treasury.paid",
+      chainStatus: "confirmed",
+      chainId: 143,
+      txHash: TX,
+      output: {
+        verified: true,
+        onchain: true,
+        chainId: 143,
+        txHash: TX,
+        reason: REASON,
+        reasonHash: treasuryReasonHash(REASON),
+      },
+    };
+    expect(confirmedPayoutReason(verified)).toBe(REASON);
+    expect(
+      confirmedPayoutReason({
+        ...verified,
+        output: { ...verified.output, reason: "Production signing is disabled. This record is not a payment." },
+      }),
+    ).toBeNull();
+    expect(confirmedPayoutReason({ ...verified, output: { ...verified.output, verified: false } })).toBeNull();
+    expect(confirmedPayoutReason({ ...verified, txHash: `0x${"cd".repeat(32)}` })).toBeNull();
+    expect(confirmedPayoutReason({ ...verified, reasonHash: `0x${"11".repeat(32)}` })).toBeNull();
+    expect(confirmedPayoutReason({ ...verified, kind: "treasury.allocation" })).toBeNull();
   });
 });

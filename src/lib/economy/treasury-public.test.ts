@@ -2,6 +2,7 @@ import { encodeAbiParameters, getAddress, keccak256, toBytes, toHex, type Hex } 
 import { describe, expect, it } from "vitest";
 import { addresses } from "@/lib/blockchain/addresses";
 import { decodeBankLog, withoutFundedTransfers } from "@/lib/economy/treasury-logs";
+import { treasuryReasonHash } from "@/lib/economy/treasury-policy";
 import { pendingInspection, presentOwnerlessTreasury, type OwnerlessInspection, type VerifiedDistribution } from "@/lib/economy/treasury-public";
 
 const BANK = getAddress("0x2222222222222222222222222222222222222222");
@@ -182,6 +183,9 @@ describe("public ownerless treasury", () => {
     expect(proposed.decisions[0]?.statusLabel).toBe("Proposed");
     expect(proposed.decisions[0]?.txHref).toBeNull();
     expect(proposed.decisions[0]?.txHash).toBeNull();
+    expect(proposed.decisions[0]?.detail).toContain(DECISION);
+    expect(proposed.decisions[0]?.detail).toContain("Expected outcome: One trip.");
+    expect(proposed.decisions[0]?.detail).toContain("not a confirmed payout");
 
     const chain: VerifiedDistribution = {
       decisionId: DECISION,
@@ -213,6 +217,9 @@ describe("public ownerless treasury", () => {
     expect(confirmed.decisions[0]?.txHref).toBe(`https://monadscan.com/tx/${HASH}`);
     expect(confirmed.decisions[0]?.recipient?.toLowerCase()).toContain("3333");
     expect(confirmed.decisions[0]?.detail).toContain("Distributed event");
+    expect(confirmed.decisions[0]?.detail).toContain("could not be verified");
+    expect(confirmed.decisions[0]?.detail).not.toContain("Fare for the east road.");
+    expect(confirmed.decisions[0]?.txHash).toBe(HASH);
   });
 
   it("shows a submitted allocation separately from a confirmed payout whose amount differs", () => {
@@ -285,6 +292,143 @@ describe("public ownerless treasury", () => {
     expect(paid.decisions[0]?.amountText).toContain("0.1 MON");
     expect(paid.decisions[0]?.amountText).toContain("stored request");
     expect(paid.decisions[0]?.txHref).toBe(`https://monadscan.com/tx/${HASH}`);
+    expect(paid.decisions[0]?.detail).toContain("Fare for the east road.");
+    expect(paid.decisions[0]?.detail).toContain(HASH);
+    expect(paid.decisions[0]?.recipient?.toLowerCase()).toContain("3333");
+  });
+
+  it("shows the verified world reason and withholds a sentence that does not match the receipt", () => {
+    const world = "Citizen aims to meet neighbours at the square and requires funds for social engagement.";
+    const policy = "Production signing is disabled. This record is not a signature and not a payment. A deployed citizen wallet was observed for this token id.";
+    const wallet = getAddress("0xcB0911cf424208217e338acB1c321A22a838EBD4");
+    const other = getAddress("0x3333333333333333333333333333333333333333");
+    const paid = presentOwnerlessTreasury({
+      inspection: live(),
+      decisionsLoaded: true,
+      distributions: [
+        {
+          decisionId: DECISION,
+          tokenId: "137",
+          recipient: wallet,
+          asset: "MON",
+          amountRaw: "10000000000000000",
+          txHash: HASH,
+          blockNumber: "116176787",
+          reasonHash: treasuryReasonHash(world),
+        },
+      ],
+      decisions: [
+        {
+          id: "paid-137",
+          status: "executed",
+          rationale: policy,
+          createdAt: null,
+          output: {
+            stage: "executed",
+            decisionId: DECISION,
+            tokenId: "137",
+            asset: "MON",
+            amountRaw: "10000000000000000",
+            reason: world,
+            expectedOutcome: "Citizen will attend the town square and connect with fellow residents.",
+            rationale: policy,
+            onchain: true,
+            verified: true,
+            txHash: HASH,
+            blockNumber: "116176787",
+            chainId: 143,
+            address: wallet,
+            recipient: other,
+          },
+        },
+      ],
+    });
+    expect(paid.decisions).toHaveLength(1);
+    expect(paid.decisions[0]?.statusLabel).toBe("Confirmed");
+    expect(paid.decisions[0]?.amountText).toContain("0.01 MON");
+    expect(paid.decisions[0]?.citizen).toContain("137");
+    expect(paid.decisions[0]?.recipient).toBe(wallet);
+    expect(paid.decisions[0]?.txHash).toBe(HASH);
+    expect(paid.decisions[0]?.detail).toContain(world);
+    expect(paid.decisions[0]?.detail).toContain(HASH);
+    expect(paid.decisions[0]?.detail).not.toContain("Production signing is disabled");
+    expect(paid.decisions[0]?.detail).not.toContain("Expected outcome");
+
+    const mismatch = presentOwnerlessTreasury({
+      inspection: live(),
+      decisionsLoaded: true,
+      distributions: [
+        {
+          decisionId: DECISION,
+          tokenId: "137",
+          recipient: wallet,
+          asset: "MON",
+          amountRaw: "10000000000000000",
+          txHash: HASH,
+          blockNumber: "116176787",
+          reasonHash: `0x${"11".repeat(32)}`,
+        },
+      ],
+      decisions: [
+        {
+          id: "paid-137",
+          status: "executed",
+          rationale: policy,
+          createdAt: null,
+          output: {
+            stage: "executed",
+            decisionId: DECISION,
+            tokenId: "137",
+            asset: "MON",
+            amountRaw: "10000000000000000",
+            reason: world,
+            onchain: true,
+            verified: true,
+            txHash: HASH,
+            blockNumber: "116176787",
+            chainId: 143,
+            address: wallet,
+          },
+        },
+      ],
+    });
+    expect(mismatch.decisions[0]?.statusLabel).toBe("Confirmed");
+    expect(mismatch.decisions[0]?.txHash).toBe(HASH);
+    expect(mismatch.decisions[0]?.detail).toContain("could not be verified");
+    expect(mismatch.decisions[0]?.detail).not.toContain(world);
+    expect(mismatch.decisions[0]?.detail).not.toContain("Production signing is disabled");
+
+    const unverified = presentOwnerlessTreasury({
+      inspection: live(),
+      decisionsLoaded: true,
+      decisions: [
+        {
+          id: "open-137",
+          status: "executed",
+          rationale: policy,
+          createdAt: null,
+          output: {
+            stage: "executed",
+            decisionId: DECISION,
+            tokenId: "137",
+            asset: "MON",
+            amountRaw: "10000000000000000",
+            reason: world,
+            txHash: HASH,
+            chainId: 143,
+            onchain: false,
+            verified: false,
+            blockNumber: "116176787",
+          },
+        },
+      ],
+    });
+    expect(unverified.decisions[0]?.statusLabel).not.toBe("Confirmed");
+    expect(unverified.decisions[0]?.txHash).toBeNull();
+    expect(unverified.decisions[0]?.txHref).toBeNull();
+    expect(unverified.decisions[0]?.detail).toContain("not a confirmed payout");
+    expect(unverified.decisions[0]?.detail).toContain("Review note:");
+    expect(unverified.decisions[0]?.detail).not.toContain("verified Distributed");
   });
 
   it("shows a wallet-issuance proposal without a transaction", () => {

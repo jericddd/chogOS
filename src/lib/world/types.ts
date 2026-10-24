@@ -128,6 +128,8 @@ export type WorldEventView = {
   buildingId: string | null;
   buildingName: string | null;
   chainStatus: "offchain" | "submitted" | "confirmed";
+  /** Chain id stored with the event. Absent on older view objects. */
+  chainId?: number | null;
   txHash: string | null;
   /** Monadscan URL for a confirmed receipt, or for a presentable Genesis transfer. */
   txUrl?: string | null;
