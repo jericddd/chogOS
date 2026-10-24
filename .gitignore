@@ -49,3 +49,6 @@ next-env.d.ts
 
 # local demo captures and retired render scripts
 /demo/
+
+# local supabase CLI cache
+supabase/.temp/
