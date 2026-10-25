@@ -1,6 +1,7 @@
 import "server-only";
 import { readAppConfig } from "@/lib/config/env";
 import { createServiceRoleClient } from "@/lib/db/client";
+import { confirmedDecisionReceipt } from "@/lib/ai/mind-receipt";
 import type { PersonalityTraits } from "@/lib/ai/personality";
 import type { CitizenMindView, MindLoad } from "@/lib/ai/mind-view";
 
@@ -125,17 +126,20 @@ export async function loadCitizenMind(tokenId: string): Promise<MindLoad> {
       })),
       decisions: ((decisions.data ?? []) as Array<Record<string, unknown>>).map((row) => {
         const output = row.output && typeof row.output === "object" ? (row.output as Record<string, unknown>) : null;
+        const purpose = String(row.purpose);
+        const receipt = confirmedDecisionReceipt(purpose, output);
         return {
           id: String(row.id),
           status: String(row.status),
-          purpose: String(row.purpose),
+          purpose,
           summary: typeof output?.summary === "string" ? output.summary : null,
-          rationale: (row.rationale as string | null) ?? null,
+          rationale: receipt?.reason ?? (row.rationale as string | null) ?? null,
           provider: (row.provider as string | null) ?? null,
           model: (row.model as string | null) ?? null,
           validationResult: (row.validation_result as string | null) ?? null,
           intentId: (row.intent_id as string | null) ?? null,
           outcomeEventId: (row.outcome_event_id as string | null) ?? null,
+          confirmedTxHash: receipt?.txHash ?? null,
           createdAt: String(row.created_at),
         };
       }),

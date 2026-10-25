@@ -33,6 +33,7 @@ export type CitizenMindView = {
     validationResult: string | null;
     intentId: string | null;
     outcomeEventId: string | null;
+    confirmedTxHash: string | null;
     createdAt: string;
   }>;
   aiActive: boolean;

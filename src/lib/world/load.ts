@@ -436,6 +436,58 @@ export function loadLive(since: number | null): Promise<WorldLive | WorldUnavail
   });
 }
 
+const CONFIRMED_PAYOUT_LIMIT = 5;
+const TX_HASH = /^0x[0-9a-f]{64}$/i;
+
+function confirmedPayoutQuery(client: SupabaseClient, columns: string, tokenId: string) {
+  return client
+    .from("civilization_events")
+    .select(columns)
+    .eq("kind", "treasury.paid")
+    .eq("chain_status", "confirmed")
+    .or(`payload->>tokenId.eq.${tokenId},payload->>relatedTokenId.eq.${tokenId}`)
+    .order("seq", { ascending: false })
+    .limit(CONFIRMED_PAYOUT_LIMIT);
+}
+
+/**
+ * Confirmed ChogBank payout rows for one citizen.
+ * The recent history page is newest-first and can bury an older receipt.
+ * This read does not create a row, assign a wallet, or treat a missing row as a failure.
+ */
+export function loadConfirmedCitizenPayouts(tokenId: string): Promise<EventPage> {
+  return guard(async () => {
+    if (!/^[0-9]{1,78}$/.test(tokenId)) {
+      return { status: "ok" as const, events: [], nextBefore: null };
+    }
+    const client = openClient();
+    let result = await confirmedPayoutQuery(client, `${EVENT_COLUMNS}, canonical`, tokenId);
+    if (result.error && missingCanonical(result.error)) {
+      result = await confirmedPayoutQuery(client, EVENT_COLUMNS, tokenId);
+    }
+    if (result.error) {
+      fail(result.error, "confirmed payouts");
+    }
+    const events = ((result.data ?? []) as unknown as EventRow[])
+      .filter((row) => row.canonical !== false)
+      .map(toEvent)
+      .filter(
+        (event) =>
+          event.kind === "treasury.paid" &&
+          event.chainStatus === "confirmed" &&
+          event.chainId === 143 &&
+          event.tokenId === tokenId &&
+          event.txHash != null &&
+          TX_HASH.test(event.txHash),
+      );
+    return {
+      status: "ok" as const,
+      events: await attachMind(client, events),
+      nextBefore: null,
+    };
+  });
+}
+
 export function loadEventPage(filter: EventFilter, before: number | null, limit: number): Promise<EventPage> {
   return guard(async () => {
     const client = openClient();
