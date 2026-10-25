@@ -120,4 +120,33 @@ describe("EventItem", () => {
     expect(joined).toContain("Day 537 · 10:30");
     expect(joined).not.toMatch(/\d+d ago/);
   });
+
+  it("shows a confirmed ChogBank receipt with the stored reason and transaction", () => {
+    const tx = `0x${"ab".repeat(32)}`;
+    const { container } = render(
+      <EventItem
+        event={event({
+          id: "paid-137",
+          kind: "treasury.paid",
+          summary: "The AI mind sent 0.01 MON to Chog #137. Monad confirmed the ChogBank distribution.",
+          tokenId: "137",
+          chainStatus: "confirmed",
+          chainId: 143,
+          txHash: tx,
+          txUrl: `https://monadscan.com/tx/${tx}`,
+          mind: {
+            summary: null,
+            rationale: "Citizen aims to meet neighbours at the square and requires funds for social engagement.",
+          },
+        })}
+        now={0}
+      />,
+    );
+    const text = container.textContent ?? "";
+    expect(text).toContain("0.01 MON");
+    expect(text).toContain("requires funds for social engagement");
+    expect(text).not.toContain("Production signing is disabled");
+    const link = container.querySelector(`a[href="https://monadscan.com/tx/${tx}"]`);
+    expect(link).toBeTruthy();
+  });
 });

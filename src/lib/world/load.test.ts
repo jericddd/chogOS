@@ -359,4 +359,95 @@ describe("world loader", () => {
     expect(page.events[0]?.worldS).toBe(28_476_437);
     expect(calls.filter((call) => call.table === "world_state" && call.method === "maybeSingle")).toHaveLength(1);
   });
+
+  it("reads a confirmed payout for the citizen outside the newest history page", async () => {
+    const decisionId = "22222222-2222-4222-8222-222222222222";
+    const tx = `0x${"ab".repeat(32)}`;
+    const world = "Citizen aims to meet neighbours at the square and requires funds for social engagement.";
+    respond = (table) => {
+      if (table === "civilization_events") {
+        return {
+          data: [
+            {
+              id: "11111111-1111-4111-8111-111111111111",
+              seq: 674032,
+              kind: "treasury.paid",
+              category: "ai",
+              source: "ai",
+              summary: "The AI mind sent 0.01 MON to Chog #137. Monad confirmed the ChogBank distribution.",
+              occurred_at: "2026-10-24T11:55:00.042Z",
+              world_s: 10,
+              tick_seq: 1,
+              building_id: null,
+              chain_status: "confirmed",
+              tx_hash: tx,
+              chain_id: 143,
+              payload: { tokenId: "137" },
+              decision_id: decisionId,
+              canonical: true,
+            },
+            {
+              id: "33333333-3333-4333-8333-333333333333",
+              seq: 1,
+              kind: "treasury.paid",
+              category: "ai",
+              source: "ai",
+              summary: "A different citizen.",
+              occurred_at: "2026-10-24T11:55:00.042Z",
+              world_s: 9,
+              tick_seq: 1,
+              building_id: null,
+              chain_status: "confirmed",
+              tx_hash: `0x${"cd".repeat(32)}`,
+              chain_id: 143,
+              payload: { tokenId: "140" },
+              decision_id: null,
+              canonical: true,
+            },
+          ],
+          error: null,
+        };
+      }
+      if (table === "ai_decisions") {
+        return {
+          data: [
+            {
+              id: decisionId,
+              rationale: "Production signing is disabled. This record is not a signature and not a payment.",
+              output: {
+                reason: world,
+                verified: true,
+                onchain: true,
+                chainId: 143,
+                txHash: tx,
+                reasonHash: treasuryReasonHash(world),
+              },
+            },
+          ],
+          error: null,
+        };
+      }
+      return { data: [], error: null };
+    };
+    const { loadConfirmedCitizenPayouts } = await import("@/lib/world/load");
+    const page = await loadConfirmedCitizenPayouts("137");
+    expect(page.status).toBe("ok");
+    if (page.status !== "ok") return;
+    expect(page.events).toHaveLength(1);
+    expect(page.events[0]?.txHash).toBe(tx);
+    expect(page.events[0]?.tokenId).toBe("137");
+    expect(page.events[0]?.mind).toEqual({ summary: null, rationale: world });
+    const history = calls.filter((call) => call.table === "civilization_events");
+    expect(history).toContainEqual({ table: "civilization_events", method: "eq", args: ["kind", "treasury.paid"] });
+    expect(history).toContainEqual({ table: "civilization_events", method: "eq", args: ["chain_status", "confirmed"] });
+    expect(history).toContainEqual({
+      table: "civilization_events",
+      method: "or",
+      args: ["payload->>tokenId.eq.137,payload->>relatedTokenId.eq.137"],
+    });
+    calls.length = 0;
+    const invalid = await loadConfirmedCitizenPayouts("137/2");
+    expect(invalid).toEqual({ status: "ok", events: [], nextBefore: null });
+    expect(calls).toHaveLength(0);
+  });
 });

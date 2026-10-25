@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { explorerTxUrl } from "@/lib/blockchain/explorer";
 import type { CitizenMindView } from "@/lib/ai/mind-view";
 
 export function decisionPurposeLabel(purpose: string): string {
@@ -27,23 +28,33 @@ export function DecisionReasons({ decisions }: { decisions: CitizenMindView["dec
   }
   return (
     <ul className="mt-2 space-y-2">
-      {shown.map((decision) => (
-        <li key={decision.id} className="text-xs leading-5">
-          <p className="text-muted">
-            {decisionPurposeLabel(decision.purpose)} · {decision.status}
-          </p>
-          {decision.rationale || decision.summary ? (
-            <p className="text-foreground/90">{decision.rationale ?? decision.summary}</p>
-          ) : (
-            <p className="text-muted">No reason was stored.</p>
-          )}
-          {decision.outcomeEventId ? (
-            <Link href={`/verify/events/${decision.outcomeEventId}`} className="text-accent hover:underline">
-              Verify
-            </Link>
-          ) : null}
-        </li>
-      ))}
+      {shown.map((decision) => {
+        const receiptHref = decision.confirmedTxHash ? explorerTxUrl(143, decision.confirmedTxHash) : null;
+        return (
+          <li key={decision.id} className="text-xs leading-5">
+            <p className="text-muted">
+              {receiptHref ? "ChogBank payout" : decisionPurposeLabel(decision.purpose)}
+              {" · "}
+              {receiptHref ? "confirmed" : decision.status}
+            </p>
+            {decision.rationale || decision.summary ? (
+              <p className="text-foreground/90">{decision.rationale ?? decision.summary}</p>
+            ) : (
+              <p className="text-muted">No reason was stored.</p>
+            )}
+            {receiptHref ? (
+              <a href={receiptHref} target="_blank" rel="noopener noreferrer" className="mr-3 text-accent hover:underline">
+                View payout receipt
+              </a>
+            ) : null}
+            {decision.outcomeEventId ? (
+              <Link href={`/verify/events/${decision.outcomeEventId}`} className="text-accent hover:underline">
+                Verify
+              </Link>
+            ) : null}
+          </li>
+        );
+      })}
     </ul>
   );
 }

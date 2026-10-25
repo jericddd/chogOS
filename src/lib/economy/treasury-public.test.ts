@@ -115,6 +115,11 @@ describe("public ownerless treasury", () => {
     expect(view.otherTokens).toEqual([]);
     expect(view.authorizerStatus).toContain("privileged spending authority");
     expect(view.execution).toContain("does not sign");
+    expect(view.execution).toContain("MON receipts are already recorded");
+    expect(view.execution).toContain("The contract cap on $CHOG remains 1 wei");
+    expect(view.execution).toContain("A recorded MON payout does not increase that cap");
+    expect(view.execution).toContain("$CHOG is not a usable payout");
+    expect(view.execution).not.toContain("$CHOG waits until that MON receipt is stored");
     expect(view.reviewThresholds.join(" ")).toContain("application review limits");
     expect(view.reviewThresholds.join(" ")).toContain("Review $CHOG cap is 1 wei of $CHOG");
     expect(view.contractLimits.join(" ")).toContain("These values were read from the deployed contract");

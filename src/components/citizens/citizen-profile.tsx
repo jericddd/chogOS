@@ -9,7 +9,7 @@ import { DecisionReasons } from "@/components/world/decision-reasons";
 import { EventItem } from "@/components/world/event-item";
 import { loadCitizenMind } from "@/lib/ai/load-mind";
 import { TRAIT_LABELS } from "@/lib/ai/personality";
-import { loadCitizenWorld, loadEventPage } from "@/lib/world/load";
+import { loadCitizenWorld, loadConfirmedCitizenPayouts, loadEventPage } from "@/lib/world/load";
 import { homeDetail, loadCitizenStanding, socialDetail, wealthDetail } from "@/lib/civilization/standing";
 import { KIND_LABEL, ROLE_LABEL, citizenHref, describeCitizenNow, profileHref } from "@/lib/world/present";
 
@@ -327,7 +327,10 @@ async function CitizenHistory({
   tokenId: string;
   fallback: Array<{ id: string; summary: string; occurredAt: string; kind: string }>;
 }) {
-  const page = await loadEventPage({ tokenId }, null, 20);
+  const [page, payouts] = await Promise.all([loadEventPage({ tokenId }, null, 20), loadConfirmedCitizenPayouts(tokenId)]);
+  const recent = page.status === "ok" ? page.events : [];
+  const seen = new Set(recent.map((event) => event.id));
+  const confirmed = (payouts.status === "ok" ? payouts.events : []).filter((event) => !seen.has(event.id));
   return (
     <section className="mt-8">
       <div className="flex flex-wrap items-baseline justify-between gap-3">
@@ -338,6 +341,16 @@ async function CitizenHistory({
           </Link>
         ) : null}
       </div>
+      {confirmed.length > 0 ? (
+        <div className="mt-3">
+          <h3 className="text-xs tracking-[0.14em] text-muted uppercase">Confirmed ChogBank payout</h3>
+          <ul className="mt-2 divide-y divide-line border-y border-line">
+            {confirmed.map((event) => (
+              <EventItem key={event.id} event={event} now={0} />
+            ))}
+          </ul>
+        </div>
+      ) : null}
       {page.status === "ok" ? (
         page.events.length === 0 ? (
           <p className="mt-2 text-sm leading-6 text-muted">

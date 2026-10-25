@@ -478,7 +478,7 @@ export function presentOwnerlessTreasury(input: {
   const reviewThresholds = applicationPolicy();
   const contractLimits: string[] = [];
   const execution =
-    "Signing on this server is disabled. This server does not sign or broadcast. A scheduled AI mind run stores proposals and does not pay them. A person starts one stored ChogBank payout by entering that decision id. Verify links the Monad receipt. $CHOG waits until that MON receipt is stored.";
+    "Signing on this server is disabled. This server does not sign or broadcast. A scheduled AI mind run stores proposals and does not pay them. A person starts one stored ChogBank payout by entering that decision id. Verify links the Monad receipt. MON receipts are already recorded. The contract cap on $CHOG remains 1 wei. A recorded MON payout does not increase that cap. $CHOG is not a usable payout.";
   const sourceNote = "Source-code verification: not checked.";
   let deploymentState: ChogBankPublicView["deploymentState"] = "pending";
   let fundingReady = false;
