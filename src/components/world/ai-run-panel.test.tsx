@@ -127,6 +127,90 @@ describe("AI activity panel", () => {
     vi.unstubAllGlobals();
   });
 
+  it("shows the submitted visit and work when a later interrupted run's newest row is a wallet", () => {
+    vi.stubGlobal("IntersectionObserver", class {
+      observe() {}
+      disconnect() {}
+      unobserve() {}
+      takeRecords() {
+        return [];
+      }
+    });
+    const run = describeAiRun({
+      configured: true,
+      readable: true,
+      scheduler: {
+        lastRunAt: "2026-10-26T16:54:24Z",
+        lastSuccessAt: "2026-10-26T16:40:51Z",
+        lastError: "AI run interrupted. Work was still unfinished at the host deadline. This is not a completed decision cycle.",
+        haltUntil: null,
+        haltReason: null,
+      },
+      decision: {
+        id: "11111111-1111-4111-8111-111111111111",
+        status: "proposed",
+        purpose: "wallet_issuance",
+        rationale:
+          "Every enrolled citizen gets one permanent wallet. Token 946 is next. No address was assigned by this decision. The issuer broadcasts it.",
+        output: { tokenId: "946" },
+        createdAt: "2026-10-26T16:54:25Z",
+      },
+      citizenDecisions: [
+        {
+          id: "22222222-2222-4222-8222-222222222222",
+          status: "draft",
+          purpose: "citizen_turn",
+          rationale: "This draft was not a finished decision.",
+          output: { action: "rest", tokenId: "1" },
+          createdAt: "2026-10-26T16:55:00Z",
+        },
+        {
+          id: "33333333-3333-4333-8333-333333333333",
+          status: "queued",
+          purpose: "citizen_turn",
+          rationale: "The merchant is at the market and chooses to visit the bank to review public records.",
+          output: { action: "visit", tokenId: "167" },
+          createdAt: "2026-10-26T16:39:18Z",
+        },
+        {
+          id: "44444444-4444-4444-8444-444444444444",
+          status: "accepted",
+          purpose: "citizen_turn",
+          rationale: "Storehouse supplies are maintained by active farmers working the fields during the workday.",
+          output: { action: "work", tokenId: "547" },
+          createdAt: "2026-10-26T16:39:55Z",
+        },
+      ],
+      nowMs: Date.parse("2026-10-26T17:50:00Z"),
+    });
+    const world = snapshot();
+    const store = createLiveStore(world, {
+      now: () => Date.parse(clock.serverNow),
+      fetcher: async () => Response.json({ ...world, since: 0, gap: false }),
+    });
+    const view = render(<ActivityFeed store={store} dock aiRun={run} />);
+    expect(screen.getByRole("region", { name: "AI run status" }).getAttribute("data-ai-run")).toBe("interrupted");
+    expect(screen.getByText("AI run interrupted")).toBeTruthy();
+    expect(screen.getByText(/Work was still unfinished at the host deadline/)).toBeTruthy();
+    expect(screen.getByText(/Token 946/)).toBeTruthy();
+    const citizens = screen.getByRole("list", { name: "Recent citizen decisions" });
+    expect(citizens.textContent).toContain("Chog #167 · visit");
+    expect(citizens.textContent).toContain("Proposal submitted to the simulation");
+    expect(citizens.textContent).toContain("The merchant is at the market and chooses to visit the bank to review public records.");
+    expect(citizens.textContent).toContain("Chog #547 · work");
+    expect(citizens.textContent).toContain("Proposal persisted");
+    expect(citizens.textContent).toContain("Storehouse supplies are maintained by active farmers working the fields during the workday.");
+    expect(citizens.textContent).not.toContain("This draft was not a finished decision.");
+    expect(citizens.textContent).not.toMatch(/Confirmed on-chain|executed/i);
+    expect(screen.getByText(/arrived home/)).toBeTruthy();
+    expect(screen.getByTitle("A rule-based world transition. Not an AI decision.")).toBeTruthy();
+    const html = view.container.innerHTML;
+    expect(html.indexOf("Chog #167")).toBeLessThan(html.indexOf("arrived home"));
+    expect(html.indexOf("Chog #547")).toBeLessThan(html.indexOf("arrived home"));
+    expect(screen.queryByRole("link", { name: "Verified transaction" })).toBeNull();
+    vi.unstubAllGlobals();
+  });
+
   it("says when no run and no decision are stored", () => {
     render(
       <AiRunPanel

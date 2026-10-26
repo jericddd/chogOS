@@ -173,7 +173,19 @@ describe("AI run presentation", () => {
     });
     expect(unread.state).toBe("unread");
     expect(unread.decision).toBeNull();
+    expect(unread.citizenDecisions).toEqual([]);
     expect(unread.lastRunAt).toBeNull();
+
+    expect(
+      describeAiRun({
+        configured: true,
+        readable: false,
+        scheduler: scheduler(),
+        decision: decision({ status: "queued" }),
+        citizenDecisions: [decision({ status: "queued", output: { action: "visit", tokenId: "167" } })],
+        nowMs: NOW,
+      }).citizenDecisions,
+    ).toEqual([]);
 
     expect(
       describeAiRun({ configured: false, readable: false, scheduler: null, decision: null }).detail,
@@ -186,6 +198,8 @@ describe("AI run presentation", () => {
     expect(proposed.summary).not.toMatch(/executed/i);
     expect(proposed.rationale).toMatch(/hour 3/);
     expect(proposed.txUrl).toBeNull();
+    expect(proposed.tokenId).toBe("105");
+    expect(proposed.action).toBe("rest");
 
     expect(describeStoredDecision(decision({ status: "draft" })).statusLabel).toBe("Proposal not finished");
     expect(describeStoredDecision(decision({ status: "rejected" })).statusLabel).toBe("Proposal rejected");
@@ -230,5 +244,76 @@ describe("AI run presentation", () => {
     expect(mismatched.txUrl).toBeNull();
     expect(mismatched.statusLabel).toBe("Action recorded");
     expect(mismatched.summary).toMatch(/not a chain receipt/);
+  });
+
+  it("keeps submitted citizen proposals when a later interrupted run's newest row is a wallet", () => {
+    const view = describeAiRun({
+      configured: true,
+      readable: true,
+      scheduler: scheduler({
+        lastRunAt: "2026-10-26T16:54:24Z",
+        lastSuccessAt: "2026-10-26T16:40:51Z",
+        lastError: AI_RUN_INTERRUPTED,
+      }),
+      decision: decision({
+        id: "11111111-1111-4111-8111-111111111111",
+        status: "proposed",
+        purpose: "wallet_issuance",
+        rationale:
+          "Every enrolled citizen gets one permanent wallet. Token 946 is next. No address was assigned by this decision. The issuer broadcasts it.",
+        output: { tokenId: "946" },
+        createdAt: "2026-10-26T16:54:25Z",
+      }),
+      citizenDecisions: [
+        decision({
+          id: "22222222-2222-4222-8222-222222222222",
+          status: "draft",
+          purpose: "citizen_turn",
+          rationale: "This draft was not a finished decision.",
+          output: { action: "rest", tokenId: "1" },
+          createdAt: "2026-10-26T16:55:00Z",
+        }),
+        decision({
+          id: "33333333-3333-4333-8333-333333333333",
+          status: "queued",
+          purpose: "citizen_turn",
+          rationale: "The merchant is at the market and chooses to visit the bank to review public records.",
+          output: { action: "visit", tokenId: "167" },
+          createdAt: "2026-10-26T16:39:18Z",
+        }),
+        decision({
+          id: "44444444-4444-4444-8444-444444444444",
+          status: "accepted",
+          purpose: "citizen_turn",
+          rationale: "Storehouse supplies are maintained by active farmers working the fields during the workday.",
+          output: { action: "work", tokenId: "547" },
+          createdAt: "2026-10-26T16:39:55Z",
+        }),
+        decision({
+          id: "55555555-5555-4555-8555-555555555555",
+          status: "proposed",
+          purpose: "wallet_issuance",
+          rationale: "A wallet row is not a citizen turn.",
+          output: { tokenId: "100" },
+          createdAt: "2026-10-26T16:40:21Z",
+        }),
+      ],
+      nowMs: Date.parse("2026-10-26T17:50:00Z"),
+    });
+    expect(view.state).toBe("interrupted");
+    expect(view.title).toBe("AI run interrupted");
+    expect(view.detail).toBe(AI_RUN_INTERRUPTED);
+    expect(view.lastSuccessAt).toBe("2026-10-26T16:40:51Z");
+    expect(view.decision?.rationale).toMatch(/Token 946/);
+    expect(view.decision?.statusLabel).toBe("Proposal persisted");
+    expect(view.decision?.txUrl).toBeNull();
+    expect(view.citizenDecisions.map((row) => row.tokenId)).toEqual(["167", "547"]);
+    expect(view.citizenDecisions.map((row) => row.action)).toEqual(["visit", "work"]);
+    expect(view.citizenDecisions.map((row) => row.statusLabel)).toEqual([
+      "Proposal submitted to the simulation",
+      "Proposal persisted",
+    ]);
+    expect(view.citizenDecisions.every((row) => row.txUrl === null)).toBe(true);
+    expect(view.citizenDecisions.map((row) => row.statusLabel).join(" ")).not.toMatch(/executed|Confirmed on-chain/i);
   });
 });
