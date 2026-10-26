@@ -5,10 +5,10 @@ import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { AiDecisionsLink } from "@/components/world/ai-decisions-link";
 import { AiRunPanel } from "@/components/world/ai-run-panel";
-import type { AiRunView } from "@/lib/ai/run-record";
 import { EventItem } from "@/components/world/event-item";
 import { useLive, type LiveStore } from "@/components/world/live-store";
 import { useNow } from "@/components/world/use-now";
+import type { AiRunView, StoredDecisionView } from "@/lib/ai/run-record";
 import { aiMindLabel } from "@/lib/world/civilization-status";
 import { CATEGORY_LABEL, SOURCE_LABEL } from "@/lib/world/present";
 import {
@@ -16,7 +16,6 @@ import {
   eventFilterSearchParams,
   filterKey,
   matchesFilter,
-  mergeEvents,
   oldestSeq,
   receiveLive,
   resolveEventFilter,
@@ -356,12 +355,7 @@ export function ActivityFeed({
     document.getElementById("joined-civilization")?.scrollIntoView({ block: "start" });
   }, [dock, joins]);
   const joinIds = new Set(joins.map((event) => event.id));
-  const shown = feed.shown.filter((event) => {
-    if (joinIds.has(event.id)) return false;
-    // The world column lists these in Civilization activity. A join is not a second copy of the feed.
-    if (preview && event.source === "system" && (event.kind === "genesis_joined" || event.kind === "citizen_enrolled")) return false;
-    return true;
-  });
+  const shown = feed.shown.filter((event) => !joinIds.has(event.id));
   const visible = preview ? shown.slice(0, WORLD_WINDOW) : shown;
   const scoped = filter.tokenId
     ? `Citizen #${filter.tokenId}`
@@ -519,47 +513,57 @@ export function ActivityFeed({
   );
 }
 
-/** Membership joins, the same records History lists under Joined the civilization. */
-export function CivilizationActivity({
-  store,
-  inactive = false,
-  limit = WORLD_WINDOW,
-}: {
-  store: LiveStore;
-  inactive?: boolean;
-  limit?: number;
-}) {
-  const live = useLive(store);
-  const now = useNow(15_000);
-  const fetched = useCivilizationJoins(true, limit);
-  const names = useMemo(
-    () => new Map((live.snapshot?.citizens ?? []).map((citizen) => [citizen.tokenId, citizen.name])),
-    [live.snapshot?.citizens],
-  );
-  const citizenName = (tokenId: string) => names.get(tokenId) ?? null;
-  const joins = civilizationJoinEvents(mergeEvents(fetched, live.recent), limit);
+function decisionHeading(decision: StoredDecisionView): string | null {
+  const who = decision.tokenId ? `Chog #${decision.tokenId}` : null;
+  if (who && decision.action) return `${who} · ${decision.action}`;
+  return who ?? decision.action;
+}
 
+/** Newest stored decision, then the recent citizen turns. The same row is not listed twice. */
+export function citizenReasonRows(run: AiRunView): StoredDecisionView[] {
+  const newest = run.decision;
+  const rest = run.citizenDecisions.filter((row) => row.id !== newest?.id);
+  return newest ? [newest, ...rest] : rest;
+}
+
+/** Stored citizen decisions and the reason written for each one. */
+export function CitizenReasons({ aiRun, inactive = false }: { aiRun: AiRunView; inactive?: boolean }) {
+  const rows = citizenReasonRows(aiRun);
   return (
-    <section aria-labelledby="civilization-joins-title" className={`world-civilization pixel-panel${inactive ? " is-inactive" : ""}`}>
+    <section aria-labelledby="citizen-reasons-title" className={`world-civilization pixel-panel${inactive ? " is-inactive" : ""}`}>
       <div className="shrink-0 border-b-4 border-line px-2.5 py-1.5">
         <div className="flex items-baseline justify-between gap-2">
-          <h2 id="civilization-joins-title" className="min-w-0 font-display text-[0.62rem] leading-4 text-accent">
-            Civilization activity
+          <h2 id="citizen-reasons-title" className="min-w-0 font-display text-[0.62rem] leading-4 text-accent">
+            Citizen reasons
           </h2>
-          <Link href="/activity?source=system#joined-civilization" className="shrink-0 text-[0.6rem] leading-4 text-accent" title="Opens Joined the civilization in History.">
+          <Link href="/activity#civilization-activity" className="shrink-0 text-[0.6rem] leading-4 text-accent" title="Opens the AI decision activity in History.">
             view all
           </Link>
         </div>
-        <p className="text-[0.65rem] leading-4 text-muted">Chogs that entered</p>
       </div>
       <div className="world-scroll world-category-scroll min-h-0 overflow-y-auto overscroll-contain px-2.5">
-        {joins.length === 0 ? (
-          <p className="py-3 text-sm leading-6 text-muted">No stored join is recorded yet. A row appears when a Chog Genesis NFT enters this civilization.</p>
+        {rows.length === 0 ? (
+          <p className="py-3 text-sm leading-6 text-muted">No stored citizen reason yet.</p>
         ) : (
           <ul className="divide-y divide-line">
-            {joins.map((event) => (
-              <EventItem key={event.id} event={event} now={now} citizenName={citizenName} compact clock={live.snapshot?.clock} />
-            ))}
+            {rows.map((decision) => {
+              const heading = decisionHeading(decision);
+              const summary = decision.summary === `${decision.statusLabel}.` ? undefined : decision.summary;
+              return (
+                <li key={decision.id} className="py-1.5">
+                  {heading ? <p className="text-xs leading-4 text-foreground">{heading}</p> : null}
+                  <p className="text-xs leading-4 text-muted" title={summary}>
+                    {decision.statusLabel}
+                  </p>
+                  <p className="line-clamp-2 text-xs leading-4 text-foreground/90">{decision.rationale ?? "No rationale was stored."}</p>
+                  {decision.txUrl ? (
+                    <a href={decision.txUrl} target="_blank" rel="noreferrer" className="text-xs text-accent">
+                      Verified transaction
+                    </a>
+                  ) : null}
+                </li>
+              );
+            })}
           </ul>
         )}
       </div>

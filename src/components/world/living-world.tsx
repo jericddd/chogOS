@@ -3,7 +3,7 @@
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { AiDecisionsLink } from "@/components/world/ai-decisions-link";
-import { ActivityFeed, CivilizationActivity } from "@/components/world/activity-feed";
+import { ActivityFeed, CitizenReasons } from "@/components/world/activity-feed";
 import { GrowthDecisions } from "@/components/world/growth-decisions";
 import { createLiveStore, sharedLiveStore, useLive, type LiveStore } from "@/components/world/live-store";
 import { useNow } from "@/components/world/use-now";
@@ -223,7 +223,7 @@ export function LivingWorld({
             [
               ["town", "Town"],
               ["growth", "Growth"],
-              ["civilization", "Civilization"],
+              ["civilization", "Reasons"],
               ["activity", "Feed"],
             ] as const
           ).map(([id, label]) => (
@@ -250,7 +250,7 @@ export function LivingWorld({
         </aside>
         <div className="world-feeds">
           <GrowthDecisions dock inactive={phonePane !== "growth"} clock={snapshot.clock} recent={live.recent} />
-          <CivilizationActivity store={store} inactive={phonePane !== "civilization"} />
+          <CitizenReasons aiRun={aiRun} inactive={phonePane !== "civilization"} />
           <ActivityFeed store={store} initialFilter={feedFilter} dock preview inactive={phonePane !== "activity"} aiRun={aiRun} />
         </div>
       </div>

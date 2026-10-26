@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { ActivityFeed, CivilizationActivity } from "@/components/world/activity-feed";
+import { ActivityFeed, CitizenReasons } from "@/components/world/activity-feed";
 import { CivilizationStatus } from "@/components/world/civilization-status";
 import { GrowthDecisions } from "@/components/world/growth-decisions";
 import { WorldPanel, WorldStatus } from "@/components/world/world-panel";
@@ -315,6 +315,7 @@ describe("civilization status", () => {
           lastSuccessAt: null,
           latestDecisionAt: null,
           decision: null,
+          citizenDecisions: [],
         }}
         skewMs={0}
         link="live"
@@ -737,6 +738,7 @@ describe("activity feed", () => {
           lastSuccessAt: null,
           latestDecisionAt: null,
           decision: null,
+          citizenDecisions: [],
         }}
       />,
     );
@@ -751,33 +753,75 @@ describe("activity feed", () => {
     expect(document.querySelector(".world-category-scroll")).toBeTruthy();
   });
 
-  it("gives civilization joins their own window and a history link", async () => {
-    const enrolled = event(9, {
-      id: "enrolled-8",
-      kind: "citizen_enrolled",
-      category: "membership",
-      source: "system",
-      tokenId: "8",
-      summary: "Chog Genesis #8 enrolled by its verified owner.",
-    });
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async (url: string) => {
-        if (!String(url).includes("category=membership")) {
-          return new Response(JSON.stringify({ status: "ok", events: [], nextBefore: null }));
-        }
-        return new Response(JSON.stringify({ status: "ok", events: [enrolled], nextBefore: null }));
-      }),
+  it("shows stored citizen reasons and opens that history section", () => {
+    render(
+      <CitizenReasons
+        aiRun={{
+          state: "completed_with_proposals",
+          title: "AI run completed with proposals",
+          detail: "Stopped remaining citizens before the host timeout.",
+          lastRunAt: "2026-10-26T19:32:28.000Z",
+          lastSuccessAt: "2026-10-26T19:32:28.000Z",
+          latestDecisionAt: "2026-10-26T19:32:08.000Z",
+          decision: {
+            id: "wallet-7",
+            statusLabel: "Proposal rejected",
+            summary: "Proposal rejected.",
+            rationale: "All citizens have a MON balance of 0, meaning there are no available funds to transfer.",
+            createdAt: "2026-10-26T19:32:08.000Z",
+            txUrl: null,
+            tokenId: "7",
+            action: null,
+          },
+          citizenDecisions: [
+            {
+              id: "wallet-7",
+              statusLabel: "Proposal rejected",
+              summary: "Proposal rejected.",
+              rationale: "Duplicate of the newest row.",
+              createdAt: "2026-10-26T19:32:08.000Z",
+              txUrl: null,
+              tokenId: "7",
+              action: null,
+            },
+            {
+              id: "turn-wait",
+              statusLabel: "Proposal persisted",
+              summary: "Proposal persisted.",
+              rationale: "Wood is low at 11 and other construction is waiting, so the crafter rests and waits for supplies to recover.",
+              createdAt: "2026-10-26T19:31:28.000Z",
+              txUrl: null,
+              tokenId: "12",
+              action: "wait",
+            },
+            {
+              id: "turn-work",
+              statusLabel: "Action recorded",
+              summary: "Action recorded. This is not a chain receipt.",
+              rationale: "Storehouse supplies are maintained by active farmers.",
+              createdAt: "2026-10-26T16:39:31.000Z",
+              txUrl: "https://monadscan.com/tx/0xabc",
+              tokenId: "4",
+              action: "work",
+            },
+          ],
+        }}
+      />,
     );
-    const store = createLiveStore(snapshot([]), { fetcher: vi.fn() as unknown as typeof fetch });
-    render(<CivilizationActivity store={store} />);
-    expect(await screen.findByRole("heading", { name: "Civilization activity" })).toBeTruthy();
-    expect(screen.getByText("Chog Genesis #8 enrolled by its verified owner.")).toBeTruthy();
-    expect(screen.getByText("System", { selector: "span" })).toBeTruthy();
-    expect(screen.queryByRole("link", { name: /0x/ })).toBeNull();
-    expect(screen.getByRole("link", { name: "view all" }).getAttribute("href")).toBe(
-      "/activity?source=system#joined-civilization",
-    );
+    expect(screen.getByRole("heading", { name: "Citizen reasons" })).toBeTruthy();
+    expect(screen.getByText("Chog #7")).toBeTruthy();
+    expect(screen.getByText("Proposal rejected")).toBeTruthy();
+    expect(screen.getByText(/MON balance of 0/)).toBeTruthy();
+    expect(screen.queryByText("Duplicate of the newest row.")).toBeNull();
+    expect(screen.getByText("Chog #12 · wait")).toBeTruthy();
+    expect(screen.getByText("Proposal persisted")).toBeTruthy();
+    expect(screen.getByText(/Wood is low at 11/)).toBeTruthy();
+    expect(screen.getByText("Action recorded").getAttribute("title")).toBe("Action recorded. This is not a chain receipt.");
+    expect(screen.getByText(/active farmers/)).toBeTruthy();
+    expect(screen.queryByText("No verified transaction is stored for this decision.")).toBeNull();
+    expect(screen.getByRole("link", { name: "Verified transaction" }).getAttribute("href")).toBe("https://monadscan.com/tx/0xabc");
+    expect(screen.getByRole("link", { name: "view all" }).getAttribute("href")).toBe("/activity#civilization-activity");
+    expect(screen.queryByText(/paying|operational/i)).toBeNull();
   });
 });
 
