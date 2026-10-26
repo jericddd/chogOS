@@ -97,6 +97,10 @@ export type StoredDecisionView = {
   rationale: string | null;
   createdAt: string | null;
   txUrl: string | null;
+  /** Present when the stored output names a token. Absent otherwise. */
+  tokenId: string | null;
+  /** Present when the stored output names a citizen action. Absent otherwise. */
+  action: string | null;
 };
 
 export type AiRunView = {
@@ -107,6 +111,11 @@ export type AiRunView = {
   lastSuccessAt: string | null;
   latestDecisionAt: string | null;
   decision: StoredDecisionView | null;
+  /**
+   * Recent citizen-turn rows. The newest row of any purpose can be a later
+   * wallet proposal, so these stay visible beside that row.
+   */
+  citizenDecisions: StoredDecisionView[];
 };
 
 export type SchedulerRecord = {
@@ -154,12 +163,25 @@ function decisionStatus(status: string, confirmed: boolean): { statusLabel: stri
   }
 }
 
+function citizenIdentity(output: Record<string, unknown> | null): { tokenId: string | null; action: string | null } {
+  const rawToken =
+    output && (typeof output.tokenId === "string" || typeof output.tokenId === "number")
+      ? String(output.tokenId).split(".")[0]
+      : "";
+  const rawAction = output && typeof output.action === "string" ? output.action.trim() : "";
+  return {
+    tokenId: /^[0-9]{1,78}$/.test(rawToken) ? rawToken : null,
+    action: /^[a-z_]{1,32}$/.test(rawAction) ? rawAction : null,
+  };
+}
+
 /** Labels one stored decision. A proposal is never called executed. A transaction link requires a verified receipt. */
 export function describeStoredDecision(row: StoredDecisionRecord): StoredDecisionView {
   const output = outputRecord(row.output);
   const receipt = confirmedDecisionReceipt(row.purpose, output);
   const txUrl = receipt ? explorerTxUrl(143, receipt.txHash) : null;
   const labeled = decisionStatus(row.status, Boolean(receipt && txUrl));
+  const identity = citizenIdentity(output);
   return {
     id: row.id,
     statusLabel: labeled.statusLabel,
@@ -167,10 +189,35 @@ export function describeStoredDecision(row: StoredDecisionRecord): StoredDecisio
     rationale: row.rationale,
     createdAt: row.createdAt,
     txUrl,
+    tokenId: identity.tokenId,
+    action: identity.action,
   };
 }
 
-function view(partial: Omit<AiRunView, "decision" | "latestDecisionAt"> & { decision: StoredDecisionRecord | null }): AiRunView {
+/** How many citizen-turn rows the panel keeps. Newer wallet rows do not count against this. */
+export const AI_CITIZEN_PANEL_LIMIT = 8;
+
+const CITIZEN_PANEL_STATUSES = new Set(["queued", "accepted", "proposed", "executed", "rejected", "failed"]);
+
+function visibleCitizenDecisions(rows: readonly StoredDecisionRecord[] | undefined): StoredDecisionView[] {
+  const seen = new Set<string>();
+  const views: StoredDecisionView[] = [];
+  for (const row of rows ?? []) {
+    if (row.purpose !== "citizen_turn" || !CITIZEN_PANEL_STATUSES.has(row.status)) continue;
+    if (!row.id || seen.has(row.id)) continue;
+    seen.add(row.id);
+    views.push(describeStoredDecision(row));
+    if (views.length >= AI_CITIZEN_PANEL_LIMIT) break;
+  }
+  return views;
+}
+
+function view(
+  partial: Omit<AiRunView, "decision" | "latestDecisionAt" | "citizenDecisions"> & {
+    decision: StoredDecisionRecord | null;
+    citizenDecisions?: readonly StoredDecisionRecord[];
+  },
+): AiRunView {
   const decision = partial.decision ? describeStoredDecision(partial.decision) : null;
   return {
     state: partial.state,
@@ -180,23 +227,32 @@ function view(partial: Omit<AiRunView, "decision" | "latestDecisionAt"> & { deci
     lastSuccessAt: partial.lastSuccessAt,
     latestDecisionAt: decision?.createdAt ?? null,
     decision,
+    citizenDecisions: visibleCitizenDecisions(partial.citizenDecisions),
   };
 }
 
 /**
- * Turns the scheduler row and the newest decision into the sentences the site can show.
+ * Turns the scheduler row, the newest decision, and recent citizen turns into the sentences the site can show.
  * Older notes stay verbatim. Only the explicit prefixes above are classified.
+ * An interrupted later run does not drop the citizen turns passed in.
  */
 export function describeAiRun(input: {
   configured: boolean;
   readable: boolean;
   scheduler: SchedulerRecord | null;
   decision: StoredDecisionRecord | null;
+  citizenDecisions?: readonly StoredDecisionRecord[];
   nowMs?: number;
 }): AiRunView {
   const decision = input.decision;
-  if (!input.configured) {
+  function shown(partial: Omit<Parameters<typeof view>[0], "citizenDecisions">): AiRunView {
     return view({
+      ...partial,
+      citizenDecisions: input.configured && input.readable ? input.citizenDecisions : [],
+    });
+  }
+  if (!input.configured) {
+    return shown({
       state: "unconfigured",
       title: "AI run record unavailable",
       detail: "The AI run record is not connected to its database.",
@@ -206,7 +262,7 @@ export function describeAiRun(input: {
     });
   }
   if (!input.readable) {
-    return view({
+    return shown({
       state: "unread",
       title: "AI run record unavailable",
       detail: "The AI run record could not be read.",
@@ -223,7 +279,7 @@ export function describeAiRun(input: {
   const haltUntil = scheduler?.haltUntil ? Date.parse(scheduler.haltUntil) : Number.NaN;
   const halted = Number.isFinite(haltUntil) && haltUntil > (input.nowMs ?? Date.now());
   if (halted) {
-    return view({
+    return shown({
       state: "halted",
       title: "AI run halted",
       detail: scheduler?.haltReason?.trim() || "The mind is halted. No halt reason was stored.",
@@ -235,7 +291,7 @@ export function describeAiRun(input: {
 
   const hasRun = Boolean(lastRunAt || lastSuccessAt || lastError);
   if (!hasRun && !decision) {
-    return view({
+    return shown({
       state: "not_recorded",
       title: "No AI run recorded",
       detail: "No AI run has been recorded.",
@@ -245,7 +301,7 @@ export function describeAiRun(input: {
     });
   }
   if (!hasRun && decision) {
-    return view({
+    return shown({
       state: "noted",
       title: "No AI run record",
       detail: "The scheduler has no stored run. The newest stored decision is shown below.",
@@ -256,7 +312,7 @@ export function describeAiRun(input: {
   }
 
   if (lastError === AI_RUN_STARTED) {
-    return view({
+    return shown({
       state: "started",
       title: "AI run started",
       detail: AI_RUN_STARTED,
@@ -266,7 +322,7 @@ export function describeAiRun(input: {
     });
   }
   if (lastError === AI_RUN_INTERRUPTED || lastError?.startsWith("AI run interrupted.")) {
-    return view({
+    return shown({
       state: "interrupted",
       title: "AI run interrupted",
       detail: lastError,
@@ -276,7 +332,7 @@ export function describeAiRun(input: {
     });
   }
   if (lastError?.startsWith("AI run completed with proposals.")) {
-    return view({
+    return shown({
       state: "completed_with_proposals",
       title: "AI run completed with proposals",
       detail: lastError,
@@ -286,7 +342,7 @@ export function describeAiRun(input: {
     });
   }
   if (lastError?.startsWith("AI run completed with no decisions.")) {
-    return view({
+    return shown({
       state: "completed_without_decisions",
       title: "AI run completed with no decisions",
       detail: lastError,
@@ -296,7 +352,7 @@ export function describeAiRun(input: {
     });
   }
   if (lastError?.startsWith(AI_RUN_FAILED_PREFIX)) {
-    return view({
+    return shown({
       state: "failed",
       title: "AI run failed",
       detail: lastError,
@@ -306,7 +362,7 @@ export function describeAiRun(input: {
     });
   }
   if (lastError) {
-    return view({
+    return shown({
       state: "noted",
       title: "Stored run note",
       detail: lastError,
@@ -315,7 +371,7 @@ export function describeAiRun(input: {
       decision,
     });
   }
-  return view({
+  return shown({
     state: "noted",
     title: "Stored run note",
     detail: "The last run did not store a note.",

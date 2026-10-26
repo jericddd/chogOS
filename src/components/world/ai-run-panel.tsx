@@ -1,9 +1,43 @@
 import { formatUtc } from "@/lib/civilization/labels";
-import type { AiRunView } from "@/lib/ai/run-record";
+import type { AiRunView, StoredDecisionView } from "@/lib/ai/run-record";
 
-/** Stored AI run and the newest decision. Simulation rows stay in the activity list. */
+function decisionIdentity(decision: StoredDecisionView): string | null {
+  const who = decision.tokenId ? `Chog #${decision.tokenId}` : null;
+  if (who && decision.action) return `${who} · ${decision.action}`;
+  return who ?? decision.action;
+}
+
+function DecisionBody({ decision, compact }: { decision: StoredDecisionView; compact: boolean }) {
+  const identity = decisionIdentity(decision);
+  return (
+    <>
+      {identity ? (
+        <p className={compact ? "text-xs leading-4 text-foreground" : "text-sm text-foreground"}>{identity}</p>
+      ) : null}
+      <p className={compact ? "text-xs leading-4 text-foreground" : "text-sm text-foreground"}>{decision.statusLabel}</p>
+      {decision.summary === `${decision.statusLabel}.` ? null : (
+        <p className={compact ? "line-clamp-2 text-xs leading-4 text-muted" : "mt-1 text-sm leading-6 text-muted"}>{decision.summary}</p>
+      )}
+      <p className={compact ? "line-clamp-2 text-xs leading-4 text-muted" : "mt-1 text-sm leading-6 text-muted"}>
+        {decision.rationale ?? "No rationale was stored."}
+      </p>
+      {decision.txUrl ? (
+        <a href={decision.txUrl} target="_blank" rel="noreferrer" className="text-xs text-accent">
+          Verified transaction
+        </a>
+      ) : (
+        <p className={compact ? "text-xs leading-4 text-muted" : "mt-1 text-sm text-muted"}>
+          No verified transaction is stored for this decision.
+        </p>
+      )}
+    </>
+  );
+}
+
+/** Stored AI run, the newest decision, and recent citizen turns. Simulation rows stay in the activity list. */
 export function AiRunPanel({ run, compact = false }: { run: AiRunView; compact?: boolean }) {
   const decision = run.decision;
+  const citizens = run.citizenDecisions.filter((row) => row.id !== decision?.id).slice(0, compact ? 4 : 8);
   return (
     <section
       aria-label="AI run status"
@@ -28,26 +62,24 @@ export function AiRunPanel({ run, compact = false }: { run: AiRunView; compact?:
       </p>
       {decision ? (
         <div className={compact ? "mt-1" : "mt-3"}>
-          <p className={compact ? "text-xs leading-4 text-foreground" : "text-sm text-foreground"}>{decision.statusLabel}</p>
-          {decision.summary === `${decision.statusLabel}.` ? null : (
-            <p className={compact ? "line-clamp-2 text-xs leading-4 text-muted" : "mt-1 text-sm leading-6 text-muted"}>{decision.summary}</p>
-          )}
-          <p className={compact ? "line-clamp-2 text-xs leading-4 text-muted" : "mt-1 text-sm leading-6 text-muted"}>
-            {decision.rationale ?? "No rationale was stored."}
-          </p>
-          {decision.txUrl ? (
-            <a href={decision.txUrl} target="_blank" rel="noreferrer" className="text-xs text-accent">
-              Verified transaction
-            </a>
-          ) : (
-            <p className={compact ? "text-xs leading-4 text-muted" : "mt-1 text-sm text-muted"}>
-              No verified transaction is stored for this decision.
-            </p>
-          )}
+          <DecisionBody decision={decision} compact={compact} />
         </div>
       ) : (
         <p className={compact ? "mt-1 text-xs leading-4 text-muted" : "mt-3 text-sm text-muted"}>No AI decision is stored.</p>
       )}
+      {citizens.length > 0 ? (
+        <div className={compact ? "mt-1" : "mt-3"}>
+          <p className={compact ? "text-xs leading-4 text-foreground" : "text-sm text-foreground"}>Recent citizen decisions</p>
+          <ul aria-label="Recent citizen decisions">
+            {citizens.map((row) => (
+              <li key={row.id} className={compact ? "mt-1 border-t border-line pt-1" : "mt-2 border-t border-line pt-2"}>
+                <DecisionBody decision={row} compact={compact} />
+                <p className={compact ? "text-xs leading-4 text-muted" : "text-sm text-muted"}>{formatUtc(row.createdAt)}</p>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
       <p className={compact ? "mt-1 line-clamp-3 text-xs leading-4 text-muted" : "mt-3 text-sm leading-6 text-muted"}>
         Rows in the activity list are separate from this record. Simulation rows are rule-based world transitions, not AI decisions.
       </p>
