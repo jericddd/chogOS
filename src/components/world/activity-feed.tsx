@@ -4,6 +4,8 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { AiDecisionsLink } from "@/components/world/ai-decisions-link";
+import { AiRunPanel } from "@/components/world/ai-run-panel";
+import type { AiRunView } from "@/lib/ai/run-record";
 import { EventItem } from "@/components/world/event-item";
 import { useLive, type LiveStore } from "@/components/world/live-store";
 import { useNow } from "@/components/world/use-now";
@@ -149,6 +151,7 @@ export function ActivityFeed({
   mode = "home",
   dock = false,
   inactive = false,
+  aiRun = null,
 }: {
   store: LiveStore;
   initialFilter?: EventFilter;
@@ -157,6 +160,8 @@ export function ActivityFeed({
   dock?: boolean;
   /** Phone hides the unselected pane. Wide screens still show it. */
   inactive?: boolean;
+  /** Stored AI run. Null leaves the feed unchanged for callers that have no record. */
+  aiRun?: AiRunView | null;
 }) {
   const live = useLive(store);
   const now = useNow(15_000);
@@ -408,6 +413,8 @@ export function ActivityFeed({
           </button>
         </p>
       ) : null}
+
+      {aiRun ? <AiRunPanel run={aiRun} compact={dock} /> : null}
 
       <div ref={listRef} className={dock ? "world-scroll min-h-0 flex-1 overflow-y-auto overscroll-contain px-2.5" : undefined}>
         <div ref={topRef} aria-hidden className="h-px scroll-mt-24" />

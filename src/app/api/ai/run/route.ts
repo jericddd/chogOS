@@ -39,7 +39,15 @@ async function handle(request: Request): Promise<NextResponse> {
   const config = readAppConfig();
   const report = await runAiMind(config, deadlineForRequest(request));
   const status =
-    report.status === "unconfigured" ? 503 : report.status === "disabled" ? 403 : report.status === "error" ? 502 : 200;
+    report.status === "unconfigured"
+      ? 503
+      : report.status === "disabled"
+        ? 403
+        : report.status === "error"
+          ? 502
+          : report.status === "interrupted"
+            ? 504
+            : 200;
   return NextResponse.json({ ok: report.status === "ran" || report.status === "idle", report }, { status });
 }
 

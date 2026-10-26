@@ -10,6 +10,7 @@ import { useNow } from "@/components/world/use-now";
 import { WorldCanvas, type Selection, type WorldCanvasHandle } from "@/components/world/world-canvas";
 import { WorldPanel, WorldStatus } from "@/components/world/world-panel";
 import { runnerHealth } from "@/lib/world/clock";
+import type { AiRunView } from "@/lib/ai/run-record";
 import type { Hit } from "@/lib/world/scene";
 import type { EventFilter, RealtimeConfig, WorldLoad, WorldUnavailable } from "@/lib/world/types";
 
@@ -76,7 +77,15 @@ export function WorldUnavailablePanel({ unavailable }: { unavailable: WorldUnava
   );
 }
 
-export function LivingWorld({ initial, realtime }: { initial: WorldLoad; realtime: RealtimeConfig | null }) {
+export function LivingWorld({
+  initial,
+  realtime,
+  aiRun,
+}: {
+  initial: WorldLoad;
+  realtime: RealtimeConfig | null;
+  aiRun: AiRunView;
+}) {
   const store = useWorldStore(initial, realtime);
   const live = useLive(store);
   const router = useRouter();
@@ -136,7 +145,7 @@ export function LivingWorld({ initial, realtime }: { initial: WorldLoad; realtim
       <div className="space-y-8">
         <WorldUnavailablePanel unavailable={live.unavailable ?? { status: "error", detail: "The world could not be read." }} />
         <GrowthDecisions />
-        <ActivityFeed store={store} initialFilter={feedFilter} />
+        <ActivityFeed store={store} initialFilter={feedFilter} aiRun={aiRun} />
       </div>
     );
   }
@@ -228,7 +237,7 @@ export function LivingWorld({ initial, realtime }: { initial: WorldLoad; realtim
         </aside>
         <div className="world-feeds">
           <GrowthDecisions dock inactive={phonePane !== "growth"} clock={snapshot.clock} />
-          <ActivityFeed store={store} initialFilter={feedFilter} dock inactive={phonePane !== "activity"} />
+          <ActivityFeed store={store} initialFilter={feedFilter} dock inactive={phonePane !== "activity"} aiRun={aiRun} />
         </div>
       </div>
     </div>

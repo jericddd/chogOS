@@ -33,7 +33,8 @@ import { productionBankRuntime } from "@/lib/chogbank/runtime";
 import { readEconomyLedger, saveEconomyDecision } from "@/lib/economy/db";
 import { evaluateProductionEconomy } from "@/lib/economy/production";
 import { proposalFromDraft } from "@/lib/economy/proposal";
-import { publishDecisionActivity, publishStoredAiActivity } from "@/lib/ai/activity-event";
+import { AI_ACTIVITY_BACKFILL_LIMIT, publishDecisionActivity, publishStoredAiActivity } from "@/lib/ai/activity-event";
+import { AI_RUN_INTERRUPTED, AI_RUN_STARTED, aiRunFinishNote, interruptedMindReport } from "@/lib/ai/run-record";
 import { geminiModelForRequest, modelTier, purposeCallTimeoutMs } from "@/lib/ai/model-route";
 import { closeModelDay, reserveModelAttempt } from "@/lib/ai/model-quota";
 import { storeCitizenCommerce } from "@/lib/ai/citizen-commerce-db";
@@ -92,6 +93,7 @@ export type MindRunStatus =
   | "budget"
   | "idle"
   | "ran"
+  | "interrupted"
   | "error"
   | "unconfigured";
 
@@ -510,18 +512,40 @@ export async function runAiMind(
     return emptyReport("disabled", config, "AI_API_KEY and AI_MODEL must be set.");
   }
 
+  const control = { stop: false };
   const report = emptyReport("ran", config);
-  return finishBeforeDeadline(
-    runAiMindWork(config, deadlineMs, report),
+  const finished = await finishBeforeDeadline(
+    runAiMindWork(config, deadlineMs, report, control),
     () => {
-      report.reason = report.reason ?? "Returned before the host timeout. Work still in flight was not waited on.";
-      return report;
+      control.stop = true;
+      return interruptedMindReport(report);
     },
     deadlineMs + AI_HOST_GRACE_MS,
   );
+  if (finished.status === "interrupted") await recordInterruptedRun();
+  return finished;
 }
 
-async function runAiMindWork(config: AppConfig, deadlineMs: number, report: MindRunReport): Promise<MindRunReport> {
+async function recordInterruptedRun(): Promise<void> {
+  try {
+    const client = createServiceRoleClient({ timeoutMs: 3_000 });
+    await client
+      .from("ai_scheduler_state")
+      .update({ last_run_at: new Date().toISOString(), last_error: AI_RUN_INTERRUPTED })
+      .eq("singleton", true);
+  } catch {
+    // The HTTP report already says this cycle was interrupted.
+  }
+}
+
+type RunControl = { stop: boolean };
+
+async function runAiMindWork(
+  config: AppConfig,
+  deadlineMs: number,
+  report: MindRunReport,
+  control: RunControl,
+): Promise<MindRunReport> {
   const client = createServiceRoleClient({ timeoutMs: AI_DB_CALL_MS });
   const runId = randomUUID();
   const citizenDeadline = citizenDeadlineMs(deadlineMs);
@@ -530,7 +554,6 @@ async function runAiMindWork(config: AppConfig, deadlineMs: number, report: Mind
 
   try {
     await client.rpc("world_ensure_minds");
-    await publishStoredAiActivity(client);
     let usage = await readUsage(client);
     if (isRetriableHaltReason(usage.haltReason)) {
       await client
@@ -547,6 +570,11 @@ async function runAiMindWork(config: AppConfig, deadlineMs: number, report: Mind
         .eq("singleton", true);
       return { ...emptyReport(budget.code === "halted" ? "halted" : "budget", config, budget.reason) };
     }
+
+    await client
+      .from("ai_scheduler_state")
+      .update({ last_run_at: new Date().toISOString(), last_error: AI_RUN_STARTED })
+      .eq("singleton", true);
 
     const provider = getAiProvider(config);
     const startedAt = Date.now();
@@ -637,6 +665,13 @@ async function runAiMindWork(config: AppConfig, deadlineMs: number, report: Mind
 
     async function attachWalletIssuance(): Promise<void> {
       if (walletIssuanceConsidered) return;
+      if (control.stop) {
+        report.walletIssuance = report.walletIssuance ?? {
+          status: "skipped",
+          detail: "The run was interrupted before a wallet review. No wallet was requested.",
+        };
+        return;
+      }
       walletIssuanceConsidered = true;
       if (report.status === "halted" || report.status === "budget") {
         report.walletIssuance = {
@@ -732,6 +767,13 @@ async function runAiMindWork(config: AppConfig, deadlineMs: number, report: Mind
 
     async function attachTreasury(): Promise<void> {
       if (treasuryConsidered) return;
+      if (control.stop) {
+        report.treasury = report.treasury ?? {
+          status: "skipped",
+          detail: "The run was interrupted before a treasury review. No allocation was requested.",
+        };
+        return;
+      }
       treasuryConsidered = true;
       if (flashClosed) {
         report.treasury = {
@@ -865,6 +907,13 @@ async function runAiMindWork(config: AppConfig, deadlineMs: number, report: Mind
 
     async function attachCitizenCommerce(): Promise<void> {
       if (commerceConsidered) return;
+      if (control.stop) {
+        report.commerce = report.commerce ?? {
+          status: "skipped",
+          detail: "The run was interrupted before a trade or return review. No transaction was broadcast.",
+        };
+        return;
+      }
       commerceConsidered = true;
       if (report.status === "halted" || report.status === "budget") {
         report.commerce = { status: "skipped", detail: "The mind run is halted or out of budget, so no trade or return was requested." };
@@ -932,10 +981,54 @@ async function runAiMindWork(config: AppConfig, deadlineMs: number, report: Mind
       });
     }
 
+    async function recordCycle(): Promise<void> {
+      if (control.stop) {
+        await client
+          .from("ai_scheduler_state")
+          .update({ last_run_at: new Date().toISOString(), last_error: AI_RUN_INTERRUPTED })
+          .eq("singleton", true);
+        return;
+      }
+      const note = aiRunFinishNote(report);
+      if (report.status === "ran" || report.status === "idle") {
+        report.reason = note;
+      }
+      const schedulerPatch: Record<string, unknown> = {
+        last_run_at: new Date().toISOString(),
+        last_error: note,
+        consecutive_failures: report.inferred === 0 && report.rejected > 0 ? 1 : 0,
+      };
+      if (report.inferred > 0 && report.status !== "error" && report.status !== "halted" && report.status !== "budget") {
+        schedulerPatch.last_success_at = new Date().toISOString();
+      }
+      await client.from("ai_scheduler_state").update(schedulerPatch).eq("singleton", true);
+      if (control.stop) {
+        await client
+          .from("ai_scheduler_state")
+          .update({ last_run_at: new Date().toISOString(), last_error: AI_RUN_INTERRUPTED })
+          .eq("singleton", true);
+      }
+    }
+
+    async function finish(next: MindRunReport): Promise<MindRunReport> {
+      const raceAt = startedAt + deadlineMs + AI_HOST_GRACE_MS;
+      const canBackfill = !control.stop && next.status !== "error" && next.status !== "halted" && next.status !== "budget";
+      // One hung database call must still end before the host race. Otherwise the backfill would be reported as an interrupted decision cycle.
+      if (canBackfill && raceAt - Date.now() > AI_DB_CALL_MS + 2_000) {
+        await publishStoredAiActivity(client, {
+          deadlineAtMs: raceAt - 2_000,
+          limit: AI_ACTIVITY_BACKFILL_LIMIT,
+        });
+      }
+      await recordCycle();
+      return control.stop ? interruptedMindReport(next) : next;
+    }
+
     // Treasury review runs before citizen decisions, so a full citizen queue cannot exhaust the deadline first.
     await attachTreasury();
 
     while (!endRun && !liteClosed) {
+      if (control.stop) break;
       if (timeoutWithinDeadline(startedAt, config.aiRequestTimeoutMs, Date.now(), citizenDeadline) === null) {
         report.reason = report.reason ?? "Stopped remaining citizens so treasury and wallet review keep their time.";
         break;
@@ -959,7 +1052,7 @@ async function runAiMindWork(config: AppConfig, deadlineMs: number, report: Mind
           await attachTreasury();
           await attachWalletIssuance();
           await attachCitizenCommerce();
-          return report;
+          return finish(report);
         }
         report.reason = report.reason ?? "The decision claim failed.";
         break;
@@ -970,12 +1063,11 @@ async function runAiMindWork(config: AppConfig, deadlineMs: number, report: Mind
           await attachTreasury();
           await attachWalletIssuance();
           await attachCitizenCommerce();
-          await client
-            .from("ai_scheduler_state")
-            .update({ last_run_at: new Date().toISOString(), last_error: report.reason ?? null })
-            .eq("singleton", true);
-          if (report.status === "halted" || report.status === "budget") return report;
-          return { ...report, status: "idle", reason: report.reason ?? "No eligible citizens." };
+          if (report.status !== "halted" && report.status !== "budget") {
+            report.status = "idle";
+            report.reason = report.reason ?? "No eligible citizens.";
+          }
+          return finish(report);
         }
         break;
       }
@@ -985,8 +1077,12 @@ async function runAiMindWork(config: AppConfig, deadlineMs: number, report: Mind
       let decided = false;
       let decisionId: string | null = null;
       try {
-        if (endRun) {
-          report.decisions.push({ tokenId: row.token_id, status: "deferred", detail: "left for a later run" });
+        if (endRun || control.stop) {
+          report.decisions.push({
+            tokenId: row.token_id,
+            status: "deferred",
+            detail: control.stop ? "left unfinished at the host deadline" : "left for a later run",
+          });
           continue;
         }
         const providerTimeoutMs = timeoutWithinDeadline(startedAt, config.aiRequestTimeoutMs, Date.now(), citizenDeadline);
@@ -1089,6 +1185,10 @@ async function runAiMindWork(config: AppConfig, deadlineMs: number, report: Mind
           continue;
         }
 
+        if (control.stop) {
+          report.decisions.push({ tokenId: row.token_id, status: "deferred", detail: "left unfinished at the host deadline" });
+          continue;
+        }
         const slot = await takeModelSlot(citizenDeadline);
         if (!slot) {
           deferForDeadline(row.token_id);
@@ -1122,6 +1222,10 @@ async function runAiMindWork(config: AppConfig, deadlineMs: number, report: Mind
         }
         decisionId = inserted.id as string;
         decided = true;
+        if (control.stop) {
+          report.decisions.push({ tokenId: row.token_id, status: "deferred", detail: "left unfinished at the host deadline" });
+          continue;
+        }
 
         let completion;
         try {
@@ -1168,7 +1272,7 @@ async function runAiMindWork(config: AppConfig, deadlineMs: number, report: Mind
 
         let parsed: { ok: true; decision: ParsedDecision } | { ok: false; reason: string } = parseDecisionOutput(completion.text);
         let accepted = parsed.ok ? acceptMindChoice(parsed.decision, context, menu) : parsed;
-        if (!accepted.ok && !isStickyRejection(accepted.reason)) {
+        if (!accepted.ok && !isStickyRejection(accepted.reason) && !control.stop) {
           const retrySlot = await takeModelSlot(citizenDeadline);
           if (retrySlot) {
             let retry: AiCompletion;
@@ -1738,25 +1842,17 @@ async function runAiMindWork(config: AppConfig, deadlineMs: number, report: Mind
     await attachTreasury();
     await attachWalletIssuance();
     await attachCitizenCommerce();
-    const schedulerPatch: Record<string, unknown> = {
-      last_run_at: new Date().toISOString(),
-      last_error: report.reason ?? null,
-      consecutive_failures: report.inferred === 0 && report.rejected > 0 ? 1 : 0,
-    };
-    if (report.inferred > 0) {
-      schedulerPatch.last_success_at = new Date().toISOString();
-    }
-    await client.from("ai_scheduler_state").update(schedulerPatch).eq("singleton", true);
-    return report;
+    return finish(report);
   } catch (error) {
     const message = error instanceof Error ? error.message : "The AI runner failed.";
     report.status = report.inferred > 0 || report.claimed > 0 ? report.status : "error";
     report.reason = message;
+    const note = control.stop ? AI_RUN_INTERRUPTED : report.status === "error" ? aiRunFinishNote(report) : message;
     await client
       .from("ai_scheduler_state")
-      .update({ last_run_at: new Date().toISOString(), last_error: message })
+      .update({ last_run_at: new Date().toISOString(), last_error: note })
       .eq("singleton", true);
-    return report;
+    return control.stop ? interruptedMindReport(report) : report;
   }
 }
 

@@ -522,17 +522,42 @@ async function tokenIdsFor(client: SupabaseClient, citizenIds: string[]): Promis
   return tokens;
 }
 
-/** Writes missing AI activity rows for decisions that are already stored. Safe to repeat. */
-export async function publishStoredAiActivity(client: SupabaseClient): Promise<void> {
+/**
+ * Unpublished decisions republished per purpose. The previous pass walked the
+ * newest 400 rows of every purpose, including rows that already had an
+ * activity event, and did that before the model was called.
+ */
+export const AI_ACTIVITY_BACKFILL_LIMIT = 20;
+
+function backfillLimit(value: number | undefined): number {
+  const requested = value ?? AI_ACTIVITY_BACKFILL_LIMIT;
+  if (!Number.isFinite(requested)) return AI_ACTIVITY_BACKFILL_LIMIT;
+  return Math.min(40, Math.max(1, Math.floor(requested)));
+}
+
+/**
+ * Writes activity rows for decisions that do not yet point at one.
+ * Already linked rows are left alone, so a retry does not insert a second event.
+ * Stops at `deadlineAtMs` and still stores drafts collected before that point.
+ */
+export async function publishStoredAiActivity(
+  client: SupabaseClient,
+  options?: { deadlineAtMs?: number; limit?: number; now?: () => number },
+): Promise<void> {
   try {
+    const now = options?.now ?? Date.now;
+    const limit = backfillLimit(options?.limit);
     const purposes = ["wallet_issuance", "treasury_allocation", "citizen_trade", "citizen_return", "citizen_turn"];
+    const drafts: AiActivityDraft[] = [];
     for (const purpose of purposes) {
+      if (options?.deadlineAtMs != null && now() >= options.deadlineAtMs) break;
       const { data, error } = await client
         .from("ai_decisions")
         .select("id, citizen_id, purpose, status, rationale, output")
         .eq("purpose", purpose)
+        .is("outcome_event_id", null)
         .order("created_at", { ascending: false })
-        .limit(400);
+        .limit(limit);
       if (error || !data) continue;
       const rows = data as Array<Record<string, unknown>>;
       const tokens =
@@ -543,18 +568,25 @@ export async function publishStoredAiActivity(client: SupabaseClient): Promise<v
             )
           : new Map<string, string>();
       for (const row of rows) {
+        if (options?.deadlineAtMs != null && now() >= options.deadlineAtMs) break;
+        const id = typeof row.id === "string" ? row.id : "";
+        if (!UUID.test(id)) continue;
         const citizen = typeof row.citizen_id === "string" ? row.citizen_id : null;
-        await publishDecisionActivity(client, {
-          id: String(row.id ?? ""),
+        const decision: ActivityDecision = {
+          id,
           citizenId: citizen,
           purpose: String(row.purpose ?? ""),
           status: String(row.status ?? ""),
           rationale: typeof row.rationale === "string" ? row.rationale : null,
           output: row.output,
           tokenId: citizen ? (tokens.get(citizen) ?? null) : null,
-        });
+        };
+        const worldConfirmed =
+          decision.purpose === "citizen_turn" && decision.status === "executed" ? await worldEventConfirms(client, decision.id) : false;
+        drafts.push(...activityDrafts(decision, { worldConfirmed }));
       }
     }
+    await persistDrafts(client, drafts);
   } catch {
     return;
   }
