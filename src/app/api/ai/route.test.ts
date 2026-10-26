@@ -98,4 +98,51 @@ describe("AI runner route", () => {
     expect(longWait.status).toBe(403);
     expect(runAiMind.mock.calls[1]?.[1]).toBe(200_000);
   });
+
+  it("reports an interrupted cycle as unfinished and keeps a finished cycle with no decisions", async () => {
+    process.env.AI_RUNNER_SECRET = "ai-runner-secret-for-tests-only";
+    const { POST } = await import("@/app/api/ai/run/route");
+    const empty = {
+      provider: "gemini",
+      model: "gemini-3.8-flash",
+      claimed: 0,
+      inferred: 0,
+      submitted: 0,
+      constructed: 0,
+      rejected: 0,
+      decisions: [],
+    };
+    runAiMind.mockResolvedValueOnce({
+      ...empty,
+      status: "interrupted",
+      reason: "AI run interrupted. Work was still unfinished at the host deadline. This is not a completed decision cycle.",
+    });
+    const interrupted = await POST(
+      new Request("http://x/api/ai/run", {
+        method: "POST",
+        headers: { authorization: "Bearer ai-runner-secret-for-tests-only", "x-forwarded-for": "8.8.8.21" },
+      }),
+    );
+    expect(interrupted.status).toBe(504);
+    const interruptedBody = (await interrupted.json()) as { ok: boolean; report: { status: string } };
+    expect(interruptedBody.ok).toBe(false);
+    expect(interruptedBody.report.status).toBe("interrupted");
+
+    runAiMind.mockResolvedValueOnce({
+      ...empty,
+      status: "ran",
+      reason: "AI run completed with no decisions.",
+    });
+    const finished = await POST(
+      new Request("http://x/api/ai/run", {
+        method: "POST",
+        headers: { authorization: "Bearer ai-runner-secret-for-tests-only", "x-forwarded-for": "8.8.8.22" },
+      }),
+    );
+    expect(finished.status).toBe(200);
+    const finishedBody = (await finished.json()) as { ok: boolean; report: { status: string; reason: string } };
+    expect(finishedBody.ok).toBe(true);
+    expect(finishedBody.report.status).toBe("ran");
+    expect(finishedBody.report.reason).toMatch(/no decisions/);
+  });
 });

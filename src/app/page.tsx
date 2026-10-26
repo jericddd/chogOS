@@ -1,6 +1,7 @@
 import { connection } from "next/server";
 import { Suspense } from "react";
 import { LivingWorld } from "@/components/world/living-world";
+import { loadAiRunView } from "@/lib/ai/run-status";
 import { loadWorld, realtimeConfig } from "@/lib/world/load";
 
 export default function WorldPage() {
@@ -13,8 +14,8 @@ export default function WorldPage() {
 
 async function WorldLive() {
   await connection();
-  const world = await loadWorld();
-  return <LivingWorld initial={world} realtime={realtimeConfig()} />;
+  const [world, aiRun] = await Promise.all([loadWorld(), loadAiRunView()]);
+  return <LivingWorld initial={world} realtime={realtimeConfig()} aiRun={aiRun} />;
 }
 
 function WorldLoading() {

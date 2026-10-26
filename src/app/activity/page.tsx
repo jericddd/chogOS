@@ -4,7 +4,10 @@ import type { Metadata } from "next";
 import { PageHeader } from "@/components/ui/page-header";
 import { AiDecisionsLink } from "@/components/world/ai-decisions-link";
 import { HistoryFeed } from "@/components/world/history-feed";
+import { AiRunPanel } from "@/components/world/ai-run-panel";
 import { formatUtc } from "@/lib/civilization/labels";
+import { loadAiRunView } from "@/lib/ai/run-status";
+import type { AiRunView } from "@/lib/ai/run-record";
 import { loadWorldSnapshot } from "@/lib/civilization/load-world";
 import { loadWorld, realtimeConfig } from "@/lib/world/load";
 import { eventFilterFromSearch } from "@/lib/world/sync";
@@ -20,7 +23,7 @@ export default function ActivityPage({ searchParams }: { searchParams: Search })
     <div>
       <PageHeader
         title="Civilization History"
-        lede="This feed lists actual recorded world events, newest first. Simulation rows are rule-based world transitions. System rows are setup and synchronization, including each Chog Genesis NFT that joined this civilization. AI rows are decisions recorded by the mind, and each one shows the stored reason. A wallet, fund, trade, or return row links to Monadscan when a receipt, citizen wallet, factory, or Genesis token was stored. A join row links the Genesis token, the observed owner, and the block from that ownerOf read. Genesis transfer links stay on watcher rows. A database status alone is not a chain receipt."
+        lede="This feed lists actual recorded world events, newest first. The AI run status above the list is separate from those rows. Simulation rows are rule-based world transitions. System rows are setup and synchronization, including each Chog Genesis NFT that joined this civilization. AI rows are decisions recorded by the mind, and each one shows the stored reason. A wallet, fund, trade, or return row links to Monadscan when a receipt, citizen wallet, factory, or Genesis token was stored. A join row links the Genesis token, the observed owner, and the block from that ownerOf read. Genesis transfer links stay on watcher rows. A database status alone is not a chain receipt."
       />
       <p className="-mt-2 mb-6">
         <AiDecisionsLink />
@@ -37,17 +40,18 @@ async function ActivityLive({ searchParams }: { searchParams: Search }) {
   const params = await searchParams;
   const filter = eventFilterFromSearch(params);
 
-  const world = await loadWorld();
+  const [world, aiRun] = await Promise.all([loadWorld(), loadAiRunView()]);
   if (world.status === "migration_pending" || world.status === "unconfigured") {
-    return <LegacyHistory note={world.detail} />;
+    return <LegacyHistory note={world.detail} aiRun={aiRun} />;
   }
-  return <HistoryFeed initial={world} realtime={realtimeConfig()} filter={filter} />;
+  return <HistoryFeed initial={world} realtime={realtimeConfig()} filter={filter} aiRun={aiRun} />;
 }
 
-async function LegacyHistory({ note }: { note: string }) {
+async function LegacyHistory({ note, aiRun }: { note: string; aiRun: AiRunView }) {
   const world = await loadWorldSnapshot();
   return (
     <div>
+      <AiRunPanel run={aiRun} />
       <p className="mb-4 text-sm leading-6 text-muted">{note} Membership events recorded before the world existed are listed below.</p>
       {world.events.length === 0 ? (
         <p className="text-sm leading-6 text-muted">No civilization events recorded. {world.persistenceLabel}</p>
