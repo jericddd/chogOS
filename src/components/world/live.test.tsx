@@ -1,15 +1,16 @@
 // @vitest-environment jsdom
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { ActivityFeed } from "@/components/world/activity-feed";
+import { ActivityFeed, CivilizationActivity } from "@/components/world/activity-feed";
+import { CivilizationStatus } from "@/components/world/civilization-status";
 import { GrowthDecisions } from "@/components/world/growth-decisions";
 import { WorldPanel, WorldStatus } from "@/components/world/world-panel";
 import { createLiveStore, type RealtimeConnector, type RealtimeHandlers } from "@/components/world/live-store";
-import type { ClockView, TownNeedView, TownProjectView, WorldEventView, WorldLive, WorldSnapshot } from "@/lib/world/types";
+import type { BuildingView, CitizenView, ClockView, TownNeedView, TownProjectView, WorldEventView, WorldLive, WorldSnapshot } from "@/lib/world/types";
 
 vi.mock("next/link", () => ({
-  default: (props: { href: string; children: React.ReactNode; className?: string }) => (
-    <a href={props.href} className={props.className}>
+  default: (props: { href: string; children: React.ReactNode; className?: string; title?: string }) => (
+    <a href={props.href} className={props.className} title={props.title}>
       {props.children}
     </a>
   ),
@@ -213,6 +214,128 @@ describe("live store", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+describe("civilization status", () => {
+  it("shows stored counts and bars only where progress was recorded", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        new Response(
+          JSON.stringify({
+            ok: true,
+            view: { deploymentState: "live", summary: "Deployed code passed the public checks. A person starts one stored payout." },
+          }),
+        ),
+      ),
+    );
+    const world = {
+      ...snapshot([]),
+      citizens: [
+        {
+          tokenId: "7",
+          name: "Pip",
+          origin: "founding" as const,
+          role: "farmer" as const,
+          homeId: null,
+          workId: null,
+          activity: "idle" as const,
+          locationId: null,
+          originId: null,
+          destinationId: null,
+          purpose: null,
+          startedAt: "2026-10-13T00:00:00Z",
+          endsAt: null,
+          worldStartedS: 20000,
+          worldEndsS: null,
+          shiftsToday: 0,
+          dayIndex: 0,
+          decisionSource: "simulation" as const,
+          updatedTick: 1,
+        },
+      ],
+      buildings: [
+        {
+          id: "hall",
+          kind: "hall" as const,
+          name: "Commons Hall",
+          x: 1,
+          y: 1,
+          w: 4,
+          h: 4,
+          doorX: 2,
+          doorY: 4,
+          capacity: 4,
+          jobSlots: null,
+          role: null,
+          openAir: false,
+          status: "under_construction" as const,
+          constructionProgress: null,
+          batchShifts: null,
+          productionProgress: 0,
+          batchesCompleted: 0,
+          stock: {},
+          completedAt: null,
+          updatedTick: 1,
+        },
+        {
+          id: "farm",
+          kind: "farm" as const,
+          name: "North Farm",
+          x: 8,
+          y: 8,
+          w: 4,
+          h: 4,
+          doorX: 9,
+          doorY: 11,
+          capacity: null,
+          jobSlots: 2,
+          role: "farmer" as const,
+          openAir: false,
+          status: "under_construction" as const,
+          constructionProgress: 36,
+          batchShifts: null,
+          productionProgress: 0,
+          batchesCompleted: 0,
+          stock: {},
+          completedAt: null,
+          updatedTick: 1,
+        },
+      ],
+    };
+    render(
+      <CivilizationStatus
+        snapshot={world}
+        aiRun={{
+          state: "interrupted",
+          title: "The run was interrupted.",
+          detail: "The invocation stopped before it finished.",
+          lastRunAt: null,
+          lastSuccessAt: null,
+          latestDecisionAt: null,
+          decision: null,
+        }}
+        skewMs={0}
+        link="live"
+        realtime="subscribed"
+        onPick={() => undefined}
+      />,
+    );
+    expect(screen.getByText("2 active")).toBeTruthy();
+    expect(screen.getByText(/North Farm · 36%/)).toBeTruthy();
+    expect(screen.queryByText(/Commons Hall ·/)).toBeNull();
+    expect(screen.getAllByRole("progressbar")).toHaveLength(1);
+    expect(screen.getByRole("progressbar").getAttribute("aria-valuenow")).toBe("36");
+    expect(screen.getByText("1 registered")).toBeTruthy();
+    expect(screen.getAllByText("Not tracked").length).toBeGreaterThan(0);
+    const mind = screen.getByRole("link", { name: /AI mind/ });
+    expect(mind.textContent).toContain("Interrupted");
+    expect(mind.getAttribute("title")).toContain("stopped before it finished");
+    expect(screen.queryByText("Running")).toBeNull();
+    const bank = await screen.findByRole("link", { name: /ChogBank/ });
+    expect(bank.textContent).toContain("Verified");
+    expect(bank.textContent?.toLowerCase()).not.toMatch(/operat|paying/);
   });
 });
 
@@ -593,6 +716,68 @@ describe("activity feed", () => {
     await screen.findByRole("heading", { name: "Joined the civilization" });
     await waitFor(() => expect(document.getElementById("joined-civilization")?.scrollIntoView).toHaveBeenCalled());
   });
+
+  it("keeps a 20-row world preview, labels simulation apart from chain rows, and preserves scroll", async () => {
+    const rows = Array.from({ length: 21 }, (_, index) => {
+      const seq = 21 - index;
+      return event(seq, { id: `sim-${seq}`, summary: `Sim event ${seq}` });
+    });
+    const store = createLiveStore(snapshot(rows), { fetcher: vi.fn() as unknown as typeof fetch });
+    render(
+      <ActivityFeed
+        store={store}
+        dock
+        preview
+        aiRun={{
+          state: "interrupted",
+          title: "The run was interrupted.",
+          detail: "The invocation stopped before it finished.",
+          lastRunAt: null,
+          lastSuccessAt: null,
+          latestDecisionAt: null,
+          decision: null,
+        }}
+      />,
+    );
+    expect(screen.getAllByRole("listitem")).toHaveLength(20);
+    expect(screen.getByText("Sim event 21")).toBeTruthy();
+    expect(screen.queryByText("Sim event 1")).toBeNull();
+    expect(screen.getAllByText("Simulation", { selector: "span" }).length).toBeGreaterThan(0);
+    expect(screen.queryByRole("link", { name: /0x/ })).toBeNull();
+    expect(screen.getByText("AI mind · Interrupted").getAttribute("title")).toBe("The invocation stopped before it finished.");
+    expect(screen.queryByText("The run was interrupted.")).toBeNull();
+    expect(screen.getByRole("link", { name: "View all in History →" }).getAttribute("href")).toBe("/activity#civilization-activity");
+    expect(document.querySelector(".world-category-scroll")).toBeTruthy();
+  });
+
+  it("gives civilization joins their own window and a history link", async () => {
+    const enrolled = event(9, {
+      id: "enrolled-8",
+      kind: "citizen_enrolled",
+      category: "membership",
+      source: "system",
+      tokenId: "8",
+      summary: "Chog Genesis #8 enrolled by its verified owner.",
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) => {
+        if (!String(url).includes("category=membership")) {
+          return new Response(JSON.stringify({ status: "ok", events: [], nextBefore: null }));
+        }
+        return new Response(JSON.stringify({ status: "ok", events: [enrolled], nextBefore: null }));
+      }),
+    );
+    const store = createLiveStore(snapshot([]), { fetcher: vi.fn() as unknown as typeof fetch });
+    render(<CivilizationActivity store={store} />);
+    expect(await screen.findByRole("heading", { name: "Civilization activity" })).toBeTruthy();
+    expect(screen.getByText("Chog Genesis #8 enrolled by its verified owner.")).toBeTruthy();
+    expect(screen.getByText("System", { selector: "span" })).toBeTruthy();
+    expect(screen.queryByRole("link", { name: /0x/ })).toBeNull();
+    expect(screen.getByRole("link", { name: "View all in History →" }).getAttribute("href")).toBe(
+      "/activity?source=system#joined-civilization",
+    );
+  });
 });
 
 describe("town growth", () => {
@@ -653,6 +838,30 @@ describe("town growth", () => {
     expect(screen.getAllByText("AI", { selector: "span" }).length).toBeGreaterThan(0);
     expect(String(fetcher.mock.calls[0]?.[0])).toContain("category=construction");
     expect(fetcher.mock.calls.some((call) => String(call[0]).includes("source=ai") && !String(call[0]).includes("category="))).toBe(true);
+  });
+
+  it("shows the 20 newest town decisions in the world window and links to history", async () => {
+    const rows = Array.from({ length: 24 }, (_, index) => {
+      const seq = 24 - index;
+      return event(seq, {
+        id: `road-${seq}`,
+        kind: "road.placed",
+        category: "construction",
+        source: "ai",
+        summary: `Road decision ${seq}`,
+      });
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(JSON.stringify({ status: "ok", events: rows, nextBefore: null }))),
+    );
+    render(<GrowthDecisions dock />);
+    expect(await screen.findByText("Road decision 24")).toBeTruthy();
+    expect(screen.getAllByRole("listitem")).toHaveLength(20);
+    expect(screen.queryByText("Road decision 4")).toBeNull();
+    const items = screen.getAllByRole("listitem");
+    expect(Number(items[0]!.getAttribute("data-seq"))).toBeGreaterThan(Number(items[1]!.getAttribute("data-seq")));
+    expect(screen.getByRole("link", { name: "View all in History →" }).getAttribute("href")).toBe("/activity#town-growth");
   });
 });
 
@@ -908,5 +1117,116 @@ describe("town needs inspector", () => {
     expect(screen.getByText(/No critical shortage is currently detected/)).toBeTruthy();
     expect(screen.queryByText(/Food supply is running low/)).toBeNull();
     expect(screen.queryByText(/Town needs are not in this database yet/)).toBeNull();
+  });
+});
+
+describe("in-world profiles", () => {
+  const farm: BuildingView = {
+    id: "north-farm",
+    kind: "farm",
+    name: "North Farm",
+    x: 4,
+    y: 8,
+    w: 6,
+    h: 4,
+    doorX: 6,
+    doorY: 11,
+    capacity: null,
+    jobSlots: 2,
+    role: "farmer",
+    openAir: false,
+    status: "under_construction",
+    constructionProgress: 36,
+    batchShifts: 4,
+    productionProgress: 1,
+    batchesCompleted: 2,
+    stock: { food: 12 },
+    completedAt: null,
+    updatedTick: 4,
+  };
+  const citizen: CitizenView = {
+    tokenId: "7",
+    name: "Pip",
+    origin: "founding",
+    role: "farmer",
+    homeId: null,
+    workId: farm.id,
+    activity: "working",
+    locationId: farm.id,
+    originId: null,
+    destinationId: null,
+    purpose: "work",
+    startedAt: "2026-10-13T00:00:00Z",
+    endsAt: null,
+    worldStartedS: 20000,
+    worldEndsS: null,
+    shiftsToday: 1,
+    dayIndex: 0,
+    decisionSource: "ai",
+    updatedTick: 4,
+  };
+
+  it("keeps recorded citizen and building fields and closes inside the world", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(JSON.stringify({ status: "unavailable", detail: "Mind records are not available yet." }))),
+    );
+    const world = { ...snapshot([]), citizens: [citizen], buildings: [farm] };
+    const picks: Array<unknown> = [];
+    const onPick = (selection: unknown) => {
+      picks.push(selection);
+    };
+    const citizenView = render(
+      <WorldPanel
+        snapshot={world}
+        skewMs={0}
+        selection={{ type: "citizen", tokenId: "7" }}
+        recent={[]}
+        follow
+        onToggleFollow={() => undefined}
+        onPick={onPick}
+      />,
+    );
+    expect(screen.getByText("Founding citizen")).toBeTruthy();
+    expect(screen.getByText("Pip")).toBeTruthy();
+    expect(screen.getByText("Token 7")).toBeTruthy();
+    expect(screen.getByText(/Working at North Farm/)).toBeTruthy();
+    expect(screen.getByText("Farmer")).toBeTruthy();
+    expect(screen.getAllByText("North Farm").length).toBeGreaterThan(0);
+    expect(screen.getByText("Shelters at Commons Hall")).toBeTruthy();
+    expect(screen.getByText(/of 2/)).toBeTruthy();
+    expect(screen.getByText("AI mind")).toBeTruthy();
+    expect(screen.getAllByText("Working").length).toBeGreaterThan(0);
+    expect(screen.getByRole("link", { name: "Open profile" }).getAttribute("href")).toBe("/citizens/7");
+    expect(await screen.findByText("Mind records are not available yet.")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Close inspector" }));
+    expect(picks).toEqual([null]);
+    citizenView.unmount();
+
+    picks.length = 0;
+    render(
+      <WorldPanel
+        snapshot={world}
+        skewMs={0}
+        selection={{ type: "building", id: farm.id }}
+        recent={[]}
+        follow={false}
+        onToggleFollow={() => undefined}
+        onPick={onPick}
+      />,
+    );
+    expect(screen.getByText("Farm")).toBeTruthy();
+    expect(screen.getByText("North Farm")).toBeTruthy();
+    expect(screen.getByText(/north-farm · 4,8/)).toBeTruthy();
+    expect(screen.getByText("Under construction · 36%")).toBeTruthy();
+    expect(screen.getByText(/Each builder shift adds 4%/)).toBeTruthy();
+    expect(screen.getByText(/1 of 4 shifts · 2 batches/)).toBeTruthy();
+    expect(screen.getByText("Food")).toBeTruthy();
+    expect(screen.getByText("12")).toBeTruthy();
+    expect(screen.getByText(/Not token balances/)).toBeTruthy();
+    expect(screen.getByText("Here now")).toBeTruthy();
+    expect(screen.getByText("On the way")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Close inspector" }));
+    expect(picks).toEqual([null]);
   });
 });

@@ -1,10 +1,14 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import Link from "next/link";
+import { useEffect, useRef, useState } from "react";
 import { EventItem } from "@/components/world/event-item";
 import { useNow } from "@/components/world/use-now";
-import { townGrowthEvents } from "@/lib/world/sync";
+import { mergeEvents, townGrowthEvents } from "@/lib/world/sync";
 import type { ClockView, EventPage, WorldEventView } from "@/lib/world/types";
+
+const WORLD_WINDOW = 20;
+const HISTORY_WINDOW = 50;
 
 const CONSTRUCTION_URL = "/api/world/events?source=ai&category=construction&limit=5";
 const DECISIONS_URL = "/api/world/events?source=ai&limit=50";
@@ -22,13 +26,16 @@ export function GrowthDecisions({
   dock = false,
   inactive = false,
   clock = null,
+  recent = [],
 }: {
   dock?: boolean;
   inactive?: boolean;
   clock?: ClockView | null;
+  /** Live events already on the world store. Merged without replacing the scroll container. */
+  recent?: readonly WorldEventView[];
 }) {
   const now = useNow(15_000);
-  const [events, setEvents] = useState<WorldEventView[] | null>(null);
+  const [pages, setPages] = useState<WorldEventView[] | null>(null);
   const [detail, setDetail] = useState("");
 
   useEffect(() => {
@@ -44,21 +51,31 @@ export function GrowthDecisions({
         if (ready.length === 0) {
           const detailFor = (page: EventPage) => (page.status === "ok" ? "" : page.detail);
           setDetail(detailFor(construction) || detailFor(decisions) || "Growth decisions could not be read.");
-          setEvents([]);
+          setPages([]);
           return;
         }
-        setEvents(townGrowthEvents(ready.flatMap((page) => page.events), dock ? 8 : 12));
+        setDetail("");
+        setPages(ready.flatMap((page) => page.events));
       })
       .catch(() => {
         if (!cancelled) {
           setDetail("Growth decisions could not be read.");
-          setEvents([]);
+          setPages([]);
         }
       });
     return () => {
       cancelled = true;
     };
-  }, [dock]);
+  }, []);
+
+  const events = pages === null ? null : townGrowthEvents(mergeEvents(pages, recent), dock ? WORLD_WINDOW : HISTORY_WINDOW);
+  const focusedGrowth = useRef(false);
+
+  useEffect(() => {
+    if (dock || pages === null || focusedGrowth.current || window.location.hash !== "#town-growth") return;
+    focusedGrowth.current = true;
+    document.getElementById("town-growth")?.scrollIntoView({ block: "start" });
+  }, [dock, pages]);
 
   const empty =
     detail ||
@@ -68,6 +85,7 @@ export function GrowthDecisions({
 
   return (
     <section
+      id={dock ? undefined : "town-growth"}
       aria-labelledby="growth-title"
       className={dock ? `world-growth pixel-panel${inactive ? " is-inactive" : ""}` : "rounded-2xl border border-violet/40 bg-card px-4 py-5 sm:px-5"}
     >
@@ -83,7 +101,7 @@ export function GrowthDecisions({
           </p>
         )}
       </div>
-      <div className={dock ? "world-scroll min-h-0 flex-1 overflow-y-auto overscroll-contain px-2.5" : undefined}>
+      <div className={dock ? "world-scroll world-category-scroll min-h-0 overflow-y-auto overscroll-contain px-2.5" : undefined}>
         {events === null ? <p className="py-3 text-sm text-muted">Reading growth decisions…</p> : null}
         {events && events.length === 0 ? <p className="py-3 text-sm leading-6 text-muted">{empty}</p> : null}
         {events && events.length > 0 ? (
@@ -94,6 +112,13 @@ export function GrowthDecisions({
           </ul>
         ) : null}
       </div>
+      {dock ? (
+        <p className="shrink-0 border-t-4 border-line px-2.5 py-2">
+          <Link href="/activity#town-growth" className="text-xs text-accent" title="Opens town growth in History.">
+            View all in History →
+          </Link>
+        </p>
+      ) : null}
     </section>
   );
 }
