@@ -34,6 +34,7 @@ export function EventItem({
   citizenName = unnamedCitizen,
   compact = false,
   clock = null,
+  showSource = true,
 }: {
   event: WorldEventView;
   now: number;
@@ -42,14 +43,16 @@ export function EventItem({
   compact?: boolean;
   /** Projects a world day when the event has no stored world second. */
   clock?: ClockView | null;
+  /** World activity rows omit the source pill. History keeps it. */
+  showSource?: boolean;
 }) {
   const segments = eventSegments(event, citizenName);
   const when = formatEventWhen(event.occurredAt, now, event.worldS, clock);
   const storedWorld = event.worldS !== null ? formatWorldTime(event.worldS) : null;
   return (
     <li className={compact ? "py-2" : "py-3"} data-seq={event.seq}>
-      <div className="flex items-start gap-3">
-        <SourceBadge source={event.source} />
+      <div className={`flex items-start ${showSource ? "gap-3" : ""}`}>
+        {showSource ? <SourceBadge source={event.source} /> : null}
         <div className="min-w-0 flex-1">
           <p className={compact ? "text-sm leading-5" : "leading-6"}>
             {segments.map((segment, index) =>

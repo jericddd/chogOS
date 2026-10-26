@@ -476,7 +476,7 @@ export function ActivityFeed({
 
         <ul className={`divide-y divide-line ${dock ? "" : "mt-3 border-y border-line"} ${visible.length === 0 ? "hidden" : ""}`}>
           {visible.map((event) => (
-            <EventItem key={event.id} event={event} now={now} citizenName={citizenName} compact={dock} clock={live.snapshot?.clock} />
+            <EventItem key={event.id} event={event} now={now} citizenName={citizenName} compact={dock} clock={live.snapshot?.clock} showSource={!preview} />
           ))}
         </ul>
         {dock ? null : <JoinedCivilization dock={false} joins={joins} now={now} citizenName={citizenName} clock={live.snapshot?.clock} />}

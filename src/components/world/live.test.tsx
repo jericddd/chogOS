@@ -745,7 +745,7 @@ describe("activity feed", () => {
     expect(screen.getAllByRole("listitem")).toHaveLength(20);
     expect(screen.getByText("Sim event 21")).toBeTruthy();
     expect(screen.queryByText("Sim event 1")).toBeNull();
-    expect(screen.getAllByText("Simulation", { selector: "span" }).length).toBeGreaterThan(0);
+    expect(screen.queryByText("Simulation", { selector: "span" })).toBeNull();
     expect(screen.queryByRole("link", { name: /0x/ })).toBeNull();
     expect(screen.getByText("AI mind · Interrupted").getAttribute("title")).toBe("The invocation stopped before it finished.");
     expect(screen.queryByText("The run was interrupted.")).toBeNull();
