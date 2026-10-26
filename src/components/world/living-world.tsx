@@ -3,12 +3,13 @@
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { AiDecisionsLink } from "@/components/world/ai-decisions-link";
-import { ActivityFeed } from "@/components/world/activity-feed";
+import { ActivityFeed, CitizenReasons } from "@/components/world/activity-feed";
 import { GrowthDecisions } from "@/components/world/growth-decisions";
 import { createLiveStore, sharedLiveStore, useLive, type LiveStore } from "@/components/world/live-store";
 import { useNow } from "@/components/world/use-now";
+import { CivilizationStatus } from "@/components/world/civilization-status";
 import { WorldCanvas, type Selection, type WorldCanvasHandle } from "@/components/world/world-canvas";
-import { WorldPanel, WorldStatus } from "@/components/world/world-panel";
+import { WorldPanel } from "@/components/world/world-panel";
 import { runnerHealth } from "@/lib/world/clock";
 import type { AiRunView } from "@/lib/ai/run-record";
 import type { Hit } from "@/lib/world/scene";
@@ -93,7 +94,7 @@ export function LivingWorld({
   const params = useSearchParams();
   const selection = parseSelection(params);
   const [follow, setFollow] = useState(true);
-  const [phonePane, setPhonePane] = useState<"town" | "growth" | "activity">("town");
+  const [phonePane, setPhonePane] = useState<"town" | "growth" | "civilization" | "activity">("town");
   const canvas = useRef<WorldCanvasHandle>(null);
   const stage = useRef<HTMLDivElement>(null);
   const now = useNow(5_000);
@@ -168,7 +169,25 @@ export function LivingWorld({
           onSelect={onHit}
           onUserMove={() => setFollow(false)}
         />
-        <div className="pointer-events-none absolute top-3 left-3 z-10 flex max-w-[calc(100%-1.5rem)] flex-col gap-2 md:max-w-[calc(100%-23.5rem)]">
+        {selection ? (
+          <div className="world-inspect world-hud pixel-panel world-scroll" role="dialog" aria-label="World profile">
+            <WorldPanel
+              snapshot={snapshot}
+              skewMs={live.skewMs}
+              selection={selection}
+              recent={live.recent}
+              follow={follow}
+              onToggleFollow={() => {
+                setFollow((value) => !value);
+                if (!follow) {
+                  canvas.current?.focus(selection);
+                }
+              }}
+              onPick={select}
+            />
+          </div>
+        ) : null}
+        <div className="pointer-events-none absolute top-3 left-3 z-10 flex max-w-[calc(100%-1.5rem)] flex-col gap-2 md:max-w-[calc(100%-17rem)]">
           <p className="pointer-events-auto w-fit border-2 border-[var(--pixel-gold)] bg-background/90 px-3 py-1 text-[0.65rem] leading-4 text-muted">
             Observing · pan to explore the surrounding lands
           </p>
@@ -204,7 +223,8 @@ export function LivingWorld({
             [
               ["town", "Town"],
               ["growth", "Growth"],
-              ["activity", "Activity"],
+              ["civilization", "Reasons"],
+              ["activity", "Feed"],
             ] as const
           ).map(([id, label]) => (
             <button key={id} type="button" role="tab" aria-selected={phonePane === id} onClick={() => setPhonePane(id)}>
@@ -213,31 +233,25 @@ export function LivingWorld({
           ))}
         </div>
         <aside aria-label="World details" className={`world-town world-hud pixel-panel${phonePane === "town" ? "" : " is-inactive"}`}>
-          <div className="flex flex-wrap items-center justify-between gap-2 border-b-4 border-line px-3 py-2">
-            <p className="font-display text-[0.6rem] leading-4 text-accent">One shared world</p>
+          <div className="flex flex-wrap items-center justify-between gap-2 border-b-4 border-line px-2.5 py-2">
+            <p className="font-display text-[0.55rem] leading-4 text-accent">One shared world</p>
             <AiDecisionsLink />
           </div>
-          <div className="world-scroll min-h-0 flex-1 space-y-3 overflow-y-auto overscroll-contain px-3 py-3">
-            <WorldStatus snapshot={snapshot} skewMs={live.skewMs} link={live.link} realtime={live.realtime} />
-            <WorldPanel
+          <div className="world-scroll min-h-0 flex-1 space-y-3 overflow-y-auto overscroll-contain px-2.5 py-2">
+            <CivilizationStatus
               snapshot={snapshot}
+              aiRun={aiRun}
               skewMs={live.skewMs}
-              selection={selection}
-              recent={live.recent}
-              follow={follow}
-              onToggleFollow={() => {
-                setFollow((value) => !value);
-                if (!follow) {
-                  canvas.current?.focus(selection);
-                }
-              }}
+              link={live.link}
+              realtime={live.realtime}
               onPick={select}
             />
           </div>
         </aside>
         <div className="world-feeds">
-          <GrowthDecisions dock inactive={phonePane !== "growth"} clock={snapshot.clock} />
-          <ActivityFeed store={store} initialFilter={feedFilter} dock inactive={phonePane !== "activity"} aiRun={aiRun} />
+          <GrowthDecisions dock inactive={phonePane !== "growth"} clock={snapshot.clock} recent={live.recent} />
+          <CitizenReasons aiRun={aiRun} inactive={phonePane !== "civilization"} />
+          <ActivityFeed store={store} initialFilter={feedFilter} dock preview inactive={phonePane !== "activity"} aiRun={aiRun} />
         </div>
       </div>
     </div>

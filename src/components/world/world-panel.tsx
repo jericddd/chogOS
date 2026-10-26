@@ -336,8 +336,8 @@ function CitizenInspector({
           <h2 className="truncate font-serif text-2xl tracking-tight">{citizenLabel(citizen)}</h2>
           <p className="text-xs text-muted">Token {citizen.tokenId}</p>
         </div>
-        <button type="button" onClick={onClose} className="rounded-md px-2 py-1 text-sm text-muted hover:bg-background hover:text-foreground" aria-label="Close inspector">
-          ✕
+        <button type="button" onClick={onClose} className="pixel-close" aria-label="Close inspector">
+          Close
         </button>
       </div>
       <p className="mt-3 text-sm">{describeCitizenNow(citizen, buildings)}</p>
@@ -545,8 +545,8 @@ function BuildingInspector({
             {region ? ` · ${region.name}` : ""}
           </p>
         </div>
-        <button type="button" onClick={onClose} className="rounded-md px-2 py-1 text-sm text-muted hover:bg-background hover:text-foreground" aria-label="Close inspector">
-          ✕
+        <button type="button" onClick={onClose} className="pixel-close" aria-label="Close inspector">
+          Close
         </button>
       </div>
       {building.status === "under_construction" ? (
@@ -758,8 +758,8 @@ function ProjectInspector({
             {project.projectType.replace(/_/g, " ")} · {project.status}
           </p>
         </div>
-        <button type="button" onClick={onClose} className="rounded-md px-2 py-1 text-sm text-muted hover:bg-background hover:text-foreground" aria-label="Close inspector">
-          ✕
+        <button type="button" onClick={onClose} className="pixel-close" aria-label="Close inspector">
+          Close
         </button>
       </div>
       <p className="mt-3 text-sm leading-6">{project.description}</p>
@@ -850,8 +850,8 @@ function RoadInspector({
           <h2 className="font-serif text-2xl tracking-tight">{road.name}</h2>
           <p className="text-xs text-muted">Catalog {road.stubId}</p>
         </div>
-        <button type="button" onClick={onClose} className="rounded-md px-2 py-1 text-sm text-muted hover:bg-background hover:text-foreground" aria-label="Close inspector">
-          ✕
+        <button type="button" onClick={onClose} className="pixel-close" aria-label="Close inspector">
+          Close
         </button>
       </div>
       <dl className="mt-3 space-y-1 text-sm">
@@ -1029,8 +1029,8 @@ export function WorldPanel({
     return (
       <div>
         <p className="text-sm text-muted">Citizen #{selection.tokenId} is not in the world.</p>
-        <button type="button" onClick={close} className="mt-2 text-sm text-accent">
-          Back to overview
+        <button type="button" onClick={close} className="pixel-close mt-2" aria-label="Close inspector">
+          Close
         </button>
       </div>
     );
@@ -1062,6 +1062,16 @@ export function WorldPanel({
         />
       );
     }
+  }
+  if (selection) {
+    return (
+      <div>
+        <p className="text-sm text-muted">{selection.id} is not in the world.</p>
+        <button type="button" onClick={close} className="pixel-close mt-2" aria-label="Close inspector">
+          Close
+        </button>
+      </div>
+    );
   }
   return <WorldOverview snapshot={snapshot} onPick={onPick} />;
 }

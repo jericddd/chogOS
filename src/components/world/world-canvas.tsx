@@ -76,7 +76,7 @@ function overlayPadding(container: HTMLElement): Pick<Viewport, "padLeft" | "pad
   const stage = container.closest(".world-stage");
   if (!stage) return { padLeft: 0, padTop: 0, padRight: 0, padBottom: 0 };
   const overlays: ScreenBox[] = [];
-  for (const node of stage.querySelectorAll<HTMLElement>(".world-town, .world-growth, .world-activity")) {
+  for (const node of stage.querySelectorAll<HTMLElement>(".world-town, .world-growth, .world-civilization, .world-activity, .world-inspect")) {
     if (getComputedStyle(node).display === "none") continue;
     const box = node.getBoundingClientRect();
     overlays.push({

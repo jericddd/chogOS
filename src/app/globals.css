@@ -143,7 +143,7 @@ h2.font-serif {
 .world-tabs {
   display: grid;
   flex: none;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 0.35rem;
 }
 
@@ -172,6 +172,7 @@ h2.font-serif {
 
 .world-town,
 .world-growth,
+.world-civilization,
 .world-activity {
   display: flex;
   min-width: 0;
@@ -189,6 +190,69 @@ h2.font-serif {
 .world-scroll {
   scrollbar-color: var(--pixel-gold) transparent;
   scrollbar-width: thin;
+}
+
+/* About three compact activity rows. Older rows stay in the same scroller. */
+.world-category-scroll {
+  max-height: 11rem;
+  flex: none;
+}
+
+.world-category-scroll .line-clamp-3 {
+  -webkit-line-clamp: 1;
+  line-clamp: 1;
+}
+
+.world-inspect {
+  position: absolute;
+  z-index: 20;
+  top: 0.75rem;
+  left: 3.5rem;
+  width: min(22rem, calc(100% - 4.25rem));
+  max-height: min(70%, calc(100% - 1.5rem));
+  overflow: auto;
+  padding: 0.75rem;
+  pointer-events: auto;
+}
+
+.world-inspect .font-serif {
+  font-family: var(--font-press), ui-monospace, monospace;
+  font-size: 0.78rem;
+  line-height: 1.45;
+  letter-spacing: 0.02em;
+}
+
+.world-inspect .rounded-xl,
+.world-inspect .rounded-lg,
+.world-inspect .rounded-full,
+.world-inspect .rounded-md,
+.world-inspect .rounded-2xl {
+  border-radius: 0;
+}
+
+.pixel-close {
+  border: 2px solid var(--pixel-gold);
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-press), ui-monospace, monospace;
+  font-size: 0.55rem;
+  line-height: 1.4;
+  padding: 0.35rem 0.5rem;
+  cursor: pointer;
+}
+
+.pixel-close:hover {
+  background: var(--accent);
+  color: var(--pixel-ink);
+}
+
+@media (min-width: 768px) {
+  .world-inspect {
+    top: 7.5rem;
+    left: 0.75rem;
+    width: min(22rem, calc(100% - 18rem));
+    max-height: max(9rem, calc(100% - 26rem));
+  }
 }
 
 @media (min-width: 768px) {
@@ -216,12 +280,13 @@ h2.font-serif {
     top: 0.75rem;
     right: 0.75rem;
     bottom: 0.75rem;
-    width: 22rem;
+    width: 15.5rem;
     flex: none;
   }
 
   .world-town.is-inactive,
   .world-growth.is-inactive,
+  .world-civilization.is-inactive,
   .world-activity.is-inactive {
     display: flex;
   }
@@ -232,15 +297,16 @@ h2.font-serif {
     bottom: 0.75rem;
     left: 0.75rem;
     display: grid;
-    width: calc(100% - 24.25rem);
-    height: min(17.5rem, 42%);
-    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-    grid-template-rows: minmax(0, 1fr);
+    width: calc(100% - 17.75rem);
+    height: auto;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-rows: auto;
     gap: 0.75rem;
     pointer-events: none;
   }
 
   .world-growth,
+  .world-civilization,
   .world-activity {
     flex: none;
     grid-row: auto;
