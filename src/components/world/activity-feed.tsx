@@ -379,8 +379,8 @@ export function ActivityFeed({
       aria-labelledby="activity-title"
       className={dock ? `world-activity pixel-panel${inactive ? " is-inactive" : ""}` : "rounded-2xl border border-line bg-card px-4 py-5 sm:px-5"}
     >
-      <div className={dock ? "flex shrink-0 flex-wrap items-center justify-between gap-2 border-b-4 border-line px-2.5 py-2" : "flex flex-wrap items-end justify-between gap-3"}>
-          <div>
+      <div className={dock ? "flex shrink-0 items-baseline justify-between gap-2 border-b-4 border-line px-2.5 py-1.5" : "flex flex-wrap items-end justify-between gap-3"}>
+          <div className="min-w-0">
             <h2 id="activity-title" className={dock ? "font-display text-[0.62rem] leading-4 text-accent" : "font-serif text-2xl tracking-tight"}>
               {preview ? "Activity feed" : dock ? "Activity" : "Civilization Activity"}
             </h2>
@@ -390,8 +390,13 @@ export function ActivityFeed({
               </p>
             )}
           </div>
-          <div className="flex flex-wrap items-center gap-1.5">
-            {dock || preview ? null : <AiDecisionsLink />}
+          {preview ? (
+            <Link href="/activity#civilization-activity" className="shrink-0 text-[0.6rem] leading-4 text-accent" title="Opens Civilization Activity in History.">
+              view all
+            </Link>
+          ) : null}
+          <div className={preview ? "hidden" : "flex flex-wrap items-center gap-1.5"}>
+            {dock ? null : <AiDecisionsLink />}
             {preview ? null : (
               <>
                 <label className="text-xs text-muted">
@@ -484,13 +489,7 @@ export function ActivityFeed({
         <div ref={bottomRef} className="h-px" />
       </div>
 
-      {preview ? (
-        <p className="shrink-0 border-t-4 border-line px-2.5 py-2">
-          <Link href="/activity#civilization-activity" className="text-xs text-accent" title="Opens Civilization Activity in History.">
-            View all in History →
-          </Link>
-        </p>
-      ) : (
+      {preview ? null : (
       <div className={dock ? "shrink-0 border-t-4 border-line" : "mt-4 flex flex-wrap items-center justify-between gap-3"}>
         {dock ? <JoinedCivilization dock joins={joins} now={now} citizenName={citizenName} clock={live.snapshot?.clock} /> : null}
         <div className={dock ? "flex flex-wrap items-center justify-between gap-2 px-2.5 py-2" : "contents"}>
@@ -542,10 +541,15 @@ export function CivilizationActivity({
 
   return (
     <section aria-labelledby="civilization-joins-title" className={`world-civilization pixel-panel${inactive ? " is-inactive" : ""}`}>
-      <div className="shrink-0 border-b-4 border-line px-2.5 py-2">
-        <h2 id="civilization-joins-title" className="font-display text-[0.62rem] leading-4 text-accent">
-          Civilization activity
-        </h2>
+      <div className="shrink-0 border-b-4 border-line px-2.5 py-1.5">
+        <div className="flex items-baseline justify-between gap-2">
+          <h2 id="civilization-joins-title" className="min-w-0 font-display text-[0.62rem] leading-4 text-accent">
+            Civilization activity
+          </h2>
+          <Link href="/activity?source=system#joined-civilization" className="shrink-0 text-[0.6rem] leading-4 text-accent" title="Opens Joined the civilization in History.">
+            view all
+          </Link>
+        </div>
         <p className="text-[0.65rem] leading-4 text-muted">Chogs that entered</p>
       </div>
       <div className="world-scroll world-category-scroll min-h-0 overflow-y-auto overscroll-contain px-2.5">
@@ -559,11 +563,6 @@ export function CivilizationActivity({
           </ul>
         )}
       </div>
-      <p className="shrink-0 border-t-4 border-line px-2.5 py-2">
-        <Link href="/activity?source=system#joined-civilization" className="text-xs text-accent" title="Opens Joined the civilization in History.">
-          View all in History →
-        </Link>
-      </p>
     </section>
   );
 }

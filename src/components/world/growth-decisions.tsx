@@ -89,10 +89,15 @@ export function GrowthDecisions({
       aria-labelledby="growth-title"
       className={dock ? `world-growth pixel-panel${inactive ? " is-inactive" : ""}` : "rounded-2xl border border-violet/40 bg-card px-4 py-5 sm:px-5"}
     >
-      <div className={dock ? "shrink-0 border-b-4 border-line px-2.5 py-2" : undefined}>
-        <h2 id="growth-title" className={dock ? "font-display text-[0.62rem] leading-4 text-violet" : "font-serif text-2xl tracking-tight"}>
+      <div className={dock ? "flex shrink-0 items-baseline justify-between gap-2 border-b-4 border-line px-2.5 py-1.5" : undefined}>
+        <h2 id="growth-title" className={dock ? "min-w-0 font-display text-[0.62rem] leading-4 text-violet" : "font-serif text-2xl tracking-tight"}>
           {dock ? "Town growth" : "How the town is growing"}
         </h2>
+        {dock ? (
+          <Link href="/activity#town-growth" className="shrink-0 text-[0.6rem] leading-4 text-accent" title="Opens town growth in History.">
+            view all
+          </Link>
+        ) : null}
         {dock ? null : (
           <p className="mt-1 text-sm leading-6 text-muted">
             These are AI decisions about roads, buildings, parks, the bank, laws, and citizen wallets. The sentence under a
@@ -112,13 +117,6 @@ export function GrowthDecisions({
           </ul>
         ) : null}
       </div>
-      {dock ? (
-        <p className="shrink-0 border-t-4 border-line px-2.5 py-2">
-          <Link href="/activity#town-growth" className="text-xs text-accent" title="Opens town growth in History.">
-            View all in History →
-          </Link>
-        </p>
-      ) : null}
     </section>
   );
 }

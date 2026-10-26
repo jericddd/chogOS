@@ -333,7 +333,8 @@ describe("civilization status", () => {
     expect(mind.textContent).toContain("Interrupted");
     expect(mind.getAttribute("title")).toContain("stopped before it finished");
     expect(screen.queryByText("Running")).toBeNull();
-    const bank = await screen.findByRole("link", { name: /ChogBank/ });
+    await screen.findByText("Verified");
+    const bank = screen.getByRole("link", { name: /ChogBank/ });
     expect(bank.textContent).toContain("Verified");
     expect(bank.textContent?.toLowerCase()).not.toMatch(/operat|paying/);
   });
@@ -746,7 +747,7 @@ describe("activity feed", () => {
     expect(screen.queryByRole("link", { name: /0x/ })).toBeNull();
     expect(screen.getByText("AI mind · Interrupted").getAttribute("title")).toBe("The invocation stopped before it finished.");
     expect(screen.queryByText("The run was interrupted.")).toBeNull();
-    expect(screen.getByRole("link", { name: "View all in History →" }).getAttribute("href")).toBe("/activity#civilization-activity");
+    expect(screen.getByRole("link", { name: "view all" }).getAttribute("href")).toBe("/activity#civilization-activity");
     expect(document.querySelector(".world-category-scroll")).toBeTruthy();
   });
 
@@ -774,7 +775,7 @@ describe("activity feed", () => {
     expect(screen.getByText("Chog Genesis #8 enrolled by its verified owner.")).toBeTruthy();
     expect(screen.getByText("System", { selector: "span" })).toBeTruthy();
     expect(screen.queryByRole("link", { name: /0x/ })).toBeNull();
-    expect(screen.getByRole("link", { name: "View all in History →" }).getAttribute("href")).toBe(
+    expect(screen.getByRole("link", { name: "view all" }).getAttribute("href")).toBe(
       "/activity?source=system#joined-civilization",
     );
   });
@@ -861,7 +862,7 @@ describe("town growth", () => {
     expect(screen.queryByText("Road decision 4")).toBeNull();
     const items = screen.getAllByRole("listitem");
     expect(Number(items[0]!.getAttribute("data-seq"))).toBeGreaterThan(Number(items[1]!.getAttribute("data-seq")));
-    expect(screen.getByRole("link", { name: "View all in History →" }).getAttribute("href")).toBe("/activity#town-growth");
+    expect(screen.getByRole("link", { name: "view all" }).getAttribute("href")).toBe("/activity#town-growth");
   });
 });
 
