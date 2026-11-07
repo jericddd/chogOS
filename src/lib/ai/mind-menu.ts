@@ -1,7 +1,9 @@
 import type { DecisionContext } from "@/lib/ai/context";
 import { acceptGrowth } from "@/lib/ai/growth";
 import type { ParsedDecision } from "@/lib/ai/schema";
+import { shiftOfferFor, type ShiftOffer, type ShiftRosterMember } from "@/lib/ai/shift-change";
 import { civicMenu } from "@/lib/world/civic";
+import type { BuildingView } from "@/lib/world/types";
 import { constructionKindsForShortage, roadsDeferredForShortage } from "@/lib/world/shortage";
 
 export const PUNITIVE_ACTIONS = ["detain", "levy", "watch"] as const;
@@ -11,6 +13,7 @@ export type MindMenu = {
   buildKinds: string[];
   places: Array<{ action: string; buildingId: string; name: string }>;
   rejections: string[];
+  shift: ShiftOffer | null;
 };
 
 const PLACE_ACTIONS = new Set(["work", "socialize", "rest", "sleep", "visit"]);
@@ -39,7 +42,12 @@ export function mindResponseSchema(menu: MindMenu): Record<string, unknown> {
 
 export function buildMindMenu(
   context: DecisionContext,
-  input: { blockedKinds?: readonly string[]; rejections?: readonly string[] } = {},
+  input: {
+    blockedKinds?: readonly string[];
+    rejections?: readonly string[];
+    buildings?: readonly BuildingView[];
+    roster?: readonly ShiftRosterMember[];
+  } = {},
 ): MindMenu {
   const blocked = new Set(input.blockedKinds ?? []);
   const kinds = constructionKindsForShortage(context.construction.canBuildKinds, context.stock).filter(
@@ -49,10 +57,24 @@ export function buildMindMenu(
   if (!roadsDeferredForShortage(context.stock) && context.construction.roads.eligibleStubs.length > 0 && !blocked.has("road")) {
     buildKinds.push("road");
   }
-  const places = context.feasible
+  const shift =
+    input.buildings && input.roster
+      ? shiftOfferFor({
+          tokenId: context.tokenId,
+          role: context.role,
+          stock: context.stock,
+          buildings: input.buildings,
+          roster: input.roster,
+        })
+      : null;
+  const places: MindMenu["places"] = context.feasible
     .filter((option) => PLACE_ACTIONS.has(option.action))
+    .filter((option) => !(shift && option.action === "work" && option.buildingId === context.workId))
     .slice(0, 12)
     .map((option) => ({ action: option.action, buildingId: option.buildingId, name: option.name }));
+  if (shift) {
+    places.unshift({ action: "change_shift", buildingId: shift.buildingId, name: shift.name });
+  }
   const actions = new Set<string>(["wait"]);
   if (buildKinds.length > 0) actions.add("build");
   for (const place of places) actions.add(place.action);
@@ -68,6 +90,7 @@ export function buildMindMenu(
     buildKinds: buildKinds.length > 0 ? [...buildKinds, "none"] : ["none"],
     places,
     rejections: (input.rejections ?? []).slice(-6),
+    shift,
   };
 }
 
@@ -111,6 +134,26 @@ export function acceptMindChoice(
     return {
       ok: true,
       decision: { ...decision, buildKind: "none", buildingId: "", placeName: null, roadStubId: "none" },
+    };
+  }
+  if (decision.action === "change_shift") {
+    if (!menu.shift || decision.buildingId !== menu.shift.buildingId) {
+      return {
+        ok: false,
+        reason: menu.shift
+          ? `change_shift is open at ${menu.shift.buildingId} (${menu.shift.name}), not ${decision.buildingId || "that place"}`
+          : "change_shift is not open for this citizen right now",
+      };
+    }
+    return {
+      ok: true,
+      decision: {
+        ...decision,
+        buildingId: menu.shift.buildingId,
+        buildKind: "none",
+        placeName: null,
+        roadStubId: "none",
+      },
     };
   }
   if (PLACE_ACTIONS.has(decision.action)) {
