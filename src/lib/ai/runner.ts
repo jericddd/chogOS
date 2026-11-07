@@ -155,12 +155,14 @@ async function commitShiftChange(
   buildingId: string,
   role: WorkRole,
   decisionId: string,
+  reason: string,
 ): Promise<{ ok: true; summary: string } | { ok: false; reason: string }> {
   const { data, error } = await client.rpc("world_change_shift", {
     p_citizen: citizenId,
     p_building: buildingId,
     p_role: role,
     p_decision: decisionId,
+    p_reason: reason,
   });
   const result = data as { ok?: boolean; reason?: string; summary?: string } | null;
   if (error || !result?.ok) {
@@ -1449,6 +1451,7 @@ async function runAiMindWork(
             offer.buildingId,
             offer.role,
             decisionId,
+            offer.reason,
           );
           if (!changed.ok) {
             await client
@@ -1460,9 +1463,15 @@ async function runAiMindWork(
             continue;
           }
           rememberShift(roster, String(row.token_id), offer.role, offer.buildingId);
+          const spoken = parsed.decision.rationale.trim();
+          const recorded = spoken.includes(offer.reason) ? spoken : `${offer.reason} ${spoken}`;
           await client
             .from("ai_decisions")
-            .update({ status: "executed", validation_result: changed.summary })
+            .update({
+              status: "executed",
+              rationale: recorded.slice(0, 500),
+              validation_result: offer.reason.slice(0, 320),
+            })
             .eq("id", decisionId);
           report.decisions.push({ tokenId: row.token_id, status: "retasked", detail: changed.summary });
           continue;
@@ -1707,7 +1716,15 @@ async function runAiMindWork(
               ? (result as { buildersAssigned: number }).buildersAssigned
               : 0;
           if (assigned === 0) {
-            const staffed = await commitShiftChange(client, row.claimed_citizen_id, workTarget, "builder", decisionId);
+            const staffReason = `${plan.plan.name} has no builder assigned. This citizen changes from the current shift to a builder shift so construction can progress.`;
+            const staffed = await commitShiftChange(
+              client,
+              row.claimed_citizen_id,
+              workTarget,
+              "builder",
+              decisionId,
+              staffReason,
+            );
             if (staffed.ok) rememberShift(roster, String(row.token_id), "builder", workTarget);
           }
           const workProposal: ActionProposal = {

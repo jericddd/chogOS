@@ -137,6 +137,9 @@ export function acceptMindChoice(
     };
   }
   if (decision.action === "change_shift") {
+    if (decision.rationale.trim().length < 20) {
+      return { ok: false, reason: "a shift change needs a reason that says what is lacking" };
+    }
     if (!menu.shift || decision.buildingId !== menu.shift.buildingId) {
       return {
         ok: false,

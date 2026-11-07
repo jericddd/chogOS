@@ -6,6 +6,7 @@ import {
   STOREHOUSE_CAPACITY,
   materialsAllowBuilderShift,
 } from "@/lib/world/needs";
+import { pressureFor, resourcePressures, type ShortageSeverity } from "@/lib/world/shortage";
 
 export type GatherResource = "food" | "wood" | "stone" | "tools";
 
@@ -72,19 +73,58 @@ export function shortResource(stock: Stock): GatherResource | null {
   return open[0] ?? null;
 }
 
-export function shiftBrief(role: CitizenView["role"], stock: Stock): string | null {
-  const short = shortResource(stock);
-  if (!short) return null;
-  const full = (Object.keys(GATHER_ROLE) as GatherResource[]).filter((resource) => resourceAtCap(stock[resource]));
-  if (full.length === 0) return null;
+const SEVERITY_RANK: Record<ShortageSeverity, number> = { critical: 0, low: 1, ok: 2 };
+
+/** A good below its recover line. Critical lines come before low lines. */
+export function lackingResource(stock: Stock): GatherResource | null {
+  const found = [...resourcePressures(stock)].sort(
+    (a, b) =>
+      SEVERITY_RANK[a.severity] - SEVERITY_RANK[b.severity] ||
+      a.stock - b.stock ||
+      SCARCITY_RANK[a.resource] - SCARCITY_RANK[b.resource],
+  )[0];
+  return found && found.severity !== "ok" ? found.resource : null;
+}
+
+function focusResource(stock: Stock): GatherResource | null {
+  return lackingResource(stock) ?? shortResource(stock);
+}
+
+/** A shift can change when this good is full, or when another good is actually short. */
+export function canLeaveShift(role: WorkRole | null | undefined, stock: Stock): boolean {
   const mine = producedResource(role);
-  const fullText = full.join(", ");
-  const cap = `${fullText} ${full.length === 1 ? "is" : "are"} at the storehouse cap of ${STOREHOUSE_CAPACITY}.`;
-  const shortText = `${short} is the short good at ${stock[short]}.`;
-  if (mine && resourceAtCap(stock[mine])) {
-    return `${cap} ${shortText} This ${role} shift is on a full good, so the useful change is a ${GATHER_ROLE[short]} shift, or a builder shift on an unfinished building when the storehouse can pay for one.`;
+  if (!mine || !role) return false;
+  const pressures = resourcePressures(stock);
+  if (pressureFor(pressures, mine).severity !== "ok") return false;
+  const focus = focusResource(stock);
+  if (!focus || focus === mine) return false;
+  if (resourceAtCap(stock[mine])) return true;
+  return pressureFor(pressures, focus).severity !== "ok";
+}
+
+function lackSentence(resource: GatherResource, stock: Stock): string {
+  const pressure = pressureFor(resourcePressures(stock), resource);
+  if (pressure.severity === "critical") {
+    return `${resource} is lacking at ${stock[resource]}, below ${pressure.activatesBelow}.`;
   }
-  return `${cap} ${shortText}`;
+  if (pressure.severity === "low") {
+    return `${resource} is lacking at ${stock[resource]}. It recovers at ${pressure.recoversAt}.`;
+  }
+  return `${resource} is the short good at ${stock[resource]}.`;
+}
+
+export function shiftBrief(role: CitizenView["role"], stock: Stock): string | null {
+  if (!canLeaveShift(role, stock)) return null;
+  const mine = producedResource(role);
+  const focus = focusResource(stock);
+  if (!mine || !focus || !role) return null;
+  const own = resourceAtCap(stock[mine])
+    ? `${mine} is at the storehouse cap of ${STOREHOUSE_CAPACITY}.`
+    : `${mine} is at ${stock[mine]}, above its recover line.`;
+  const next = lackingResource(stock)
+    ? `The useful change is a ${GATHER_ROLE[focus]} shift.`
+    : `The useful change is a ${GATHER_ROLE[focus]} shift, or a builder shift on an unfinished building when the storehouse can pay for one.`;
+  return `${lackSentence(focus, stock)} ${own} This ${role} shift is not permanent. ${next}`;
 }
 
 function workplaceFor(resource: GatherResource, buildings: readonly BuildingView[], roster: readonly ShiftRosterMember[]): BuildingView | null {
@@ -106,10 +146,11 @@ function unstaffedSites(buildings: readonly BuildingView[], roster: readonly Shi
 }
 
 /**
- * One citizen, one next shift.
- * Someone whose good is already full can leave it. The first of those citizens
- * take the unfinished buildings that have no builder. The rest harvest the short good.
- * One worker stays on each full workplace so the job is not abandoned.
+ * One citizen, one next shift. A job is not permanent.
+ * Someone can leave when their good is full, or when another good is below its recover line.
+ * Someone whose own good is the one in lack stays on it.
+ * While no good is actually short, the first of those citizens staff unfinished buildings
+ * the storehouse can pay for. A real shortage is harvested instead of spent on construction.
  */
 export function shiftOfferFor(input: {
   tokenId: string;
@@ -119,38 +160,22 @@ export function shiftOfferFor(input: {
   roster: readonly ShiftRosterMember[];
 }): ShiftOffer | null {
   const mine = producedResource(input.role);
-  if (!mine || !resourceAtCap(input.stock[mine])) return null;
-
-  const stayers = new Set<string>();
-  const byWorkplace = new Map<string, ShiftRosterMember[]>();
-  for (const member of input.roster) {
-    const produced = producedResource(member.role);
-    if (!member.workId || !produced || !resourceAtCap(input.stock[produced])) continue;
-    const group = byWorkplace.get(member.workId) ?? [];
-    group.push(member);
-    byWorkplace.set(member.workId, group);
-  }
-  for (const group of byWorkplace.values()) {
-    const keeper = [...group].sort((a, b) => byToken(a.tokenId, b.tokenId))[0];
-    if (keeper) stayers.add(keeper.tokenId);
-  }
-  if (stayers.has(input.tokenId)) return null;
+  if (!mine || !canLeaveShift(input.role, input.stock)) return null;
 
   const movers = input.roster
-    .filter((member) => {
-      const produced = producedResource(member.role);
-      return Boolean(produced && resourceAtCap(input.stock[produced]) && !stayers.has(member.tokenId));
-    })
+    .filter((member) => canLeaveShift(member.role, input.stock))
     .sort((a, b) => byToken(a.tokenId, b.tokenId));
   const index = movers.findIndex((member) => member.tokenId === input.tokenId);
   if (index < 0) return null;
 
-  const payableShifts = materialsAllowBuilderShift(input.stock)
-    ? Math.min(
-        Math.floor(input.stock.wood / CONSTRUCTION_SHIFT_WOOD),
-        Math.floor(input.stock.stone / CONSTRUCTION_SHIFT_STONE),
-      )
-    : 0;
+  const lacking = lackingResource(input.stock);
+  const payableShifts =
+    lacking === null && materialsAllowBuilderShift(input.stock)
+      ? Math.min(
+          Math.floor(input.stock.wood / CONSTRUCTION_SHIFT_WOOD),
+          Math.floor(input.stock.stone / CONSTRUCTION_SHIFT_STONE),
+        )
+      : 0;
   const sites = unstaffedSites(input.buildings, input.roster).slice(0, payableShifts);
   if (index < sites.length) {
     const site = sites[index]!;
@@ -159,19 +184,22 @@ export function shiftOfferFor(input: {
       name: site.name,
       role: "builder",
       resource: "construction",
-      reason: `${site.name} is under construction with no builder. The storehouse can pay a builder shift, and this citizen's current good is already full.`,
+      reason: `${site.name} is under construction with no builder. ${mine} is at the storehouse cap of ${STOREHOUSE_CAPACITY}, and the storehouse can pay a builder shift. This ${input.role} leaves that work for a builder shift.`,
     };
   }
 
-  const short = shortResource(input.stock);
+  const short = focusResource(input.stock);
   if (!short || short === mine) return null;
   const place = workplaceFor(short, input.buildings, input.roster);
   if (!place) return null;
+  const own = resourceAtCap(input.stock[mine])
+    ? `${mine} is at the storehouse cap of ${STOREHOUSE_CAPACITY}.`
+    : `${mine} is at ${input.stock[mine]}, above its recover line.`;
   return {
     buildingId: place.id,
     name: place.name,
     role: GATHER_ROLE[short],
     resource: short,
-    reason: `${mine} is at the storehouse cap of ${STOREHOUSE_CAPACITY} and ${short} is the short good at ${input.stock[short]}. This shift moves to ${place.name}.`,
+    reason: `${lackSentence(short, input.stock)} ${own} This ${input.role} leaves the current shift for ${place.name}.`,
   };
 }

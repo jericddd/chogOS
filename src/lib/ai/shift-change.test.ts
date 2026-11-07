@@ -84,35 +84,57 @@ describe("shift changes", () => {
     member("70", "crafter", "workshop-a"),
   ];
 
-  it("sends the first surplus workers onto unfinished buildings and the rest to the short good", () => {
-    const first = shiftOfferFor({ tokenId: "20", role: "farmer", stock: full, buildings, roster });
-    const second = shiftOfferFor({ tokenId: "30", role: "farmer", stock: full, buildings, roster });
-    const third = shiftOfferFor({ tokenId: "55", role: "stonecutter", stock: full, buildings, roster });
-    const wood = shiftOfferFor({ tokenId: "70", role: "crafter", stock: full, buildings, roster });
+  it("sends the first workers onto unfinished buildings and the rest to the short good", () => {
+    const first = shiftOfferFor({ tokenId: "10", role: "farmer", stock: full, buildings, roster });
+    const second = shiftOfferFor({ tokenId: "20", role: "farmer", stock: full, buildings, roster });
+    const third = shiftOfferFor({ tokenId: "30", role: "farmer", stock: full, buildings, roster });
+    const wood = shiftOfferFor({ tokenId: "35", role: "farmer", stock: full, buildings, roster });
     expect(first).toMatchObject({ role: "builder", buildingId: "farm-06" });
     expect(second).toMatchObject({ role: "builder", buildingId: "house-18" });
     expect(third).toMatchObject({ role: "builder", buildingId: "workshop-06" });
     expect(wood).toMatchObject({ role: "woodcutter", buildingId: "mossy-woods", resource: "wood" });
     expect(wood?.reason).toMatch(/cap of 400/);
     expect(wood?.reason).toMatch(/wood is the short good at 19/);
+    expect(wood?.reason).toMatch(/leaves the current shift for Mossy Woods/);
   });
 
-  it("keeps one worker on a full workplace and does not pull the short good's crew", () => {
-    expect(shiftOfferFor({ tokenId: "10", role: "farmer", stock: full, buildings, roster })).toBeNull();
+  it("does not keep a worker permanently on a full workplace, and does not pull the short good's crew", () => {
+    const keeper = shiftOfferFor({ tokenId: "10", role: "farmer", stock: full, buildings, roster });
+    expect(keeper?.role).toBe("builder");
     expect(shiftOfferFor({ tokenId: "40", role: "woodcutter", stock: full, buildings, roster })).toBeNull();
   });
 
-  it("does not leave a full good while that good is still below the cap", () => {
+  it("stays when no good is short and this good is still below the cap", () => {
     const below = { food: 120, wood: 19, stone: 400, tools: 400 };
     expect(shiftOfferFor({ tokenId: "20", role: "farmer", stock: below, buildings, roster })).toBeNull();
+    expect(shiftOfferFor({ tokenId: "10", role: "farmer", stock: below, buildings, roster })).toBeNull();
   });
 
-  it("staffs only as many builders as the storehouse can pay", () => {
+  it("leaves a healthy job, including the last worker there, when another good is lacking", () => {
+    const lacking = { food: 120, wood: 4, stone: 400, tools: 400 };
+    const onlyFarmer = shiftOfferFor({ tokenId: "35", role: "farmer", stock: lacking, buildings, roster });
+    const extra = shiftOfferFor({ tokenId: "20", role: "farmer", stock: lacking, buildings, roster });
+    expect(onlyFarmer).toMatchObject({ role: "woodcutter", buildingId: "mossy-woods", resource: "wood" });
+    expect(extra?.reason).toMatch(/wood is lacking at 4/);
+    expect(extra?.reason).toMatch(/recovers at 15/);
+    expect(extra?.reason).toMatch(/food is at 120/);
+    expect(shiftOfferFor({ tokenId: "40", role: "woodcutter", stock: lacking, buildings, roster })).toBeNull();
+  });
+
+  it("stays on a good that is itself lacking and sends other jobs to the worse lack", () => {
+    const both = { food: 30, wood: 4, stone: 400, tools: 400 };
+    expect(shiftOfferFor({ tokenId: "20", role: "farmer", stock: both, buildings, roster })).toBeNull();
+    expect(shiftOfferFor({ tokenId: "40", role: "woodcutter", stock: both, buildings, roster })).toBeNull();
+    const quarry = shiftOfferFor({ tokenId: "50", role: "stonecutter", stock: both, buildings, roster });
+    expect(quarry).toMatchObject({ role: "farmer", resource: "food" });
+    expect(quarry?.reason).toMatch(/food is lacking at 30/);
+  });
+
+  it("harvests a lacking good instead of spending it on construction", () => {
     const thin = { food: 400, wood: 4, stone: 400, tools: 400 };
-    const builder = shiftOfferFor({ tokenId: "20", role: "farmer", stock: thin, buildings, roster });
-    const harvest = shiftOfferFor({ tokenId: "30", role: "farmer", stock: thin, buildings, roster });
-    expect(builder).toMatchObject({ role: "builder" });
-    expect(harvest).toMatchObject({ role: "woodcutter", resource: "wood" });
+    const offer = shiftOfferFor({ tokenId: "10", role: "farmer", stock: thin, buildings, roster });
+    expect(offer).toMatchObject({ role: "woodcutter", resource: "wood" });
+    expect(offer?.reason).toMatch(/wood is lacking at 4/);
   });
 
   it("harvests instead of building when the storehouse cannot pay a builder shift", () => {
@@ -189,5 +211,7 @@ describe("shift changes", () => {
     if (!accepted.ok) return;
     expect(accepted.decision.action).toBe("change_shift");
     expect(accepted.decision.buildingId).toBe(menu.shift.buildingId);
+    const thin = acceptMindChoice({ ...parsed.decision, buildingId: menu.shift.buildingId, rationale: "Wood." }, context, menu);
+    expect(thin.ok).toBe(false);
   });
 });

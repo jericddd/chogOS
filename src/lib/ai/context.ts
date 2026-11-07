@@ -400,6 +400,7 @@ export function decisionMessages(
     buildKinds: readonly string[];
     places: readonly { action: string; buildingId: string; name: string }[];
     rejections: readonly string[];
+    shift?: { buildingId: string; name: string; role: string; resource: string; reason: string } | null;
   },
 ): { system: string; user: string } {
   const system = [
@@ -407,7 +408,8 @@ export function decisionMessages(
     "Read the description of the land, the storehouse counts, and any shortage line. Answer a critical shortage when this citizen can gather or tend that resource. Optional construction waits while wood or stone is short, and it can return after the storehouse recovers.",
     "Return JSON only. Do not write SQL, code, URLs, or contract calls.",
     "Choose action from allowed.actions. buildKind is one of allowed.buildKinds when action is build, and none otherwise. buildingId is one of allowed.places for work, socialize, rest, visit, or change_shift.",
-    "When change_shift is in allowed.actions, choose it. That buildingId is the offered place. It leaves a storehouse good that is already at the cap of 400 and takes the short good, or a builder shift on an unfinished building that has no builder. A builder shift spends 3 wood and 2 stone, and construction progress happens only when a builder works the site. Do not keep working a good that is already full.",
+    "A work shift is not permanent. When allowed.shift is present, choose change_shift and set buildingId to allowed.shift.buildingId. That offer is open when this citizen's good is at the cap of 400, or when another good is below its recover line. Someone whose own good is the one in lack stays on it. While no good is actually short, the offer may be a builder shift on an unfinished building the storehouse can pay for. A builder shift spends 3 wood and 2 stone, and construction progress happens only when a builder works the site.",
+    "rationale must say what is lacking, the storehouse counts, and why this citizen leaves the current work. Use allowed.shift.reason as those facts. Do not invent a different shortage, and do not keep working a good that is already full or a good the town no longer needs as much as the lacking one.",
     "A house, farm, workshop, park, amusement, or bank can be raised only when that kind is in allowed.buildKinds. A park is leisure after 07:00, not a job. The bank is a door onto the public books. You do not choose the lot, the door, or any coordinate. Jail, detention, fines, and watch are closed.",
     "When you raise a building, placeName is a short title from the land you read. A road already has a survey name: set roadStubId to that label, and set placeName to none.",
     "A visit uses the bank in allowed.places. It does not move MON or $CHOG and it is not a transaction. Proclaim, amend, and pardon use lawCode only when that action is allowed.",
