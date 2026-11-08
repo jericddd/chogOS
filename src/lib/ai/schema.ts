@@ -12,6 +12,7 @@ export type CivicAction = (typeof CIVIC_ACTIONS)[number];
 export const DECISION_ACTIONS = [
   ...WORLD_ACTIONS,
   "wait",
+  "change_shift",
   "build",
   ...CIVIC_ACTIONS,
   "request_wallet_activation",

@@ -1,4 +1,5 @@
 import type { DecisionContext } from "@/lib/ai/context";
+import { shiftBrief } from "@/lib/ai/shift-change";
 import { worldDay } from "@/lib/world/clock";
 import { shortageLines } from "@/lib/world/shortage";
 import { civicLines } from "@/lib/world/civic";
@@ -64,6 +65,8 @@ export function describePlace(context: DecisionContext): string {
 
   const stock = context.stock;
   lines.push(`The storehouse holds food ${stock.food}, wood ${stock.wood}, stone ${stock.stone}, and tools ${stock.tools}.`);
+  const shift = shiftBrief(context.role, stock);
+  if (shift) lines.push(shift);
   const pressure = shortageLines(stock);
   if (pressure.length > 0) {
     lines.push(pressure.join(" "));

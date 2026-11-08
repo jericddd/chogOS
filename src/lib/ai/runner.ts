@@ -12,6 +12,7 @@ import {
   timeoutWithinDeadline,
 } from "@/lib/ai/invocation";
 import { acceptMindChoice, buildMindMenu, isStickyRejection, menuHasUsefulChoice, mindResponseSchema } from "@/lib/ai/mind-menu";
+import { type ShiftRosterMember } from "@/lib/ai/shift-change";
 import { constructionKindsForShortage, roadsDeferredForShortage } from "@/lib/world/shortage";
 import { buildDecisionContext, contextCommitment, decisionMessages } from "@/lib/ai/context";
 import { growthBlocker, landCanGrow } from "@/lib/ai/growth";
@@ -85,7 +86,7 @@ import {
   type TownProjectRow,
 } from "@/lib/world/rows";
 import type { BuildingView, CitizenView, TownNeedView, TownProjectView } from "@/lib/world/types";
-import type { Tile } from "@/lib/world/layout";
+import type { Tile, WorkRole } from "@/lib/world/layout";
 
 export type MindRunStatus =
   | "disabled"
@@ -114,6 +115,61 @@ export type MindRunReport = {
 };
 
 type Client = ReturnType<typeof createServiceRoleClient>;
+
+const SHIFT_ROLES = new Set<WorkRole>(["farmer", "woodcutter", "stonecutter", "crafter", "merchant", "builder"]);
+
+function asShiftRole(value: string | null): WorkRole | null {
+  return value && SHIFT_ROLES.has(value as WorkRole) ? (value as WorkRole) : null;
+}
+
+async function loadShiftRoster(client: Client): Promise<ShiftRosterMember[]> {
+  const { data, error } = await client.from("citizen_world_state").select("role, work_id, citizens!inner(token_id)");
+  if (error || !data) return [];
+  const rows = data as Array<{
+    role: string | null;
+    work_id: string | null;
+    citizens: { token_id: string | number } | Array<{ token_id: string | number }>;
+  }>;
+  const members: ShiftRosterMember[] = [];
+  for (const row of rows) {
+    const nested = Array.isArray(row.citizens) ? row.citizens[0] : row.citizens;
+    if (!nested || nested.token_id === undefined || nested.token_id === null) continue;
+    members.push({ tokenId: String(nested.token_id), role: asShiftRole(row.role), workId: row.work_id });
+  }
+  return members;
+}
+
+function rememberShift(roster: ShiftRosterMember[], tokenId: string, role: WorkRole, workId: string) {
+  const member = roster.find((item) => item.tokenId === tokenId);
+  if (member) {
+    member.role = role;
+    member.workId = workId;
+    return;
+  }
+  roster.push({ tokenId, role, workId });
+}
+
+async function commitShiftChange(
+  client: Client,
+  citizenId: string,
+  buildingId: string,
+  role: WorkRole,
+  decisionId: string,
+  reason: string,
+): Promise<{ ok: true; summary: string } | { ok: false; reason: string }> {
+  const { data, error } = await client.rpc("world_change_shift", {
+    p_citizen: citizenId,
+    p_building: buildingId,
+    p_role: role,
+    p_decision: decisionId,
+    p_reason: reason,
+  });
+  const result = data as { ok?: boolean; reason?: string; summary?: string } | null;
+  if (error || !result?.ok) {
+    return { ok: false, reason: result?.reason ?? "the shift change was not recorded" };
+  }
+  return { ok: true, summary: result.summary ?? "Shift changed." };
+}
 
 function emptyReport(status: MindRunStatus, config: AppConfig, reason?: string): MindRunReport {
   return {
@@ -1072,6 +1128,7 @@ async function runAiMindWork(
         break;
       }
       report.claimed += queue.length;
+      const roster = await loadShiftRoster(client);
 
       for (const row of queue) {
       let decided = false;
@@ -1156,7 +1213,12 @@ async function runAiMindWork(
           civic: civic ?? undefined,
         });
         const commitment = contextCommitment(context);
-        const menu = buildMindMenu(context, { blockedKinds: [...blockedKinds], rejections: recentRejections });
+        const menu = buildMindMenu(context, {
+          blockedKinds: [...blockedKinds],
+          rejections: recentRejections,
+          buildings: bundle.buildings,
+          roster,
+        });
         const messages = decisionMessages(context, config.aiMaxPromptChars, menu);
 
         if (!menuHasUsefulChoice(menu) && !landCanGrow(context)) {
@@ -1371,6 +1433,49 @@ async function runAiMindWork(
             provider: completion.provider,
           })
           .eq("id", decisionId);
+
+        if (parsed.decision.action === "change_shift") {
+          const offer = menu.shift;
+          if (!offer || offer.buildingId !== parsed.decision.buildingId) {
+            await client
+              .from("ai_decisions")
+              .update({ status: "rejected", validation_result: "that shift is not open" })
+              .eq("id", decisionId);
+            report.rejected += 1;
+            report.decisions.push({ tokenId: row.token_id, status: "rejected", detail: "that shift is not open" });
+            continue;
+          }
+          const changed = await commitShiftChange(
+            client,
+            row.claimed_citizen_id,
+            offer.buildingId,
+            offer.role,
+            decisionId,
+            offer.reason,
+          );
+          if (!changed.ok) {
+            await client
+              .from("ai_decisions")
+              .update({ status: "rejected", validation_result: changed.reason })
+              .eq("id", decisionId);
+            report.rejected += 1;
+            report.decisions.push({ tokenId: row.token_id, status: "rejected", detail: changed.reason });
+            continue;
+          }
+          rememberShift(roster, String(row.token_id), offer.role, offer.buildingId);
+          const spoken = parsed.decision.rationale.trim();
+          const recorded = spoken.includes(offer.reason) ? spoken : `${offer.reason} ${spoken}`;
+          await client
+            .from("ai_decisions")
+            .update({
+              status: "executed",
+              rationale: recorded.slice(0, 500),
+              validation_result: offer.reason.slice(0, 320),
+            })
+            .eq("id", decisionId);
+          report.decisions.push({ tokenId: row.token_id, status: "retasked", detail: changed.summary });
+          continue;
+        }
 
         if (isCivicAction(parsed.decision.action)) {
           const applied = await applyCivicDecision(
@@ -1606,6 +1711,22 @@ async function runAiMindWork(
           await linkTownNeed(client, townNeeds, bundle.citizen, "build", buildKind, decisionId);
           await linkTownProject(client, townProjects, parsed.decision, decisionId, row.claimed_citizen_id);
           const workTarget = result.buildingId ?? plan.plan.buildingId;
+          const assigned =
+            typeof (result as { buildersAssigned?: unknown }).buildersAssigned === "number"
+              ? (result as { buildersAssigned: number }).buildersAssigned
+              : 0;
+          if (assigned === 0) {
+            const staffReason = `${plan.plan.name} has no builder assigned. This citizen changes from the current shift to a builder shift so construction can progress.`;
+            const staffed = await commitShiftChange(
+              client,
+              row.claimed_citizen_id,
+              workTarget,
+              "builder",
+              decisionId,
+              staffReason,
+            );
+            if (staffed.ok) rememberShift(roster, String(row.token_id), "builder", workTarget);
+          }
           const workProposal: ActionProposal = {
             tokenId: row.token_id,
             action: "work",
